@@ -1,0 +1,411 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { api } from '../api'
+import EmptyState from '../components/EmptyState.vue'
+import StatusPill from '../components/StatusPill.vue'
+import TestCaseDrawer from './components/TestCaseDrawer.vue'
+import CaseRevisionPanel from './components/CaseRevisionPanel.vue'
+import CaseTrendPanel from './components/CaseTrendPanel.vue'
+import RunComparePanel from './components/RunComparePanel.vue'
+import type {
+  CasePayload,
+  Environment,
+  ModelConfig,
+  PromptListItem,
+  TestCase,
+} from '../types'
+import { errorMessage } from '../utils/errors'
+import {
+  caseTypeLabel,
+  formatDateTime,
+  statusLabel,
+  truncate,
+} from '../utils/format'
+import { useToastStore } from '../stores/toast'
+
+const router = useRouter()
+const toast = useToastStore()
+
+const cases = ref<TestCase[]>([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(20)
+const keyword = ref('')
+const caseType = ref('')
+const status = ref('')
+const loading = ref(false)
+
+const environments = ref<Environment[]>([])
+const templates = ref<PromptListItem[]>([])
+const models = ref<ModelConfig[]>([])
+
+const drawerOpen = ref(false)
+const editingCase = ref<TestCase | null>(null)
+const saving = ref(false)
+const debuggingId = ref<number | null>(null)
+const importInput = ref<HTMLInputElement | null>(null)
+
+const revisionOpen = ref(false)
+const revisionCase = ref<TestCase | null>(null)
+const trendOpen = ref(false)
+const trendCase = ref<TestCase | null>(null)
+const compareOpen = ref(false)
+const compareCase = ref<TestCase | null>(null)
+
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+
+const typeCount = computed(() => ({
+  single: cases.value.filter((item) => item.case_type === 'SINGLE').length,
+  static: cases.value.filter((item) => item.case_type === 'STATIC_MULTI').length,
+  dynamic: cases.value.filter((item) => item.case_type === 'DYNAMIC_MULTI').length,
+}))
+
+async function loadOptions(): Promise<void> {
+  try {
+    const [envPage, templatePage, modelPage] = await Promise.all([
+      api.environments.list({ page_size: 200 }),
+      api.prompts.list({ page_size: 200 }),
+      api.models.list({ page_size: 200 }),
+    ])
+    environments.value = envPage.items
+    templates.value = templatePage.items
+    models.value = modelPage.items
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  }
+}
+
+async function loadCases(): Promise<void> {
+  loading.value = true
+  try {
+    const pageData = await api.cases.list({
+      page: page.value,
+      page_size: pageSize.value,
+      keyword: keyword.value.trim() || undefined,
+      case_type: caseType.value || undefined,
+      status: status.value || undefined,
+    })
+    cases.value = pageData.items
+    total.value = pageData.total
+    if (cases.value.length === 0 && page.value > 1) {
+      page.value -= 1
+      await loadCases()
+    }
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  } finally {
+    loading.value = false
+  }
+}
+
+function applyFilters(): void {
+  page.value = 1
+  void loadCases()
+}
+
+function resetFilters(): void {
+  keyword.value = ''
+  caseType.value = ''
+  status.value = ''
+  page.value = 1
+  void loadCases()
+}
+
+function openCreate(): void {
+  editingCase.value = null
+  drawerOpen.value = true
+}
+
+function openEdit(item: TestCase): void {
+  editingCase.value = item
+  drawerOpen.value = true
+}
+
+async function submitCase(payload: CasePayload): Promise<void> {
+  saving.value = true
+  try {
+    if (editingCase.value) {
+      const body: Partial<CasePayload> = { ...payload }
+      body.code = undefined
+      body.case_type = undefined
+      const updated = await api.cases.update(editingCase.value.id, body)
+      toast.success(`用例 ${updated.code} 已更新至 v${updated.current_version}`)
+    } else {
+      const created = await api.cases.create(payload)
+      toast.success(`用例 ${created.code} 已创建`)
+    }
+    drawerOpen.value = false
+    await loadCases()
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function removeCase(item: TestCase): Promise<void> {
+  if (!window.confirm(`确认删除用例 ${item.code}？删除为软删除，历史执行记录保留。`)) return
+  try {
+    const result = await api.cases.remove(item.id)
+    toast.success(result.message)
+    await loadCases()
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  }
+}
+
+async function debugCase(item: TestCase): Promise<void> {
+  debuggingId.value = item.id
+  toast.info(`正在执行 ${item.code} 单条调试，请稍候…`)
+  try {
+    const detail = await api.cases.debug(item.id, { environment_id: item.environment_id })
+    toast.success(`调试完成：${statusLabel(detail.status)}，得分 ${detail.total_score ?? '—'}`)
+    await router.push({ name: 'trace', query: { execution: String(detail.id) } })
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  } finally {
+    debuggingId.value = null
+  }
+}
+
+function openRevisions(item: TestCase): void {
+  revisionCase.value = item
+  revisionOpen.value = true
+}
+
+function openTrend(item: TestCase): void {
+  trendCase.value = item
+  trendOpen.value = true
+}
+
+function openCompare(item: TestCase): void {
+  compareCase.value = item
+  compareOpen.value = true
+}
+
+function openTrace(executionId: number): void {
+  trendOpen.value = false
+  void router.push({ name: 'trace', query: { execution: String(executionId) } })
+}
+
+async function onRevisionUpdated(): Promise<void> {
+  await loadCases()
+}
+
+function triggerImport(): void {
+  importInput.value?.click()
+}
+
+async function onImport(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    const result = await api.cases.importFile(file)
+    toast.success(`导入完成：新增 ${result.created}，更新 ${result.updated}，失败 ${result.failed}`)
+    if (result.errors.length) {
+      toast.error(
+        result.errors
+          .slice(0, 3)
+          .map((item) => `第 ${item.row} 行：${item.message}`)
+          .join('\n'),
+      )
+    }
+    await loadCases()
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  } finally {
+    input.value = ''
+  }
+}
+
+async function exportCases(format: 'json' | 'xlsx'): Promise<void> {
+  try {
+    await api.cases.export(format)
+    toast.success(`已导出 ${format.toUpperCase()} 文件`)
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  }
+}
+
+function goPage(next: number): void {
+  if (next < 1 || next > pageCount.value) return
+  page.value = next
+  void loadCases()
+}
+
+onMounted(() => {
+  void loadOptions()
+  void loadCases()
+})
+</script>
+
+<template>
+  <div class="space-y-5">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 class="text-lg font-semibold text-slate-100">用例资产</h2>
+        <p class="mt-1 text-xs text-slate-500">
+          单轮 / 静态多轮 / 动态多轮三类用例，支持版本快照、字段 Diff、回滚、导入导出与单条调试。
+        </p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <input ref="importInput" type="file" accept=".xlsx,.json" class="hidden" @change="onImport" />
+        <button class="btn-ghost" @click="triggerImport">导入</button>
+        <button class="btn-ghost" @click="exportCases('json')">导出 JSON</button>
+        <button class="btn-ghost" @click="exportCases('xlsx')">导出 Excel</button>
+        <button class="btn-primary" @click="openCreate">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+          </svg>
+          新建用例
+        </button>
+      </div>
+    </div>
+
+    <div class="card flex flex-wrap items-end gap-3 px-4 py-3">
+      <div class="min-w-[220px] flex-1">
+        <label class="label">关键词</label>
+        <input
+          v-model="keyword"
+          class="input"
+          placeholder="搜索编号 / 名称 / 描述"
+          @keyup.enter="applyFilters"
+        />
+      </div>
+      <div class="w-40">
+        <label class="label">用例类型</label>
+        <select v-model="caseType" class="input" @change="applyFilters">
+          <option value="">全部类型</option>
+          <option value="SINGLE">单轮</option>
+          <option value="STATIC_MULTI">静态多轮</option>
+          <option value="DYNAMIC_MULTI">动态多轮</option>
+        </select>
+      </div>
+      <div class="w-32">
+        <label class="label">状态</label>
+        <select v-model="status" class="input" @change="applyFilters">
+          <option value="">全部</option>
+          <option value="ACTIVE">启用</option>
+          <option value="DRAFT">草稿</option>
+          <option value="DISABLED">停用</option>
+        </select>
+      </div>
+      <button class="btn-ghost" @click="applyFilters">查询</button>
+      <button class="btn-ghost" @click="resetFilters">重置</button>
+    </div>
+
+    <div class="card overflow-hidden">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
+        <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+          <span>共 {{ total }} 条</span>
+          <span class="text-slate-700">|</span>
+          <span>当前页：单轮 {{ typeCount.single }} · 静态 {{ typeCount.static }} · 动态 {{ typeCount.dynamic }}</span>
+        </div>
+        <button class="text-[11px] text-slate-500 transition hover:text-slate-200" @click="loadCases">刷新</button>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="table-shell">
+          <thead>
+            <tr>
+              <th class="th">用例</th>
+              <th class="th">类型</th>
+              <th class="th">状态</th>
+              <th class="th">版本</th>
+              <th class="th">环境 / Prompt</th>
+              <th class="th">更新时间</th>
+              <th class="th text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in cases" :key="item.id">
+              <td class="td max-w-[300px]">
+                <p class="font-mono text-xs text-indigo-300">{{ item.code }}</p>
+                <p class="mt-0.5 truncate text-sm text-slate-200" :title="item.name">{{ item.name }}</p>
+                <p class="mt-0.5 text-[11px] text-slate-500" :title="item.description ?? ''">
+                  {{ truncate(item.description, 44) }}
+                </p>
+                <div class="mt-1 flex flex-wrap gap-1">
+                  <span v-for="tag in item.tags ?? []" :key="tag" class="tag">{{ tag }}</span>
+                </div>
+              </td>
+              <td class="td">
+                <span class="rounded-md bg-slate-800 px-1.5 py-0.5 text-[11px] text-slate-300">
+                  {{ caseTypeLabel(item.case_type) }}
+                </span>
+              </td>
+              <td class="td"><StatusPill :status="item.status" size="sm" /></td>
+              <td class="td">
+                <span class="font-mono text-xs text-slate-300">v{{ item.current_version }}</span>
+                <span class="ml-1 rounded bg-slate-800 px-1 py-0.5 text-[10px] text-slate-500">{{ item.priority }}</span>
+              </td>
+              <td class="td max-w-[200px] text-[11px] text-slate-500">
+                <p class="truncate text-slate-400">{{ item.environment_name || '未绑定环境' }}</p>
+                <p class="truncate">模拟：{{ item.simulator_template_code || '—' }}</p>
+                <p class="truncate">裁判：{{ item.judge_template_code || '—' }}</p>
+              </td>
+              <td class="td text-xs text-slate-500">{{ formatDateTime(item.updated_at) }}</td>
+              <td class="td">
+                <div class="flex flex-wrap justify-end gap-1">
+                  <button class="btn-ghost btn-xs" @click="openEdit(item)">编辑</button>
+                  <button
+                    class="btn-ghost btn-xs"
+                    :disabled="debuggingId === item.id"
+                    @click="debugCase(item)"
+                  >
+                    {{ debuggingId === item.id ? '执行中…' : '调试' }}
+                  </button>
+                  <button class="btn-ghost btn-xs" @click="openRevisions(item)">版本</button>
+                  <button class="btn-ghost btn-xs" @click="openTrend(item)">趋势</button>
+                  <button class="btn-ghost btn-xs" @click="openCompare(item)">对比</button>
+                  <button class="btn-danger btn-xs" @click="removeCase(item)">删除</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <EmptyState
+          v-if="!loading && cases.length === 0"
+          title="没有匹配的用例"
+          description="调整筛选条件，或新建一条用例开始测试。"
+        >
+          <button class="btn-primary btn-xs mt-2" @click="openCreate">新建用例</button>
+        </EmptyState>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 px-4 py-3">
+        <span class="text-[11px] text-slate-500">第 {{ page }} / {{ pageCount }} 页</span>
+        <div class="flex items-center gap-2">
+          <button class="btn-ghost btn-xs" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
+          <button class="btn-ghost btn-xs" :disabled="page >= pageCount" @click="goPage(page + 1)">下一页</button>
+        </div>
+      </div>
+    </div>
+
+    <TestCaseDrawer
+      v-model="drawerOpen"
+      :case-data="editingCase"
+      :environments="environments"
+      :templates="templates"
+      :models="models"
+      :saving="saving"
+      @submit="submitCase"
+    />
+
+    <CaseRevisionPanel
+      v-model="revisionOpen"
+      :case-data="revisionCase"
+      @updated="onRevisionUpdated"
+    />
+
+    <CaseTrendPanel
+      v-model="trendOpen"
+      :case-data="trendCase"
+      @select-execution="openTrace"
+    />
+
+    <RunComparePanel v-model="compareOpen" :case-data="compareCase" />
+  </div>
+</template>
