@@ -173,6 +173,9 @@ export const api = {
       case_ids: number[]
       concurrency?: number
       qps_limit?: number
+      retry_on_env_error?: boolean
+      max_env_retries?: number
+      retry_backoff_seconds?: number
       auto_start?: boolean
     }) => http.post<BatchTask>('/tasks', payload),
     start: (id: number) => http.post<MessageResponse>(`/tasks/${id}/start`),

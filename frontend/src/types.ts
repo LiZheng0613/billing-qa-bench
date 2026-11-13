@@ -422,6 +422,8 @@ export interface CaseExecutionItem {
   case_name?: string | null
   source: string
   status: string
+  attempt_no: number
+  error_kind: string | null
   pass_flag: boolean | null
   total_score: number | null
   case_version: number
@@ -490,6 +492,9 @@ export interface BatchTask {
   max_turns_count: number
   concurrency: number
   qps_limit: number
+  retry_on_env_error: boolean
+  max_env_retries: number
+  retry_backoff_seconds: number
   created_by: string | null
   created_at: string
   started_at: string | null
@@ -526,6 +531,7 @@ export interface TaskMetrics {
   simulator_tokens: number
   judge_tokens: number
   total_tokens: number
+  env_retry_count: number
   eta_seconds: number | null
   elapsed_seconds: number
   throughput_per_minute: number
@@ -600,6 +606,8 @@ export interface ExecutionListItem {
   case_version: number
   source: string
   status: string
+  attempt_no: number
+  error_kind: string | null
   pass_flag: boolean | null
   total_score: number | null
   termination_status: string | null

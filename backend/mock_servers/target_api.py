@@ -117,7 +117,7 @@ async def _sse_stream(result: dict[str, Any]):
 async def chat(request: Request):
     try:
         body = await request.json()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
 
     query = str(body.get("query") or "")

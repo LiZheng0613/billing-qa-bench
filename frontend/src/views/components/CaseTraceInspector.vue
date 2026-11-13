@@ -147,6 +147,12 @@ async function copyTraceUid(): Promise<void> {
               <StatusPill :status="detail.status" />
               <span class="tag">v{{ detail.case_version }}</span>
               <span class="tag">{{ sourceLabel(detail.source) }}</span>
+              <span v-if="detail.attempt_no > 1" class="tag border-amber-500/40 text-amber-300">
+                第 {{ detail.attempt_no }} 次尝试
+              </span>
+              <span v-if="detail.error_kind === 'ENV'" class="tag border-amber-500/40 text-amber-300">
+                环境异常
+              </span>
             </div>
             <p class="mt-1 truncate text-xs text-slate-500">{{ detail.case_name || '—' }}</p>
             <button

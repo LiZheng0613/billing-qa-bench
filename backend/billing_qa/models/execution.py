@@ -46,6 +46,12 @@ class ExecutionRecord(Base):
     )
     source: Mapped[str] = mapped_column(String(16), default="BATCH")
     status: Mapped[str] = mapped_column(String(32), default="ERROR")
+    attempt_no: Mapped[int] = mapped_column(
+        Integer, default=1, comment="第几次尝试（环境类失败自动重试时递增）"
+    )
+    error_kind: Mapped[str | None] = mapped_column(
+        String(16), comment="错误分类：ENV/BUSINESS，空表示无异常"
+    )
     pass_flag: Mapped[bool | None] = mapped_column(Boolean)
     total_score: Mapped[float | None] = mapped_column(Float)
     termination_status: Mapped[str | None] = mapped_column(String(32))

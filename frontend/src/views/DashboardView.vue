@@ -42,6 +42,9 @@ const form = reactive({
   environment_id: null as number | null,
   concurrency: 3,
   qps_limit: 5,
+  retry_on_env_error: true,
+  max_env_retries: 2,
+  retry_backoff_seconds: 3,
   case_ids: [] as number[],
   auto_start: true,
 })
@@ -71,15 +74,27 @@ function reportError(exc: unknown): void {
   toast.error(errorMessage(exc))
 }
 
+async function loadAllCases(): Promise<TestCase[]> {
+  const pageSize = 200
+  const first = await api.cases.list({ page_size: pageSize, page: 1 })
+  const all = [...first.items]
+  const totalPages = Math.ceil(first.total / pageSize)
+  for (let page = 2; page <= totalPages; page += 1) {
+    const next = await api.cases.list({ page_size: pageSize, page })
+    all.push(...next.items)
+  }
+  return all
+}
+
 async function loadBase(): Promise<void> {
   loadingBase.value = true
   try {
-    const [casePage, taskPage, envPage] = await Promise.all([
-      api.cases.list({ page_size: 200 }),
+    const [allCases, taskPage, envPage] = await Promise.all([
+      loadAllCases(),
       api.tasks.list({ page_size: 50 }),
       api.environments.list({ page_size: 100 }),
     ])
-    cases.value = casePage.items
+    cases.value = allCases
     tasks.value = taskPage.items
     environments.value = envPage.items
     const preferred =
@@ -293,6 +308,9 @@ function openCreate(): void {
   form.environment_id = environments.value[0]?.id ?? null
   form.concurrency = 3
   form.qps_limit = 5
+  form.retry_on_env_error = true
+  form.max_env_retries = 2
+  form.retry_backoff_seconds = 3
   form.case_ids = []
   form.auto_start = true
   caseKeyword.value = ''
@@ -332,6 +350,9 @@ async function submitCreate(): Promise<void> {
       case_ids: [...form.case_ids],
       concurrency: form.concurrency,
       qps_limit: form.qps_limit,
+      retry_on_env_error: form.retry_on_env_error,
+      max_env_retries: form.max_env_retries,
+      retry_backoff_seconds: form.retry_backoff_seconds,
       auto_start: form.auto_start,
     })
     toast.success(`任务 ${created.code} 已创建`)
@@ -457,7 +478,7 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <BaseModal v-model="showCreate" title="新建批量任务" subtitle="选择用例并设置并发与限速" width="xl">
+    <BaseModal v-model="showCreate" title="新建批量任务" subtitle="选择用例并设置并发、限速与失败重试策略" width="xl">
       <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div class="space-y-4">
           <div class="grid gap-3 sm:grid-cols-2">
@@ -489,6 +510,52 @@ onBeforeUnmount(() => {
               <input v-model.number="form.qps_limit" class="input" type="number" min="0.1" max="100" step="0.5" />
             </div>
           </div>
+          <div class="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+            <label class="flex items-start gap-2 text-sm text-slate-300">
+              <input
+                v-model="form.retry_on_env_error"
+                type="checkbox"
+                class="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-900"
+              />
+              <span>
+                环境类失败自动重试
+                <span class="block text-[11px] text-slate-500">
+                  仅重试连接失败、超时、HTTP 429/5xx、SSE 空响应等环境故障；规则不通过、裁判低分等业务失败不会重试。
+                </span>
+              </span>
+            </label>
+            <div
+              class="grid gap-3 sm:grid-cols-2"
+              :class="form.retry_on_env_error ? '' : 'pointer-events-none opacity-40'"
+            >
+              <div>
+                <label class="label">最大重试次数</label>
+                <input
+                  v-model.number="form.max_env_retries"
+                  class="input"
+                  type="number"
+                  min="0"
+                  max="10"
+                  :disabled="!form.retry_on_env_error"
+                />
+              </div>
+              <div>
+                <label class="label">基础退避（秒）</label>
+                <input
+                  v-model.number="form.retry_backoff_seconds"
+                  class="input"
+                  type="number"
+                  min="0"
+                  max="60"
+                  step="0.5"
+                  :disabled="!form.retry_on_env_error"
+                />
+              </div>
+            </div>
+            <p class="text-[11px] text-slate-500">
+              第 n 次重试前等待 = 基础退避 × 2^(n-1)，重试同样受并发数与 QPS 限制，暂停/终止会立即生效。
+            </p>
+          </div>
           <label class="flex items-center gap-2 text-sm text-slate-300">
             <input v-model="form.auto_start" type="checkbox" class="h-4 w-4 rounded border-slate-600 bg-slate-900" />
             创建后立即启动
@@ -499,11 +566,13 @@ onBeforeUnmount(() => {
           <div class="border-b border-slate-800 p-3">
             <div class="flex items-center justify-between">
               <span class="text-xs font-medium text-slate-300">选择用例</span>
-              <span class="text-[11px] text-slate-500">已选 {{ form.case_ids.length }}</span>
+              <span class="text-[11px] text-slate-500">已选 {{ form.case_ids.length }} / 共 {{ cases.length }}</span>
             </div>
             <input v-model="caseKeyword" class="input mt-2 !py-1.5 text-xs" placeholder="搜索编号 / 名称 / 标签" />
             <div class="mt-2 flex gap-2">
-              <button class="btn-ghost btn-xs" @click="selectAllFiltered">全选当前</button>
+              <button class="btn-ghost btn-xs" @click="selectAllFiltered">
+                全选筛选结果（{{ filteredCases.length }}）
+              </button>
               <button class="btn-ghost btn-xs" @click="clearSelected">清空</button>
             </div>
           </div>

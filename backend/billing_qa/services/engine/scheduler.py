@@ -21,6 +21,7 @@ from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase, TestCaseRevision
 from billing_qa.schemas.case import CaseExecutionItem
 from billing_qa.schemas.task import TaskProgressEvent
+from billing_qa.services.engine.error_policy import ERROR_KIND_ENV, retry_delay
 from billing_qa.services.engine.executor import CaseExecutor
 from billing_qa.services.engine.metrics import (
     apply_metrics_to_task,
@@ -163,38 +164,74 @@ class BatchScheduler:
                 environment_id = task.environment_id
                 concurrency = max(1, min(task.concurrency or 3, 20))
                 qps_limit = max(0.1, float(task.qps_limit or 5))
+                retry_enabled = bool(task.retry_on_env_error)
+                max_env_retries = max(0, min(int(task.max_env_retries or 0), 10))
+                backoff_base = max(0.0, min(float(task.retry_backoff_seconds or 0), 60.0))
                 task_name = task.name
 
             await control_store.set_state(task_id, "RUNNING")
             await self._publish_status_by_id(task_id)
-            logger.info("任务开始 task=%s(%s) cases=%d", task_id, task_name, len(case_ids))
+            logger.info(
+                "任务开始 task=%s(%s) cases=%d concurrency=%d qps=%.1f "
+                "retry_on_env=%s max_retries=%d",
+                task_id,
+                task_name,
+                len(case_ids),
+                concurrency,
+                qps_limit,
+                retry_enabled,
+                max_env_retries,
+            )
 
             semaphore = asyncio.Semaphore(concurrency)
             limiter = QpsLimiter(qps_limit)
+            retry_enabled = retry_enabled and max_env_retries > 0
 
             async def worker(case_id: int) -> None:
                 async with semaphore:
-                    state = await control_store.get_state(task_id)
-                    while state == "PAUSED":
-                        await asyncio.sleep(0.4)
-                        state = await control_store.get_state(task_id)
-                    if state in {"ABORTING", "ABORTED"}:
-                        return
-                    await limiter.acquire()
-                    snapshot, version = await self._load_case_snapshot(case_id)
-                    if snapshot is None:
-                        logger.warning("用例不存在或已删除 case=%s", case_id)
-                        return
-                    executor = CaseExecutor()
-                    execution_id = await executor.execute(
-                        case_id=case_id,
-                        case_version=version,
-                        snapshot=snapshot,
-                        task_id=task_id,
-                        source=ExecutionSource.RETRY if retry_failed else ExecutionSource.BATCH,
-                        environment_id=environment_id,
-                    )
-                    await self._publish_progress(task_id, execution_id, case_id, version)
+                    attempt = 0
+                    while True:
+                        # 每一轮尝试都重新检查暂停/终止，避免重试绕过控制
+                        if not await self._wait_until_runnable(task_id):
+                            return
+                        await limiter.acquire()
+                        snapshot, version = await self._load_case_snapshot(case_id)
+                        if snapshot is None:
+                            logger.warning("用例不存在或已删除 case=%s", case_id)
+                            return
+                        source = (
+                            ExecutionSource.RETRY
+                            if attempt > 0 or retry_failed
+                            else ExecutionSource.BATCH
+                        )
+                        executor = CaseExecutor()
+                        execution_id = await executor.execute(
+                            case_id=case_id,
+                            case_version=version,
+                            snapshot=snapshot,
+                            task_id=task_id,
+                            source=source,
+                            environment_id=environment_id,
+                            attempt_no=attempt + 1,
+                        )
+                        await self._publish_progress(
+                            task_id, execution_id, case_id, version
+                        )
+                        if not retry_enabled or attempt >= max_env_retries:
+                            return
+                        if await self._load_error_kind(execution_id) != ERROR_KIND_ENV:
+                            return
+                        attempt += 1
+                        delay = retry_delay(attempt, backoff_base)
+                        logger.info(
+                            "环境类失败，准备第 %d/%d 次自动重试 case=%s delay=%.1fs",
+                            attempt,
+                            max_env_retries,
+                            case_id,
+                            delay,
+                        )
+                        if not await self._interruptible_sleep(task_id, delay):
+                            return
 
             worker_tasks = [asyncio.create_task(worker(cid)) for cid in case_ids]
             pending: set[asyncio.Task[None]] = set(worker_tasks)
@@ -266,6 +303,41 @@ class BatchScheduler:
         return selected
 
     @staticmethod
+    async def _load_error_kind(execution_id: int) -> str | None:
+        async with SessionLocal() as db:
+            record = await db.get(ExecutionRecord, execution_id)
+            return record.error_kind if record is not None else None
+
+    @staticmethod
+    async def _wait_until_runnable(task_id: int) -> bool:
+        """等待任务恢复；返回 False 表示任务已进入终止流程。"""
+        while True:
+            state = await control_store.get_state(task_id)
+            if state in {"ABORTING", "ABORTED"}:
+                return False
+            if state != "PAUSED":
+                return True
+            await asyncio.sleep(0.4)
+
+    @staticmethod
+    async def _interruptible_sleep(task_id: int, seconds: float) -> bool:
+        """可被暂停/终止打断的退避等待；暂停期间不消耗退避时间。"""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, seconds)
+        while True:
+            state = await control_store.get_state(task_id)
+            if state in {"ABORTING", "ABORTED"}:
+                return False
+            if state == "PAUSED":
+                await asyncio.sleep(0.4)
+                deadline += 0.4
+                continue
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return True
+            await asyncio.sleep(min(remaining, 0.4))
+
+    @staticmethod
     async def _load_case_snapshot(case_id: int) -> tuple[dict[str, Any] | None, int]:
         async with SessionLocal() as db:
             case = await db.get(TestCase, case_id)
@@ -305,6 +377,8 @@ class BatchScheduler:
                     case_name=case.name if case else None,
                     source=record.source,
                     status=record.status,
+                    attempt_no=record.attempt_no,
+                    error_kind=record.error_kind,
                     pass_flag=record.pass_flag,
                     total_score=record.total_score,
                     case_version=record.case_version,

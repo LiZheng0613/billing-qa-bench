@@ -64,7 +64,13 @@ const canRetry = computed(() =>
 const progress = computed(() => props.metrics?.progress ?? 0)
 
 const stats = computed(() => [
-  { label: '进度', value: formatPercent(props.metrics?.progress, 1) },
+  {
+    label: '进度',
+    value: formatPercent(props.metrics?.progress, 1),
+    hint: props.metrics?.env_retry_count
+      ? `已自动重试 ${props.metrics.env_retry_count} 条用例`
+      : '',
+  },
   { label: '通过率', value: formatPercent(props.metrics?.pass_rate, 1) },
   { label: '平均 TTFT', value: formatMs(props.metrics?.avg_ttft_ms) },
   { label: 'P95 时延', value: formatMs(props.metrics?.p95_latency_ms) },
@@ -107,6 +113,10 @@ const stats = computed(() => [
           <span>{{ task.environment_name || '未绑定环境' }}</span>
           <span>·</span>
           <span>并发 {{ task.concurrency }} / QPS {{ task.qps_limit }}</span>
+          <span>·</span>
+          <span>
+            {{ task.retry_on_env_error ? `环境失败自动重试 ${task.max_env_retries} 次` : '环境失败不重试' }}
+          </span>
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -200,6 +210,7 @@ const stats = computed(() => [
                 <p class="font-mono text-xs text-slate-200">{{ item.case_code || `用例 #${item.case_id ?? '—'}` }}</p>
                 <p class="mt-0.5 max-w-[240px] truncate text-[11px] text-slate-500">
                   {{ item.case_name || '—' }} · v{{ item.case_version }}
+                  <span v-if="item.attempt_no > 1" class="text-amber-400"> · 第 {{ item.attempt_no }} 次尝试</span>
                 </p>
               </td>
               <td class="td"><StatusPill :status="item.status" size="sm" /></td>

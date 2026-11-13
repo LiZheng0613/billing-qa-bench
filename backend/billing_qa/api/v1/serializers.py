@@ -78,6 +78,8 @@ def execution_to_item(
         case_version=record.case_version,
         source=record.source,
         status=record.status,
+        attempt_no=record.attempt_no,
+        error_kind=record.error_kind,
         pass_flag=record.pass_flag,
         total_score=record.total_score,
         termination_status=record.termination_status,

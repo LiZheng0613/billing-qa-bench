@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from billing_qa.db.base import MYSQL_TABLE_OPTS, Base, TimestampMixin
@@ -40,6 +50,15 @@ class BatchTask(Base, TimestampMixin):
     max_turns_count: Mapped[int] = mapped_column(Integer, default=0)
     concurrency: Mapped[int] = mapped_column(Integer, default=3)
     qps_limit: Mapped[float] = mapped_column(Float, default=5.0)
+    retry_on_env_error: Mapped[bool] = mapped_column(
+        Boolean, default=True, comment="环境类失败是否自动重试"
+    )
+    max_env_retries: Mapped[int] = mapped_column(
+        Integer, default=2, comment="环境类失败最大自动重试次数"
+    )
+    retry_backoff_seconds: Mapped[float] = mapped_column(
+        Float, default=3.0, comment="环境类失败重试基础退避秒数（指数递增）"
+    )
     created_by: Mapped[str | None] = mapped_column(String(64))
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)

@@ -125,6 +125,9 @@ async def create_task(
         total_cases=len(case_ids),
         concurrency=payload.concurrency,
         qps_limit=payload.qps_limit,
+        retry_on_env_error=payload.retry_on_env_error,
+        max_env_retries=payload.max_env_retries,
+        retry_backoff_seconds=payload.retry_backoff_seconds,
         created_by=operator,
     )
     db.add(task)
@@ -262,6 +265,8 @@ async def task_executions(
             case_name=case_map.get(record.case_id, (None, None))[1],
             source=record.source,
             status=record.status,
+            attempt_no=record.attempt_no,
+            error_kind=record.error_kind,
             pass_flag=record.pass_flag,
             total_score=record.total_score,
             case_version=record.case_version,

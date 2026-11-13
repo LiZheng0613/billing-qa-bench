@@ -209,6 +209,7 @@ watch(
             <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-600">
               <span>v{{ item.case_version }}</span>
               <span>{{ sourceLabel(item.source) }}</span>
+              <span v-if="item.attempt_no > 1" class="text-amber-400">第 {{ item.attempt_no }} 次尝试</span>
               <span>得分 {{ formatScore(item.total_score) }}</span>
               <span>{{ formatMs(item.latency_ms) }}</span>
             </div>

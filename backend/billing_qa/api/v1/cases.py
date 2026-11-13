@@ -601,6 +601,8 @@ async def case_executions(
                 task_name=task_name,
                 source=record.source,
                 status=record.status,
+                attempt_no=record.attempt_no,
+                error_kind=record.error_kind,
                 pass_flag=record.pass_flag,
                 total_score=record.total_score,
                 case_version=record.case_version,

@@ -18,6 +18,9 @@ class TaskCreate(BaseModel):
     case_ids: list[int] = Field(min_length=1)
     concurrency: int = Field(default=3, ge=1, le=20)
     qps_limit: float = Field(default=5.0, gt=0, le=100)
+    retry_on_env_error: bool = True
+    max_env_retries: int = Field(default=2, ge=0, le=10)
+    retry_backoff_seconds: float = Field(default=3.0, ge=0, le=60)
     auto_start: bool = True
 
 
@@ -38,6 +41,9 @@ class TaskOut(ORMModel):
     max_turns_count: int
     concurrency: int
     qps_limit: float
+    retry_on_env_error: bool
+    max_env_retries: int
+    retry_backoff_seconds: float
     created_by: str | None
     created_at: datetime
     started_at: datetime | None
@@ -74,6 +80,7 @@ class TaskMetrics(BaseModel):
     simulator_tokens: int
     judge_tokens: int
     total_tokens: int
+    env_retry_count: int = 0
     eta_seconds: float | None
     elapsed_seconds: float
     throughput_per_minute: float
@@ -148,6 +155,8 @@ class ExecutionListItem(BaseModel):
     case_version: int
     source: str
     status: str
+    attempt_no: int = 1
+    error_kind: str | None = None
     pass_flag: bool | None
     total_score: float | None
     termination_status: str | None

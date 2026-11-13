@@ -34,5 +34,12 @@ class ValidationError(AppError):
 
 
 class TargetApiError(AppError):
-    def __init__(self, message: str = "被测接口调用失败"):
+    """被测接口调用失败。
+
+    retryable=True 表示环境类故障（连接失败、超时、5xx/429、响应无法解析等），
+    调度器可以按任务配置自动重试；业务类错误（4xx 参数错误、配置缺失等）不可重试。
+    """
+
+    def __init__(self, message: str = "被测接口调用失败", *, retryable: bool = False):
         super().__init__(message, code="TARGET_API_ERROR", status_code=502)
+        self.retryable = retryable

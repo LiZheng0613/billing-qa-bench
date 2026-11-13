@@ -12,9 +12,9 @@ from sqlalchemy import engine_from_config, pool
 # 保证 alembic 命令在 backend 目录下可直接导入 billing_qa
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from billing_qa.core.config import settings  # noqa: E402
-from billing_qa.db.base import Base  # noqa: E402
-import billing_qa.models  # noqa: F401,E402  # 注册全部表结构
+import billing_qa.models  # noqa: F401  # 注册全部表结构
+from billing_qa.core.config import settings
+from billing_qa.db.base import Base
 
 config = context.config
 if config.config_file_name is not None:

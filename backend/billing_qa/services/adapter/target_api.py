@@ -151,15 +151,18 @@ class TargetApiAdapter:
             else:
                 response = await client.request(method, url, headers=headers or None, json=body)
         except httpx.HTTPError as exc:
-            raise TargetApiError(f"前置鉴权接口调用失败: {exc}") from exc
+            # 鉴权服务网络不可达属于环境故障，可自动重试
+            raise TargetApiError(f"前置鉴权接口调用失败: {exc}", retryable=True) from exc
         if response.status_code >= 400:
             raise TargetApiError(
-                f"前置鉴权失败 HTTP {response.status_code}: {response.text[:300]}"
+                f"前置鉴权失败 HTTP {response.status_code}: {response.text[:300]}",
+                retryable=is_retryable_status(response.status_code),
             )
         try:
             payload = response.json()
         except ValueError as exc:
-            raise TargetApiError("前置鉴权响应不是合法 JSON") from exc
+            # 网关错误页 / 截断响应，视为环境异常
+            raise TargetApiError("前置鉴权响应不是合法 JSON", retryable=True) from exc
         token = extract_value(payload, hook.get("token_jsonpath") or "$.data.token")
         if token in (None, ""):
             raise TargetApiError("前置鉴权未提取到 Token，请检查 token_jsonpath 配置")
@@ -226,12 +229,19 @@ class TargetApiAdapter:
                     text = await response.aread()
                     raise TargetApiError(
                         f"被测接口返回 HTTP {response.status_code}: "
-                        f"{text.decode('utf-8', 'ignore')[:300]}"
+                        f"{text.decode('utf-8', 'ignore')[:300]}",
+                        retryable=is_retryable_status(response.status_code),
                     )
                 content_type = response.headers.get("content-type", "")
                 if self.env.is_stream or "text/event-stream" in content_type:
                     sse_result = await consume_sse(response, started)
                     latency = round((time.perf_counter() - started) * 1000, 2)
+                    if not sse_result.frames and not sse_result.content:
+                        # 流式接口返回空帧，通常是上游网关/服务异常，可重试
+                        raise TargetApiError(
+                            f"SSE 响应为空：status={response.status_code}，未解析到任何数据帧",
+                            retryable=True,
+                        )
                     payload: Any = {
                         **sse_result.merged_metadata,
                         "_content": sse_result.content,
@@ -265,7 +275,14 @@ class TargetApiAdapter:
                 try:
                     payload = response.json()
                 except ValueError:
-                    payload = {"content": text.decode("utf-8", "ignore")}
+                    decoded = text.decode("utf-8", "ignore")
+                    if decoded.lstrip().lower().startswith(("<!doctype", "<html")):
+                        raise TargetApiError(
+                            f"被测接口返回 HTML 错误页（HTTP {response.status_code}），"
+                            "通常是网关或上游服务异常",
+                            retryable=True,
+                        ) from None
+                    payload = {"content": decoded}
                 final_answer = extract_final_answer(payload, self.env.extractors)
                 extracted = extract_all(payload, self.env.extractors)
                 if not final_answer and isinstance(payload, dict):
@@ -284,9 +301,16 @@ class TargetApiAdapter:
                     response_payload={"mode": "json", "body": payload},
                 )
             except httpx.TimeoutException as exc:
-                raise TargetApiError(f"被测接口超时（{self.env.timeout_seconds}s）") from exc
+                raise TargetApiError(
+                    f"被测接口超时（{self.env.timeout_seconds}s）", retryable=True
+                ) from exc
             except httpx.HTTPError as exc:
-                raise TargetApiError(f"被测接口网络异常: {exc}") from exc
+                raise TargetApiError(f"被测接口网络异常: {exc}", retryable=True) from exc
+
+
+def is_retryable_status(status_code: int) -> bool:
+    """HTTP 状态码是否属于环境类、可重试的故障。"""
+    return status_code == 429 or status_code >= 500
 
 
 def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:

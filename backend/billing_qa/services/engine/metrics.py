@@ -75,6 +75,7 @@ async def compute_task_metrics(db: AsyncSession, task: BatchTask) -> TaskMetrics
     turns = [int(r.turns_used) for r in records]
     simulator_tokens = sum(int(r.simulator_tokens or 0) for r in records)
     judge_tokens = sum(int(r.judge_tokens or 0) for r in records)
+    env_retry_count = len([r for r in records if int(r.attempt_no or 1) > 1])
 
     now = datetime.now()
     started = task.started_at or task.created_at or now
@@ -101,6 +102,7 @@ async def compute_task_metrics(db: AsyncSession, task: BatchTask) -> TaskMetrics
         simulator_tokens=simulator_tokens,
         judge_tokens=judge_tokens,
         total_tokens=simulator_tokens + judge_tokens,
+        env_retry_count=env_retry_count,
         eta_seconds=eta,
         elapsed_seconds=round(elapsed, 2),
         throughput_per_minute=throughput,

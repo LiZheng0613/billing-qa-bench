@@ -19,6 +19,7 @@ from billing_qa.models.execution import ExecutionRecord, JudgeResult, TurnTrace
 from billing_qa.services.adapter.renderer import format_history, render_prompt
 from billing_qa.services.adapter.target_api import TargetApiAdapter, TargetResponse
 from billing_qa.services.engine.context import ExecutionContext, load_execution_context
+from billing_qa.services.engine.error_policy import classify_exception
 from billing_qa.services.engine.judge import (
     JudgeOutcome,
     build_judge_variables,
@@ -75,6 +76,7 @@ class CaseExecutor:
         task_id: int | None = None,
         source: str = ExecutionSource.BATCH,
         environment_id: int | None = None,
+        attempt_no: int = 1,
     ) -> int:
         execution_id = await self._create_execution(
             case_id=case_id,
@@ -83,6 +85,7 @@ class CaseExecutor:
             task_id=task_id,
             source=source,
             environment_id=environment_id,
+            attempt_no=attempt_no,
         )
         wall_started = time.perf_counter()
         try:
@@ -409,6 +412,7 @@ class CaseExecutor:
         task_id: int | None,
         source: str,
         environment_id: int | None,
+        attempt_no: int,
     ) -> int:
         async with SessionLocal() as db:
             record = ExecutionRecord(
@@ -420,6 +424,7 @@ class CaseExecutor:
                 environment_id=environment_id or snapshot.get("environment_id"),
                 source=source,
                 status="RUNNING",
+                attempt_no=max(1, int(attempt_no)),
                 started_at=now(),
             )
             db.add(record)
@@ -490,6 +495,7 @@ class CaseExecutor:
                 return
             record.status = ExecutionStatus.ERROR
             record.pass_flag = False
+            record.error_kind = classify_exception(exc)
             record.error_message = message[:4000]
             record.finished_at = now()
             await db.commit()

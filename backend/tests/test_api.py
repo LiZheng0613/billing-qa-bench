@@ -213,10 +213,16 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
             "case_ids": [target["id"]],
             "concurrency": 1,
             "qps_limit": 10,
+            "retry_on_env_error": True,
+            "max_env_retries": 2,
+            "retry_backoff_seconds": 1.5,
         },
     )
     assert task.status_code == 200, task.text
     task_id = task.json()["id"]
+    assert task.json()["retry_on_env_error"] is True
+    assert task.json()["max_env_retries"] == 2
+    assert task.json()["retry_backoff_seconds"] == 1.5
     finished = await _wait_task(client, task_id)
     assert finished["status"] == "COMPLETED"
 
@@ -224,9 +230,12 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     assert metrics["finished_cases"] == 1
     assert metrics["total_tokens"] > 0
     assert metrics["progress"] == 100.0
+    assert metrics["env_retry_count"] == 0
 
     executions = (await client.get(f"/tasks/{task_id}/executions")).json()
     assert len(executions["items"]) == 1
+    assert executions["items"][0]["attempt_no"] == 1
+    assert executions["items"][0]["error_kind"] is None
     detail = (await client.get(f"/executions/{executions['items'][0]['id']}")).json()
     assert detail["turns"] and detail["case_snapshot"]
     assert detail["case_version"] == target["current_version"]
