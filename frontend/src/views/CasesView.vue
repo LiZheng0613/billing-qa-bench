@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
 import StatusPill from '../components/StatusPill.vue'
 import TestCaseDrawer from './components/TestCaseDrawer.vue'
@@ -52,6 +53,30 @@ const trendOpen = ref(false)
 const trendCase = ref<TestCase | null>(null)
 const compareOpen = ref(false)
 const compareCase = ref<TestCase | null>(null)
+
+const selectedIds = ref<number[]>([])
+const batchOpen = ref(false)
+const batchCreating = ref(false)
+const batchForm = reactive({
+  name: '',
+  environment_id: null as number | null,
+  concurrency: 3,
+  qps_limit: 5,
+  retry_on_env_error: true,
+  max_env_retries: 2,
+  retry_backoff_seconds: 3,
+  auto_start: true,
+})
+
+const activeOnPage = computed(() => cases.value.filter((item) => item.status === 'ACTIVE'))
+
+const pageAllSelected = computed(
+  () =>
+    activeOnPage.value.length > 0 &&
+    activeOnPage.value.every((item) => selectedIds.value.includes(item.id)),
+)
+
+const pageSelectableCount = computed(() => activeOnPage.value.length)
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
@@ -229,6 +254,106 @@ async function exportCases(format: 'json' | 'xlsx'): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------- 批量执行
+function toggleSelect(item: TestCase): void {
+  if (item.status !== 'ACTIVE') return
+  const index = selectedIds.value.indexOf(item.id)
+  if (index >= 0) selectedIds.value.splice(index, 1)
+  else selectedIds.value.push(item.id)
+}
+
+function togglePageSelection(): void {
+  if (pageAllSelected.value) {
+    const pageIds = new Set(cases.value.map((item) => item.id))
+    selectedIds.value = selectedIds.value.filter((id) => !pageIds.has(id))
+    return
+  }
+  const ids = cases.value
+    .filter((item) => item.status === 'ACTIVE')
+    .map((item) => item.id)
+  selectedIds.value = Array.from(new Set([...selectedIds.value, ...ids]))
+}
+
+async function selectAllFiltered(): Promise<void> {
+  try {
+    const batchSize = 200
+    const ids: number[] = []
+    let current = 1
+    while (true) {
+      const data = await api.cases.list({
+        page: current,
+        page_size: batchSize,
+        keyword: keyword.value.trim() || undefined,
+        case_type: caseType.value || undefined,
+        status: status.value || undefined,
+      })
+      ids.push(
+        ...data.items.filter((item) => item.status === 'ACTIVE').map((item) => item.id),
+      )
+      if (current * batchSize >= data.total) break
+      current += 1
+    }
+    selectedIds.value = Array.from(new Set([...selectedIds.value, ...ids]))
+    toast.success(`已选中 ${ids.length} 条筛选结果（仅启用用例可执行）`)
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  }
+}
+
+function clearSelection(): void {
+  selectedIds.value = []
+}
+
+function openBatch(): void {
+  if (selectedIds.value.length === 0) {
+    toast.error('请先勾选要执行的用例')
+    return
+  }
+  const stamp = new Date()
+  batchForm.name = `批量执行 ${stamp.getMonth() + 1}/${stamp.getDate()} ${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}`
+  batchForm.environment_id = null
+  batchForm.concurrency = 3
+  batchForm.qps_limit = 5
+  batchForm.retry_on_env_error = true
+  batchForm.max_env_retries = 2
+  batchForm.retry_backoff_seconds = 3
+  batchForm.auto_start = true
+  batchOpen.value = true
+}
+
+async function submitBatch(): Promise<void> {
+  if (!batchForm.name.trim()) {
+    toast.error('请填写任务名称')
+    return
+  }
+  if (selectedIds.value.length === 0) {
+    toast.error('请至少选择一条用例')
+    return
+  }
+  batchCreating.value = true
+  try {
+    const created = await api.tasks.create({
+      name: batchForm.name.trim(),
+      environment_id: batchForm.environment_id,
+      case_ids: [...selectedIds.value],
+      concurrency: batchForm.concurrency,
+      qps_limit: batchForm.qps_limit,
+      retry_on_env_error: batchForm.retry_on_env_error,
+      max_env_retries: batchForm.max_env_retries,
+      retry_backoff_seconds: batchForm.retry_backoff_seconds,
+      auto_start: batchForm.auto_start,
+    })
+    toast.success(`批量任务 ${created.code} 已创建，共 ${selectedIds.value.length} 条用例`)
+    batchOpen.value = false
+    selectedIds.value = []
+    await router.push({ name: 'dashboard', query: { task: String(created.id) } })
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  } finally {
+    batchCreating.value = false
+  }
+}
+
 function goPage(next: number): void {
   if (next < 1 || next > pageCount.value) return
   page.value = next
@@ -247,7 +372,7 @@ onMounted(() => {
       <div>
         <h2 class="text-lg font-semibold text-slate-100">用例资产</h2>
         <p class="mt-1 text-xs text-slate-500">
-          单轮 / 静态多轮 / 动态多轮三类用例，支持版本快照、字段 Diff、回滚、导入导出与单条调试。
+          单轮 / 静态多轮 / 动态多轮三类用例，支持批量执行、版本快照、字段 Diff、回滚、导入导出与单条调试。
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -255,6 +380,17 @@ onMounted(() => {
         <button class="btn-ghost" @click="triggerImport">导入</button>
         <button class="btn-ghost" @click="exportCases('json')">导出 JSON</button>
         <button class="btn-ghost" @click="exportCases('xlsx')">导出 Excel</button>
+        <button
+          class="btn-primary"
+          :class="selectedIds.length ? '' : 'opacity-50'"
+          :disabled="selectedIds.length === 0"
+          @click="openBatch"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4L19 7" />
+          </svg>
+          批量执行（{{ selectedIds.length }}）
+        </button>
         <button class="btn-primary" @click="openCreate">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" d="M12 5v14M5 12h14" />
@@ -303,13 +439,34 @@ onMounted(() => {
           <span class="text-slate-700">|</span>
           <span>当前页：单轮 {{ typeCount.single }} · 静态 {{ typeCount.static }} · 动态 {{ typeCount.dynamic }}</span>
         </div>
-        <button class="text-[11px] text-slate-500 transition hover:text-slate-200" @click="loadCases">刷新</button>
+        <div class="flex flex-wrap items-center gap-2">
+          <span v-if="selectedIds.length" class="text-[11px] text-indigo-300">
+            已选 {{ selectedIds.length }} 条
+          </span>
+          <button class="btn-ghost btn-xs" @click="selectAllFiltered">全选筛选结果</button>
+          <button v-if="selectedIds.length" class="btn-ghost btn-xs" @click="clearSelection">
+            清空选择
+          </button>
+          <button class="text-[11px] text-slate-500 transition hover:text-slate-200" @click="loadCases">
+            刷新
+          </button>
+        </div>
       </div>
 
       <div class="overflow-x-auto">
         <table class="table-shell">
           <thead>
             <tr>
+              <th class="th w-10">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-slate-600 bg-slate-900"
+                  :checked="pageAllSelected"
+                  :disabled="pageSelectableCount === 0"
+                  title="全选当前页启用用例"
+                  @change="togglePageSelection"
+                />
+              </th>
               <th class="th">用例</th>
               <th class="th">类型</th>
               <th class="th">状态</th>
@@ -321,6 +478,16 @@ onMounted(() => {
           </thead>
           <tbody>
             <tr v-for="item in cases" :key="item.id">
+              <td class="td">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-slate-600 bg-slate-900"
+                  :checked="selectedIds.includes(item.id)"
+                  :disabled="item.status !== 'ACTIVE'"
+                  :title="item.status === 'ACTIVE' ? '选择该用例' : '仅启用用例可批量执行'"
+                  @change="toggleSelect(item)"
+                />
+              </td>
               <td class="td max-w-[300px]">
                 <p class="font-mono text-xs text-indigo-300">{{ item.code }}</p>
                 <p class="mt-0.5 truncate text-sm text-slate-200" :title="item.name">{{ item.name }}</p>
@@ -383,6 +550,104 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <BaseModal
+      v-model="batchOpen"
+      title="批量执行用例"
+      subtitle="设置并发、QPS 与环境失败自动重试策略"
+      width="lg"
+    >
+      <div class="space-y-4">
+        <div class="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
+          已选择 <span class="font-semibold">{{ selectedIds.length }}</span> 条启用用例，执行进度可在「测试大盘」实时查看。
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="label">任务名称</label>
+            <input v-model="batchForm.name" class="input" placeholder="例如：账单全量回归" />
+          </div>
+          <div>
+            <label class="label">执行环境</label>
+            <select v-model="batchForm.environment_id" class="input">
+              <option :value="null">不绑定环境（使用用例配置）</option>
+              <option v-for="env in environments" :key="env.id" :value="env.id">
+                {{ env.name }}（{{ env.code }}）
+              </option>
+            </select>
+          </div>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="label">并发数</label>
+            <input v-model.number="batchForm.concurrency" class="input" type="number" min="1" max="20" />
+            <p class="mt-1 text-[10px] text-slate-500">同时执行的用例数上限，建议不超过被测服务承载能力。</p>
+          </div>
+          <div>
+            <label class="label">QPS 上限</label>
+            <input v-model.number="batchForm.qps_limit" class="input" type="number" min="0.1" max="100" step="0.5" />
+            <p class="mt-1 text-[10px] text-slate-500">任务整体每秒请求上限，重试请求同样受限。</p>
+          </div>
+        </div>
+        <div class="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+          <label class="flex items-start gap-2 text-sm text-slate-300">
+            <input
+              v-model="batchForm.retry_on_env_error"
+              type="checkbox"
+              class="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-900"
+            />
+            <span>
+              环境类失败自动重试
+              <span class="block text-[11px] text-slate-500">
+                仅重试连接失败、超时、HTTP 429/5xx、SSE 空响应等环境故障；业务失败不会重试。
+              </span>
+            </span>
+          </label>
+          <div
+            class="grid gap-3 sm:grid-cols-2"
+            :class="batchForm.retry_on_env_error ? '' : 'pointer-events-none opacity-40'"
+          >
+            <div>
+              <label class="label">最大重试次数</label>
+              <input
+                v-model.number="batchForm.max_env_retries"
+                class="input"
+                type="number"
+                min="0"
+                max="10"
+                :disabled="!batchForm.retry_on_env_error"
+              />
+            </div>
+            <div>
+              <label class="label">基础退避（秒）</label>
+              <input
+                v-model.number="batchForm.retry_backoff_seconds"
+                class="input"
+                type="number"
+                min="0"
+                max="60"
+                step="0.5"
+                :disabled="!batchForm.retry_on_env_error"
+              />
+            </div>
+          </div>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-slate-300">
+          <input
+            v-model="batchForm.auto_start"
+            type="checkbox"
+            class="h-4 w-4 rounded border-slate-600 bg-slate-900"
+          />
+          创建后立即启动
+        </label>
+      </div>
+
+      <template #footer>
+        <button class="btn-ghost" @click="batchOpen = false">取消</button>
+        <button class="btn-primary" :disabled="batchCreating" @click="submitBatch">
+          {{ batchCreating ? '创建中…' : `创建并执行（${selectedIds.length} 条）` }}
+        </button>
+      </template>
+    </BaseModal>
 
     <TestCaseDrawer
       v-model="drawerOpen"

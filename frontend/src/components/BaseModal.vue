@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = withDefaults(
   defineProps<{
@@ -29,6 +29,8 @@ const widthClass = computed(() => {
   }
 })
 
+const overlayRef = ref<HTMLElement | null>(null)
+
 function close(): void {
   emit('update:modelValue', false)
 }
@@ -48,61 +50,65 @@ onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   document.body.style.overflow = ''
+  // 路由切换时组件可能在弹窗关闭动画未结束时被卸载，Teleport 到 body 的节点存在残留风险。
+  // 这里主动摘除遮罩，避免新页面出现无法关闭的幽灵弹窗。
+  if (overlayRef.value) {
+    overlayRef.value.remove()
+    overlayRef.value = null
+  }
 })
 </script>
 
 <template>
   <Teleport to="body">
-    <Transition name="modal">
-      <div
-        v-if="modelValue"
-        class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/80 p-3 backdrop-blur-sm sm:p-6"
-        @click.self="closeOnBackdrop && close()"
-      >
-        <div class="card my-4 w-full animate-fade-up sm:my-8" :class="widthClass">
-          <header class="flex items-start justify-between gap-4 border-b border-slate-800 px-5 py-4">
-            <div class="min-w-0">
-              <h2 class="truncate text-base font-semibold text-slate-100">{{ title }}</h2>
-              <p v-if="subtitle" class="mt-1 text-xs text-slate-500">{{ subtitle }}</p>
-            </div>
-            <button
-              class="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-800 hover:text-slate-200"
-              aria-label="关闭"
-              @click="close"
-            >
-              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" />
-              </svg>
-            </button>
-          </header>
-          <div class="max-h-[72vh] overflow-y-auto px-5 py-4">
-            <slot />
+    <div
+      v-if="modelValue"
+      ref="overlayRef"
+      class="modal-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/80 p-3 backdrop-blur-sm sm:p-6"
+      @click.self="closeOnBackdrop && close()"
+    >
+      <div class="card my-4 w-full animate-fade-up sm:my-8" :class="widthClass">
+        <header class="flex items-start justify-between gap-4 border-b border-slate-800 px-5 py-4">
+          <div class="min-w-0">
+            <h2 class="truncate text-base font-semibold text-slate-100">{{ title }}</h2>
+            <p v-if="subtitle" class="mt-1 text-xs text-slate-500">{{ subtitle }}</p>
           </div>
-          <footer
-            v-if="$slots.footer"
-            class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-800 px-5 py-3"
+          <button
+            class="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-800 hover:text-slate-200"
+            aria-label="关闭"
+            @click="close"
           >
-            <slot name="footer" />
-          </footer>
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </header>
+        <div class="max-h-[72vh] overflow-y-auto px-5 py-4">
+          <slot />
         </div>
+        <footer
+          v-if="$slots.footer"
+          class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-800 px-5 py-3"
+        >
+          <slot name="footer" />
+        </footer>
       </div>
-    </Transition>
+    </div>
   </Teleport>
 </template>
 
 <style scoped>
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.2s ease;
+/* 不使用 <Transition>：路由切换时 leave 过渡中的 Teleport 节点可能残留为幽灵弹窗。
+   进入动画由关键帧完成，关闭时同步移除。 */
+.modal-overlay {
+  animation: modal-fade-in 0.18s ease-out;
 }
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-.modal-enter-active .card {
-  transition: transform 0.2s ease;
-}
-.modal-enter-from .card {
-  transform: translateY(10px);
+@keyframes modal-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 </style>

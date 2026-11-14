@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import { buildWebSocketUrl } from '../api/client'
 import BaseModal from '../components/BaseModal.vue'
@@ -21,6 +21,7 @@ import { caseTypeLabel, formatDateTime, formatPercent } from '../utils/format'
 import { useToastStore } from '../stores/toast'
 
 const router = useRouter()
+const route = useRoute()
 const toast = useToastStore()
 
 const cases = ref<TestCase[]>([])
@@ -97,7 +98,9 @@ async function loadBase(): Promise<void> {
     cases.value = allCases
     tasks.value = taskPage.items
     environments.value = envPage.items
+    const requestedId = Number(route.query.task)
     const preferred =
+      (requestedId ? tasks.value.find((item) => item.id === requestedId) : undefined) ??
       tasks.value.find((item) => item.status === 'RUNNING') ??
       tasks.value.find((item) => item.status === 'PAUSED') ??
       tasks.value[0]
