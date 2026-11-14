@@ -44,14 +44,22 @@
     outline-offset: 2px;
   }
 
+  /*
+   * 仅在用户要求减少动效时关闭循环 / 装饰性动画与位移动效。
+   * 状态切换的过渡（含抽屉进出场）保留，但组件内会在 reduce 下退化为
+   * "小幅位移 + 淡入淡出"，这样界面仍有反馈，又不会产生大幅位移动画。
+   */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
     *::after {
       animation-duration: 0.001ms !important;
       animation-iteration-count: 1 !important;
-      transition-duration: 0.001ms !important;
       scroll-behavior: auto !important;
+    }
+
+    .tile-hover:hover {
+      transform: none;
     }
   }
 }

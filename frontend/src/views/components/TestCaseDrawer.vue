@@ -772,20 +772,55 @@ function submit(): void {
 </template>
 
 <style scoped>
-.drawer-enter-active,
+/*
+ * 抽屉进出场：遮罩淡入 + 面板从右侧滑入（进场 300ms / 离场 240ms）。
+ * 淡/滑分属两层，但根节点（遮罩）时长 >= 面板时长，
+ * 否则 Vue 会提前移除 enter/leave-active，导致面板动画被截断。
+ */
+.drawer-enter-active {
+  transition: opacity 0.3s ease-out;
+}
 .drawer-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 0.24s ease-in;
 }
 .drawer-enter-from,
 .drawer-leave-to {
   opacity: 0;
 }
+
 .drawer-enter-active aside,
 .drawer-leave-active aside {
-  transition: transform 0.22s ease;
+  will-change: transform, opacity;
+}
+.drawer-enter-active aside {
+  transition:
+    transform 0.3s cubic-bezier(0.22, 0.68, 0, 1),
+    opacity 0.3s ease-out;
+}
+.drawer-leave-active aside {
+  transition:
+    transform 0.24s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.24s ease-in;
 }
 .drawer-enter-from aside,
 .drawer-leave-to aside {
   transform: translateX(100%);
+  opacity: 0.6;
+}
+
+/* 减少动效偏好：把大幅位移换成一档小位移（16px）＋淡入，仍有"打开"的反馈 */
+@media (prefers-reduced-motion: reduce) {
+  .drawer-enter-from aside,
+  .drawer-leave-to aside {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+  .drawer-enter-active aside,
+  .drawer-leave-active aside {
+    transition:
+      transform 0.2s ease-out,
+      opacity 0.2s ease-out;
+    will-change: auto;
+  }
 }
 </style>

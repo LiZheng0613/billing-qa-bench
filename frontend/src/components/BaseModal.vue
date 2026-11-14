@@ -111,4 +111,14 @@ onBeforeUnmount(() => {
     opacity: 1;
   }
 }
+
+/* 减少动效偏好：遮罩与卡片改为纯淡入（去掉上移动效），仍保留短暂的"出现"过渡 */
+@media (prefers-reduced-motion: reduce) {
+  .modal-overlay {
+    animation: modal-fade-in 0.14s ease-out !important;
+  }
+  .modal-overlay .card {
+    animation: modal-fade-in 0.16s ease-out !important;
+  }
+}
 </style>
