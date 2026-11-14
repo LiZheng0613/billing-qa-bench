@@ -34,13 +34,13 @@ const chartOption = shallowRef<EChartsOption | null>(null)
 useEChart(chartEl, chartOption)
 
 const stats = computed(() => [
-  { label: '通过率', value: formatPercent(trend.value?.pass_rate, 1), tone: 'text-emerald-300' },
-  { label: '平均分', value: formatScore(trend.value?.avg_score), tone: 'text-indigo-300' },
-  { label: '平均时延', value: formatMs(trend.value?.avg_latency_ms), tone: 'text-sky-300' },
+  { label: '通过率', value: formatPercent(trend.value?.pass_rate, 1), tone: 'text-emerald-700' },
+  { label: '平均分', value: formatScore(trend.value?.avg_score), tone: 'text-indigo-600' },
+  { label: '平均时延', value: formatMs(trend.value?.avg_latency_ms), tone: 'text-sky-700' },
   {
     label: '稳定性',
     value: trend.value?.flaky ? '波动 / Flaky' : '稳定',
-    tone: trend.value?.flaky ? 'text-amber-300' : 'text-emerald-300',
+    tone: trend.value?.flaky ? 'text-amber-700' : 'text-emerald-700',
   },
 ])
 
@@ -54,21 +54,22 @@ function buildOption(): void {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(15, 23, 42, 0.95)',
-      borderColor: '#334155',
-      textStyle: { color: '#e2e8f0', fontSize: 12 },
+      backgroundColor: 'rgba(255, 255, 255, 0.98)',
+      borderColor: '#e8e8ed',
+      textStyle: { color: '#111827', fontSize: 12 },
+      extraCssText: 'box-shadow: 0 10px 30px -18px rgba(17,24,39,.45); border-radius: 10px;',
     },
     legend: {
       data: ['总分', '时延'],
-      textStyle: { color: '#94a3b8', fontSize: 11 },
+      textStyle: { color: '#6b7280', fontSize: 11 },
       top: 0,
     },
     grid: { left: 44, right: 52, top: 32, bottom: 28 },
     xAxis: {
       type: 'category',
       data: points.map((point) => `#${point.execution_id}\n${formatTime(point.started_at)}`),
-      axisLine: { lineStyle: { color: '#334155' } },
-      axisLabel: { color: '#64748b', fontSize: 10 },
+      axisLine: { lineStyle: { color: '#e8e8ed' } },
+      axisLabel: { color: '#6b7280', fontSize: 10 },
       axisTick: { show: false },
     },
     yAxis: [
@@ -77,16 +78,16 @@ function buildOption(): void {
         min: 0,
         max: 100,
         name: '分',
-        nameTextStyle: { color: '#64748b', fontSize: 10 },
-        splitLine: { lineStyle: { color: 'rgba(51, 65, 85, 0.5)' } },
-        axisLabel: { color: '#64748b', fontSize: 10 },
+        nameTextStyle: { color: '#6b7280', fontSize: 10 },
+        splitLine: { lineStyle: { color: '#f0f0f4' } },
+        axisLabel: { color: '#6b7280', fontSize: 10 },
       },
       {
         type: 'value',
         name: 'ms',
-        nameTextStyle: { color: '#64748b', fontSize: 10 },
+        nameTextStyle: { color: '#6b7280', fontSize: 10 },
         splitLine: { show: false },
-        axisLabel: { color: '#64748b', fontSize: 10 },
+        axisLabel: { color: '#6b7280', fontSize: 10 },
       },
     ],
     series: [
@@ -96,8 +97,8 @@ function buildOption(): void {
         smooth: true,
         symbolSize: 7,
         data: points.map((point) => point.total_score),
-        itemStyle: { color: '#818cf8' },
-        lineStyle: { width: 2, color: '#818cf8' },
+        itemStyle: { color: '#4f46e5' },
+        lineStyle: { width: 2, color: '#4f46e5' },
         areaStyle: {
           color: {
             type: 'linear',
@@ -106,8 +107,8 @@ function buildOption(): void {
             x2: 0,
             y2: 1,
             colorStops: [
-              { offset: 0, color: 'rgba(129, 140, 248, 0.28)' },
-              { offset: 1, color: 'rgba(129, 140, 248, 0.02)' },
+              { offset: 0, color: 'rgba(79, 70, 229, 0.18)' },
+              { offset: 1, color: 'rgba(79, 70, 229, 0.01)' },
             ],
           },
         },
@@ -119,8 +120,8 @@ function buildOption(): void {
         yAxisIndex: 1,
         symbolSize: 5,
         data: points.map((point) => point.latency_ms),
-        itemStyle: { color: '#22d3ee' },
-        lineStyle: { width: 1.5, type: 'dashed', color: '#22d3ee' },
+        itemStyle: { color: '#0ea5e9' },
+        lineStyle: { width: 1.5, type: 'dashed', color: '#0ea5e9' },
       },
     ],
   }
@@ -169,13 +170,13 @@ watch(
     />
     <div v-else class="space-y-5">
       <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <div v-for="item in stats" :key="item.label" class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2.5">
+        <div v-for="item in stats" :key="item.label" class="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5">
           <p class="text-[10px] uppercase tracking-wider text-slate-500">{{ item.label }}</p>
           <p class="mt-0.5 text-lg font-semibold tabular-nums" :class="item.tone">{{ item.value }}</p>
         </div>
       </div>
 
-      <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+      <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
         <div ref="chartEl" class="h-64 w-full" />
       </div>
 
@@ -184,7 +185,7 @@ watch(
           <h3 class="panel-title">最近执行记录</h3>
           <button class="btn-ghost btn-xs" @click="emit('view-all')">查看全部历史</button>
         </div>
-        <div class="overflow-x-auto rounded-xl border border-slate-800">
+        <div class="overflow-x-auto rounded-xl border border-slate-200">
           <table class="table-shell">
             <thead>
               <tr>

@@ -90,9 +90,9 @@ watch(
 )
 
 function turnTone(turn: TurnTrace): string {
-  if (turn.input_source === 'SIMULATOR') return 'border-fuchsia-500/40 text-fuchsia-300'
-  if (turn.input_source === 'STATIC') return 'border-sky-500/40 text-sky-300'
-  return 'border-indigo-500/40 text-indigo-300'
+  if (turn.input_source === 'SIMULATOR') return 'border-fuchsia-500/40 text-fuchsia-700'
+  if (turn.input_source === 'STATIC') return 'border-sky-200 text-sky-700'
+  return 'border-indigo-200 text-indigo-600'
 }
 
 function ruleCheckLabel(check: RuleCheckItem): string {
@@ -137,26 +137,26 @@ async function copyTraceUid(): Promise<void> {
       description="左侧列表支持按状态与来源筛选，点击任意记录查看全链路 Trace。"
     />
     <template v-else>
-      <header class="border-b border-slate-800 px-5 py-4">
+      <header class="border-b border-slate-200 px-5 py-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
-              <h2 class="truncate text-base font-semibold text-slate-100">
+              <h2 class="truncate text-base font-semibold text-slate-900">
                 {{ detail.case_code || `用例 #${detail.case_id}` }}
               </h2>
               <StatusPill :status="detail.status" />
               <span class="tag">v{{ detail.case_version }}</span>
               <span class="tag">{{ sourceLabel(detail.source) }}</span>
-              <span v-if="detail.attempt_no > 1" class="tag border-amber-500/40 text-amber-300">
+              <span v-if="detail.attempt_no > 1" class="tag border-amber-200 text-amber-700">
                 第 {{ detail.attempt_no }} 次尝试
               </span>
-              <span v-if="detail.error_kind === 'ENV'" class="tag border-amber-500/40 text-amber-300">
+              <span v-if="detail.error_kind === 'ENV'" class="tag border-amber-200 text-amber-700">
                 环境异常
               </span>
             </div>
             <p class="mt-1 truncate text-xs text-slate-500">{{ detail.case_name || '—' }}</p>
             <button
-              class="mt-1 inline-flex items-center gap-1 font-mono text-[10px] text-slate-600 transition hover:text-slate-300"
+              class="mt-1 inline-flex items-center gap-1 font-mono text-[10px] text-slate-500 transition hover:text-slate-700"
               @click="copyTraceUid"
             >
               trace: {{ detail.trace_uid }}
@@ -171,48 +171,48 @@ async function copyTraceUid(): Promise<void> {
         <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
           <div>
             <p class="text-[10px] uppercase tracking-wider text-slate-500">总分</p>
-            <p class="text-lg font-semibold tabular-nums text-indigo-300">{{ formatScore(detail.total_score) }}</p>
+            <p class="text-lg font-semibold tabular-nums text-indigo-600">{{ formatScore(detail.total_score) }}</p>
           </div>
           <div>
             <p class="text-[10px] uppercase tracking-wider text-slate-500">轮次</p>
-            <p class="text-lg font-semibold tabular-nums text-slate-100">{{ detail.turns_used }}</p>
+            <p class="text-lg font-semibold tabular-nums text-slate-900">{{ detail.turns_used }}</p>
           </div>
           <div>
             <p class="text-[10px] uppercase tracking-wider text-slate-500">总时延</p>
-            <p class="text-sm font-semibold tabular-nums text-slate-200">{{ formatMs(detail.latency_ms) }}</p>
+            <p class="text-sm font-semibold tabular-nums text-slate-800">{{ formatMs(detail.latency_ms) }}</p>
           </div>
           <div>
             <p class="text-[10px] uppercase tracking-wider text-slate-500">首字时延</p>
-            <p class="text-sm font-semibold tabular-nums text-slate-200">{{ formatMs(detail.ttft_ms) }}</p>
+            <p class="text-sm font-semibold tabular-nums text-slate-800">{{ formatMs(detail.ttft_ms) }}</p>
           </div>
           <div>
             <p class="text-[10px] uppercase tracking-wider text-slate-500">Tokens</p>
-            <p class="text-sm font-semibold tabular-nums text-slate-200">
+            <p class="text-sm font-semibold tabular-nums text-slate-800">
               {{ formatNumber(detail.simulator_tokens + detail.judge_tokens) }}
             </p>
           </div>
           <div>
             <p class="text-[10px] uppercase tracking-wider text-slate-500">终止状态</p>
-            <p class="text-xs font-medium text-slate-300">{{ statusLabel(detail.termination_status) }}</p>
+            <p class="text-xs font-medium text-slate-700">{{ statusLabel(detail.termination_status) }}</p>
           </div>
           <div>
             <p class="text-[10px] uppercase tracking-wider text-slate-500">开始时间</p>
-            <p class="text-[11px] text-slate-300">{{ formatDateTime(detail.started_at) }}</p>
+            <p class="text-[11px] text-slate-700">{{ formatDateTime(detail.started_at) }}</p>
           </div>
         </div>
 
         <p
           v-if="detail.error_message"
-          class="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300"
+          class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700"
         >
           {{ detail.error_message }}
         </p>
-        <div v-if="policyNotes.length" class="mt-3 space-y-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-          <p v-for="note in policyNotes" :key="note" class="text-xs text-amber-300">· {{ note }}</p>
+        <div v-if="policyNotes.length" class="mt-3 space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <p v-for="note in policyNotes" :key="note" class="text-xs text-amber-700">· {{ note }}</p>
         </div>
       </header>
 
-      <div class="flex flex-wrap gap-1 border-b border-slate-800 px-4 py-2">
+      <div class="flex flex-wrap gap-1 border-b border-slate-200 px-4 py-2">
         <button
           v-for="tab in TABS"
           :key="tab.key"
@@ -221,8 +221,8 @@ async function copyTraceUid(): Promise<void> {
           @click="activeTab = tab.key"
         >
           {{ tab.label }}
-          <span v-if="tab.key === 'turns'" class="ml-1 text-[10px] text-slate-500">{{ detail.turns.length }}</span>
-          <span v-if="tab.key === 'judges'" class="ml-1 text-[10px] text-slate-500">{{ detail.judges.length }}</span>
+          <span v-if="tab.key === 'turns'" class="ml-1 text-[10px] text-slate-600">{{ detail.turns.length }}</span>
+          <span v-if="tab.key === 'judges'" class="ml-1 text-[10px] text-slate-600">{{ detail.judges.length }}</span>
         </button>
       </div>
 
@@ -235,11 +235,11 @@ async function copyTraceUid(): Promise<void> {
             <article
               v-for="turn in detail.turns"
               :key="turn.id"
-              class="rounded-xl border border-slate-800 bg-slate-950/40"
+              class="rounded-xl border border-slate-200 bg-slate-50"
             >
-              <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/70 px-3 py-2">
+              <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="font-mono text-xs font-semibold text-indigo-300">T{{ turn.turn_index }}</span>
+                  <span class="font-mono text-xs font-semibold text-indigo-600">T{{ turn.turn_index }}</span>
                   <span class="rounded-full border px-2 py-0.5 text-[10px]" :class="turnTone(turn)">
                     {{ sourceLabel(turn.input_source) }}
                   </span>
@@ -258,26 +258,26 @@ async function copyTraceUid(): Promise<void> {
               <div class="grid gap-3 px-3 py-3 lg:grid-cols-2">
                 <div>
                   <p class="text-[10px] uppercase tracking-wider text-slate-500">用户提问</p>
-                  <p class="mt-1 whitespace-pre-wrap break-words rounded-lg bg-slate-900/70 p-2 text-sm text-slate-200">
+                  <p class="mt-1 whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-sm text-slate-800">
                     {{ turn.query }}
                   </p>
                   <div v-if="turn.simulator_thought" class="mt-2 rounded-lg border border-fuchsia-500/20 bg-fuchsia-500/5 p-2">
                     <p class="text-[10px] uppercase tracking-wider text-fuchsia-400/80">模拟器思考</p>
-                    <p class="mt-1 whitespace-pre-wrap break-words text-xs text-slate-400">{{ turn.simulator_thought }}</p>
+                    <p class="mt-1 whitespace-pre-wrap break-words text-xs text-slate-600">{{ turn.simulator_thought }}</p>
                   </div>
                   <div v-if="turn.hidden_context_released?.length" class="mt-2">
                     <p class="text-[10px] uppercase tracking-wider text-slate-500">本轮释放隐藏上下文</p>
-                    <pre class="mono mt-1 rounded-lg bg-slate-900/70 p-2 text-slate-400">{{ safeJson(turn.hidden_context_released) }}</pre>
+                    <pre class="mono mt-1 rounded-lg bg-white p-2 text-slate-600">{{ safeJson(turn.hidden_context_released) }}</pre>
                   </div>
                 </div>
                 <div>
                   <p class="text-[10px] uppercase tracking-wider text-slate-500">客服最终回复</p>
-                  <p class="mt-1 whitespace-pre-wrap break-words rounded-lg bg-slate-900/70 p-2 text-sm text-slate-200">
+                  <p class="mt-1 whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-sm text-slate-800">
                     {{ turn.final_answer || '—' }}
                   </p>
                   <div v-if="turn.generated_sql" class="mt-2">
                     <p class="text-[10px] uppercase tracking-wider text-slate-500">生成 SQL</p>
-                    <pre class="mono mt-1 overflow-auto rounded-lg bg-slate-900/70 p-2 text-sky-300">{{ turn.generated_sql }}</pre>
+                    <pre class="mono mt-1 overflow-auto rounded-lg bg-white p-2 text-sky-700">{{ turn.generated_sql }}</pre>
                   </div>
                   <div v-if="turn.api_params" class="mt-2">
                     <JsonViewer :value="turn.api_params" label="API 参数" max-height="120px" />
@@ -285,22 +285,22 @@ async function copyTraceUid(): Promise<void> {
                 </div>
               </div>
 
-              <div v-if="turn.raw_db_data" class="border-t border-slate-800/70 px-3 py-2">
+              <div v-if="turn.raw_db_data" class="border-t border-slate-200 px-3 py-2">
                 <JsonViewer :value="turn.raw_db_data" label="底层取数 raw_db_data" max-height="160px" />
               </div>
 
-              <details v-if="turn.rule_check" class="border-t border-slate-800/70 px-3 py-2">
-                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-300">
+              <details v-if="turn.rule_check" class="border-t border-slate-200 px-3 py-2">
+                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">
                   本轮规则校验
-                  <span :class="turn.rule_check.passed ? 'text-emerald-400' : 'text-rose-400'">
+                  <span :class="turn.rule_check.passed ? 'text-emerald-700' : 'text-rose-700'">
                     {{ turn.rule_check.passed ? '通过' : '未通过' }}
                   </span>
                 </summary>
-                <pre class="mono mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-slate-400">{{ safeJson(turn.rule_check) }}</pre>
+                <pre class="mono mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-slate-600">{{ safeJson(turn.rule_check) }}</pre>
               </details>
 
-              <details class="border-t border-slate-800/70 px-3 py-2">
-                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-300">
+              <details class="border-t border-slate-200 px-3 py-2">
+                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">
                   请求 / 响应原始报文
                 </summary>
                 <div class="mt-2 grid gap-2 lg:grid-cols-2">
@@ -309,25 +309,25 @@ async function copyTraceUid(): Promise<void> {
                 </div>
               </details>
 
-              <details v-if="turn.rendered_prompt" class="border-t border-slate-800/70 px-3 py-2">
-                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-300">
+              <details v-if="turn.rendered_prompt" class="border-t border-slate-200 px-3 py-2">
+                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">
                   模拟器渲染 Prompt
                 </summary>
-                <pre class="mono mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-900/70 p-2 text-slate-400">{{ turn.rendered_prompt }}</pre>
+                <pre class="mono mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 text-slate-600">{{ turn.rendered_prompt }}</pre>
               </details>
             </article>
           </div>
         </template>
 
         <template v-else-if="activeTab === 'judges'">
-          <div class="mb-3 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2">
-            <div class="flex flex-wrap items-center gap-3 text-xs text-slate-400">
+          <div class="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div class="flex flex-wrap items-center gap-3 text-xs text-slate-600">
               <span>裁判策略：{{ statusLabel(String(aggregate?.strategy ?? '—')) }}</span>
               <span>裁判数量：{{ String(aggregate?.judge_count ?? detail.judges.length) }}</span>
-              <span>综合得分：<span class="text-slate-100">{{ formatScore(detail.total_score) }}</span></span>
+              <span>综合得分：<span class="text-slate-900">{{ formatScore(detail.total_score) }}</span></span>
               <span>
                 综合结论：
-                <span :class="aggregate?.pass ? 'text-emerald-400' : 'text-rose-400'">
+                <span :class="aggregate?.pass ? 'text-emerald-700' : 'text-rose-700'">
                   {{ aggregate?.pass ? '通过' : '未通过' }}
                 </span>
               </span>
@@ -335,7 +335,7 @@ async function copyTraceUid(): Promise<void> {
             <div v-if="dims.length" class="mt-2 flex flex-wrap gap-3">
               <span v-for="item in dims" :key="item.key" class="text-[11px] text-slate-500">
                 {{ item.label }}
-                <span class="text-slate-300">{{ item.value }}</span>
+                <span class="text-slate-700">{{ item.value }}</span>
               </span>
             </div>
           </div>
@@ -347,11 +347,11 @@ async function copyTraceUid(): Promise<void> {
             <article
               v-for="judge in detail.judges"
               :key="judge.id"
-              class="rounded-xl border border-slate-800 bg-slate-950/40 p-3"
+              class="rounded-xl border border-slate-200 bg-slate-50 p-3"
             >
               <header class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="text-sm font-medium text-slate-200">{{ judge.model_name }}</span>
+                  <span class="text-sm font-medium text-slate-800">{{ judge.model_name }}</span>
                   <StatusPill :status="judge.pass_flag ? 'PASS' : 'FAIL'" size="sm" />
                   <span class="tag">得分 {{ formatScore(judge.total_score) }}</span>
                 </div>
@@ -364,9 +364,9 @@ async function copyTraceUid(): Promise<void> {
                 <div v-for="dim in judgeDimensions(judge)" :key="dim.key">
                   <div class="flex items-center justify-between text-[11px]">
                     <span class="text-slate-500">{{ dim.label }}</span>
-                    <span class="text-slate-300">{{ dim.value }} / {{ dim.max }}</span>
+                    <span class="text-slate-700">{{ dim.value }} / {{ dim.max }}</span>
                   </div>
-                  <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                  <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
                     <div
                       class="h-full rounded-full"
                       :class="dim.value >= dim.max * 0.6 ? 'bg-emerald-500' : 'bg-rose-500'"
@@ -380,7 +380,7 @@ async function copyTraceUid(): Promise<void> {
                 <span
                   v-for="tag in judge.error_tags"
                   :key="tag"
-                  class="rounded-md border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-300"
+                  class="rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] text-rose-700"
                 >
                   {{ tag }}
                 </span>
@@ -388,20 +388,20 @@ async function copyTraceUid(): Promise<void> {
 
               <div class="mt-2">
                 <p class="text-[10px] uppercase tracking-wider text-slate-500">裁判理由</p>
-                <p class="mt-1 whitespace-pre-wrap break-words rounded-lg bg-slate-900/70 p-2 text-xs text-slate-300">
+                <p class="mt-1 whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-xs text-slate-700">
                   {{ judge.reason || '—' }}
                 </p>
               </div>
 
               <details v-if="judge.raw_response" class="mt-2">
-                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-300">结构化裁判响应</summary>
+                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">结构化裁判响应</summary>
                 <div class="mt-2">
                   <JsonViewer :value="judge.raw_response" max-height="200px" />
                 </div>
               </details>
               <details v-if="judge.judge_prompt" class="mt-2">
-                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-300">实际裁判 Prompt</summary>
-                <pre class="mono mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-900/70 p-2 text-slate-400">{{ judge.judge_prompt }}</pre>
+                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">实际裁判 Prompt</summary>
+                <pre class="mono mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 text-slate-600">{{ judge.judge_prompt }}</pre>
               </details>
             </article>
           </div>
@@ -413,7 +413,7 @@ async function copyTraceUid(): Promise<void> {
               <StatusPill :status="ruleBlock?.passed ? 'PASS' : 'FAIL'" />
               <span class="text-xs text-slate-500">共 {{ ruleChecks.length }} 项硬校验</span>
             </div>
-            <div class="overflow-hidden rounded-xl border border-slate-800">
+            <div class="overflow-hidden rounded-xl border border-slate-200">
               <table class="table-shell">
                 <thead>
                   <tr>
@@ -427,7 +427,7 @@ async function copyTraceUid(): Promise<void> {
                 <tbody>
                   <tr v-for="(check, index) in ruleChecks" :key="index">
                     <td class="td">
-                      <p class="text-slate-200">{{ ruleCheckLabel(check) }}</p>
+                      <p class="text-slate-800">{{ ruleCheckLabel(check) }}</p>
                       <p class="font-mono text-[10px] text-slate-500">{{ check.type }}</p>
                     </td>
                     <td class="td max-w-[200px] break-all text-xs">{{ valueText(check.expected) }}</td>
@@ -467,10 +467,10 @@ async function copyTraceUid(): Promise<void> {
             <div
               v-for="item in detail.raw_request_response"
               :key="String(item.turn)"
-              class="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3 lg:grid-cols-2"
+              class="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 lg:grid-cols-2"
             >
               <div class="lg:col-span-2">
-                <span class="font-mono text-xs font-semibold text-indigo-300">T{{ item.turn }}</span>
+                <span class="font-mono text-xs font-semibold text-indigo-600">T{{ item.turn }}</span>
               </div>
               <JsonViewer :value="item.request" label="请求" max-height="260px" />
               <JsonViewer :value="item.response" label="响应" max-height="260px" />

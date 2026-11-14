@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { api } from '../api'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
+import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import TestCaseDrawer from './components/TestCaseDrawer.vue'
 import CaseRevisionPanel from './components/CaseRevisionPanel.vue'
@@ -399,21 +400,19 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h2 class="text-lg font-semibold text-slate-100">用例资产</h2>
-        <p class="mt-1 text-xs text-slate-500">
-          单轮 / 静态多轮 / 动态多轮三类用例，支持批量执行、版本快照、字段 Diff、回滚、导入导出与单条调试。
-        </p>
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
+  <div class="space-y-4">
+    <PageHeader
+      eyebrow="Assets · 用例库"
+      title="用例资产"
+      description="单轮 / 静态多轮 / 动态多轮三类用例，支持批量执行、版本快照、字段 Diff、回滚、导入导出与单条调试。"
+    >
+      <template #actions>
         <input ref="importInput" type="file" accept=".xlsx,.json" class="hidden" @change="onImport" />
         <button class="btn-ghost" @click="triggerImport">导入</button>
         <button class="btn-ghost" @click="exportCases('json')">导出 JSON</button>
         <button class="btn-ghost" @click="exportCases('xlsx')">导出 Excel</button>
         <button
-          class="btn-primary"
+          class="btn-ghost"
           title="选择当前页、跨页筛选结果或全部启用用例执行"
           @click="openBatch"
         >
@@ -428,8 +427,8 @@ onMounted(() => {
           </svg>
           新建用例
         </button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <div class="card flex flex-wrap items-end gap-3 px-4 py-3">
       <div class="min-w-[220px] flex-1">
@@ -464,21 +463,21 @@ onMounted(() => {
     </div>
 
     <div class="card overflow-hidden">
-      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
         <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
           <span>共 {{ total }} 条</span>
-          <span class="text-slate-700">|</span>
+          <span class="text-slate-300" aria-hidden="true">|</span>
           <span>当前页：单轮 {{ typeCount.single }} · 静态 {{ typeCount.static }} · 动态 {{ typeCount.dynamic }}</span>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <span v-if="selectedIds.length" class="text-[11px] text-indigo-300">
+          <span v-if="selectedIds.length" class="text-[11px] text-indigo-600">
             已选 {{ selectedIds.length }} 条
           </span>
           <button class="btn-ghost btn-xs" @click="selectAllFiltered">全选筛选结果（跨页）</button>
           <button v-if="selectedIds.length" class="btn-ghost btn-xs" @click="clearSelection">
             清空选择
           </button>
-          <button class="text-[11px] text-slate-500 transition hover:text-slate-200" @click="loadCases">
+          <button class="text-[11px] text-slate-500 transition hover:text-slate-800" @click="loadCases">
             刷新
           </button>
         </div>
@@ -491,7 +490,7 @@ onMounted(() => {
               <th class="th w-10">
                 <input
                   type="checkbox"
-                  class="h-4 w-4 rounded border-slate-600 bg-slate-900"
+                  class="h-4 w-4 rounded border-slate-300 bg-white"
                   :checked="pageAllSelected"
                   :disabled="pageSelectableCount === 0"
                   title="全选当前页启用用例"
@@ -512,7 +511,7 @@ onMounted(() => {
               <td class="td">
                 <input
                   type="checkbox"
-                  class="h-4 w-4 rounded border-slate-600 bg-slate-900"
+                  class="h-4 w-4 rounded border-slate-300 bg-white"
                   :checked="selectedIds.includes(item.id)"
                   :disabled="item.status !== 'ACTIVE'"
                   :title="item.status === 'ACTIVE' ? '选择该用例' : '仅启用用例可批量执行'"
@@ -520,8 +519,8 @@ onMounted(() => {
                 />
               </td>
               <td class="td max-w-[300px]">
-                <p class="font-mono text-xs text-indigo-300">{{ item.code }}</p>
-                <p class="mt-0.5 truncate text-sm text-slate-200" :title="item.name">{{ item.name }}</p>
+                <p class="font-mono text-xs text-indigo-600">{{ item.code }}</p>
+                <p class="mt-0.5 truncate text-sm text-slate-800" :title="item.name">{{ item.name }}</p>
                 <p class="mt-0.5 text-[11px] text-slate-500" :title="item.description ?? ''">
                   {{ truncate(item.description, 44) }}
                 </p>
@@ -530,17 +529,17 @@ onMounted(() => {
                 </div>
               </td>
               <td class="td">
-                <span class="rounded-md bg-slate-800 px-1.5 py-0.5 text-[11px] text-slate-300">
+                <span class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-700">
                   {{ caseTypeLabel(item.case_type) }}
                 </span>
               </td>
               <td class="td"><StatusPill :status="item.status" size="sm" /></td>
               <td class="td">
-                <span class="font-mono text-xs text-slate-300">v{{ item.current_version }}</span>
-                <span class="ml-1 rounded bg-slate-800 px-1 py-0.5 text-[10px] text-slate-500">{{ item.priority }}</span>
+                <span class="font-mono text-xs text-slate-700">v{{ item.current_version }}</span>
+                <span class="ml-1 rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-600">{{ item.priority }}</span>
               </td>
               <td class="td max-w-[200px] text-[11px] text-slate-500">
-                <p class="truncate text-slate-400">{{ item.environment_name || '未绑定环境' }}</p>
+                <p class="truncate text-slate-600">{{ item.environment_name || '未绑定环境' }}</p>
                 <p class="truncate">模拟：{{ item.simulator_template_code || '—' }}</p>
                 <p class="truncate">裁判：{{ item.judge_template_code || '—' }}</p>
               </td>
@@ -574,7 +573,7 @@ onMounted(() => {
         </EmptyState>
       </div>
 
-      <div class="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 px-4 py-3">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3">
         <span class="text-[11px] text-slate-500">第 {{ page }} / {{ pageCount }} 页</span>
         <div class="flex items-center gap-2">
           <button class="btn-ghost btn-xs" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
@@ -590,23 +589,23 @@ onMounted(() => {
       width="lg"
     >
       <div class="space-y-4">
-        <div class="space-y-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-          <p class="text-xs font-medium text-slate-300">执行范围</p>
+        <div class="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p class="text-xs font-medium text-slate-700">执行范围</p>
           <label
             class="flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 transition"
             :class="
               batchForm.scope === 'SELECTED'
-                ? 'border-indigo-500/40 bg-indigo-500/10'
-                : 'border-slate-800 hover:bg-slate-800/40'
+                ? 'border-indigo-200 bg-indigo-50'
+                : 'border-slate-200 hover:bg-slate-100/70'
             "
           >
             <input
               v-model="batchForm.scope"
               type="radio"
               value="SELECTED"
-              class="mt-1 h-4 w-4 border-slate-600 bg-slate-900"
+              class="mt-1 h-4 w-4 border-slate-300 bg-white"
             />
-            <span class="min-w-0 text-sm text-slate-200">
+            <span class="min-w-0 text-sm text-slate-800">
               已选用例（{{ selectedIds.length }} 条）
               <span class="block text-[11px] text-slate-500">
                 当前页勾选，或通过「全选筛选结果（跨页）」选中的用例。
@@ -617,17 +616,17 @@ onMounted(() => {
             class="flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 transition"
             :class="
               batchForm.scope === 'ALL_ACTIVE'
-                ? 'border-indigo-500/40 bg-indigo-500/10'
-                : 'border-slate-800 hover:bg-slate-800/40'
+                ? 'border-indigo-200 bg-indigo-50'
+                : 'border-slate-200 hover:bg-slate-100/70'
             "
           >
             <input
               v-model="batchForm.scope"
               type="radio"
               value="ALL_ACTIVE"
-              class="mt-1 h-4 w-4 border-slate-600 bg-slate-900"
+              class="mt-1 h-4 w-4 border-slate-300 bg-white"
             />
-            <span class="min-w-0 text-sm text-slate-200">
+            <span class="min-w-0 text-sm text-slate-800">
               全部启用用例（{{ allActiveLoading ? '统计中…' : `${allActiveCount} 条` }}）
               <span class="block text-[11px] text-slate-500">
                 自动跨分页执行用例库中所有启用用例，不受当前筛选与分页影响，适合全量回归。
@@ -635,7 +634,7 @@ onMounted(() => {
             </span>
           </label>
         </div>
-        <div class="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
+        <div class="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
           本次将执行 <span class="font-semibold">{{ batchScopeCount }}</span> 条用例，执行进度可在「测试大盘」实时查看。
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
@@ -665,12 +664,12 @@ onMounted(() => {
             <p class="mt-1 text-[10px] text-slate-500">任务整体每秒请求上限，重试请求同样受限。</p>
           </div>
         </div>
-        <div class="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-          <label class="flex items-start gap-2 text-sm text-slate-300">
+        <div class="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <label class="flex items-start gap-2 text-sm text-slate-700">
             <input
               v-model="batchForm.retry_on_env_error"
               type="checkbox"
-              class="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-900"
+              class="mt-0.5 h-4 w-4 rounded border-slate-300 bg-white"
             />
             <span>
               环境类失败自动重试
@@ -708,11 +707,11 @@ onMounted(() => {
             </div>
           </div>
         </div>
-        <label class="flex items-center gap-2 text-sm text-slate-300">
+        <label class="flex items-center gap-2 text-sm text-slate-700">
           <input
             v-model="batchForm.auto_start"
             type="checkbox"
-            class="h-4 w-4 rounded border-slate-600 bg-slate-900"
+            class="h-4 w-4 rounded border-slate-300 bg-white"
           />
           创建后立即启动
         </label>

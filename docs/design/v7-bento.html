@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>设计稿 V7 · Bento 工作台 · 问账 QA</title>
+<style>
+  /* ============================================================
+     V7 Bento 工作台 · Bento Box Grid
+     Query: "bento grid workspace" --domain style
+     + Analytics 配色（Indigo #4F46E5 / Emerald #059669）
+     规则：非对称模块网格、22px 圆角、柔和阴影、hover scale 1.01
+     ============================================================ */
+  :root {
+    --bg: #f5f5f7;
+    --tile: #ffffff;
+    --tile-2: #fbfbfd;
+    --line: #e8e8ee;
+    --hair: #f0f0f5;
+    --ink: #111827;
+    --ink-2: #374151;
+    --muted: #6b7280;
+    --muted-2: #5f6675;
+    --indigo: #4f46e5;
+    --indigo-soft: #eef2ff;
+    --indigo-line: #e0e7ff;
+    --emerald: #059669;
+    --emerald-soft: #ecfdf5;
+    --pass: #047857;
+    --pass-bg: #ecfdf5;
+    --fail: #b91c1c;
+    --fail-bg: #fef2f2;
+    --warn: #b45309;
+    --warn-bg: #fef3c7;
+    --radius: 22px;
+    --shadow: 0 1px 2px rgba(17, 24, 39, .04), 0 14px 34px -28px rgba(17, 24, 39, .55);
+    --font: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--font); font-size: 12.5px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+
+  :focus-visible { outline: 2px solid var(--indigo); outline-offset: 3px; border-radius: 8px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important;
+    }
+    .tile:hover { transform: none !important; }
+  }
+
+  /* ---------- 左侧悬浮导航 ---------- */
+  .app { display: flex; min-height: 100vh; }
+  .main { flex: 1; min-width: 0; }
+  .side { width: 240px; flex: 0 0 240px; position: sticky; top: 0; height: 100vh; padding: 16px 0 16px 16px; }
+  .side-inner {
+    height: 100%; background: var(--tile); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 16px 12px 12px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .brand { display: flex; align-items: center; gap: 9px; padding: 0 6px; min-width: 0; }
+  .brand-mark {
+    width: 28px; height: 28px; flex: 0 0 auto; border-radius: 9px; color: #fff; display: grid; place-items: center;
+    background: linear-gradient(140deg, #6366f1, #4f46e5); font-size: 13px; font-weight: 700;
+    box-shadow: 0 6px 14px -8px rgba(79,70,229,.9);
+  }
+  .brand b { font-size: 13px; font-weight: 650; letter-spacing: -.2px; display: block; }
+  .brand span { display: block; font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .side-search {
+    display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px;
+    border-radius: 10px; background: var(--tile-2); border: 1px solid var(--line);
+    color: var(--muted); font-size: 11.5px;
+  }
+  .side-search span { flex: 1; white-space: nowrap; overflow: hidden; }
+  .nav { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .nav-label {
+    padding: 10px 10px 4px; font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--muted-2); font-weight: 600;
+  }
+  .nav a {
+    display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 11px;
+    border-radius: 11px; font-size: 11.5px; color: var(--muted);
+    transition: background .18s ease, color .18s ease;
+  }
+  .nav a svg { width: 16px; height: 16px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; }
+  .nav a:hover { background: var(--tile-2); color: var(--ink); }
+  .nav a[aria-current="page"] { background: var(--indigo-soft); color: var(--indigo); font-weight: 600; }
+  .side-foot { display: flex; align-items: center; gap: 8px; padding: 10px 4px 0; border-top: 1px solid var(--hair); }
+  .round {
+    width: 30px; height: 30px; flex: 0 0 auto; border-radius: 50%; border: 1px solid var(--line);
+    background: #fff; display: grid; place-items: center; color: var(--muted); cursor: pointer;
+    transition: border-color .18s ease, color .18s ease;
+  }
+  .round:hover { border-color: #cfd3dc; color: var(--ink); }
+  .avatar {
+    width: 30px; height: 30px; flex: 0 0 auto; border-radius: 50%; background: #e7e9ef; color: #4b5563;
+    display: grid; place-items: center; font-size: 11px; font-weight: 650;
+  }
+  .side-user { margin-left: auto; min-width: 0; line-height: 1.2; text-align: right; }
+  .side-user b { display: block; font-size: 11.5px; font-weight: 600; }
+  .side-user span { display: block; font-size: 9.5px; color: var(--muted); }
+
+  /* ---------- 页面 ---------- */
+  .page { max-width: 1420px; margin: 0 auto; padding: 22px 24px 44px; }
+  .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 18px; }
+  .eyebrow { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+  h1 { margin: 6px 0 0; font-size: 26px; font-weight: 700; letter-spacing: -.9px; line-height: 1.15; }
+  .meta-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .meta-chip {
+    display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+    border-radius: 999px; background: #fff; border: 1px solid var(--line);
+    font-size: 10.5px; color: var(--ink-2);
+  }
+  .meta-chip b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .meta-chip.code { font-family: "JetBrains Mono", Consolas, monospace; font-size: 9.5px; color: var(--muted); }
+  .meta-chip.ok { background: var(--pass-bg); border-color: #d1fae5; color: var(--pass); font-weight: 600; }
+
+  .actions { display: flex; align-items: center; gap: 8px; }
+  .btn {
+    height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px;
+    border-radius: 11px; border: 1px solid var(--line); background: #fff;
+    font-family: inherit; font-size: 12px; font-weight: 550; color: var(--ink-2);
+    cursor: pointer; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+  }
+  .btn:hover { border-color: #d6d9e0; box-shadow: 0 6px 16px -14px rgba(17,24,39,.5); }
+  .btn.primary {
+    background: var(--indigo); border-color: var(--indigo); color: #fff;
+    box-shadow: 0 10px 22px -16px rgba(79,70,229,.95);
+  }
+  .btn.primary:hover { background: #4338ca; transform: translateY(-1px); }
+  .btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.9; }
+
+  /* ---------- Bento 网格 ---------- */
+  .bento { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; }
+  .tile {
+    background: var(--tile); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 16px 18px; min-width: 0;
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  .tile:hover { transform: scale(1.01); box-shadow: 0 2px 6px rgba(17,24,39,.05), 0 22px 44px -30px rgba(17,24,39,.55); }
+  .tile-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  .tile-head h2 { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: -.1px; }
+  .tile-head .hint { font-size: 10px; color: var(--muted); }
+  .tile-head .count {
+    font-size: 9.5px; color: var(--indigo); background: var(--indigo-soft);
+    border-radius: 999px; padding: 2px 8px; font-weight: 600;
+  }
+
+  .b1 { grid-column: span 3; }
+  .b2 { grid-column: span 5; }
+  .b3 { grid-column: span 4; }
+  .b4 { grid-column: span 8; grid-row: span 2; padding-bottom: 8px; }
+  .b5 { grid-column: span 4; }
+  .b6 { grid-column: span 4; }
+
+  /* 通过率环 */
+  .rate { display: flex; align-items: center; gap: 14px; }
+  .donut { position: relative; width: 92px; height: 92px; flex: 0 0 auto; }
+  .donut-center {
+    position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+  }
+  .donut-center b { display: block; font-size: 21px; font-weight: 700; letter-spacing: -.8px; line-height: 1; }
+  .donut-center small { display: block; margin-top: 3px; font-size: 9px; color: var(--muted); }
+  .rate-info { min-width: 0; }
+  .rate-info .label { font-size: 10.5px; color: var(--muted); }
+  .rate-info .delta { margin-top: 4px; font-size: 11px; color: var(--pass); font-weight: 600; }
+  .rate-info .sub { margin-top: 6px; font-size: 10px; color: var(--muted); }
+
+  /* 分布 */
+  .stack { display: flex; height: 10px; gap: 2px; border-radius: 999px; overflow: hidden; background: #f2f3f7; }
+  .stack span { display: block; height: 100%; }
+  .legend { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+  .legend div { min-width: 0; }
+  .legend dt { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--muted); white-space: nowrap; }
+  .legend dt i { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+  .legend dd { margin: 4px 0 0; font-size: 16px; font-weight: 650; letter-spacing: -.4px; font-variant-numeric: tabular-nums; }
+  .legend dd small { font-size: 9.5px; font-weight: 500; color: var(--muted); margin-left: 3px; }
+
+  /* 时延 */
+  .latency { display: flex; align-items: baseline; gap: 6px; }
+  .latency b { font-size: 30px; font-weight: 700; letter-spacing: -1.2px; line-height: 1; }
+  .latency span { font-size: 11px; color: var(--muted); }
+  .spark { margin-top: 8px; }
+
+  /* 表格 */
+  .table-scroll { overflow-x: auto; contain: paint; margin: 0 -18px; padding: 0 18px; }
+  table { width: 100%; border-collapse: collapse; min-width: 660px; }
+  thead th {
+    text-align: left; padding: 8px 10px; font-size: 9px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600;
+    border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  thead th:first-child { padding-left: 0; }
+  thead th:last-child { text-align: right; padding-right: 0; }
+  tbody td { padding: 9px 10px; border-bottom: 1px solid var(--hair); font-size: 11.5px; height: 40px; }
+  tbody td:first-child { padding-left: 0; }
+  tbody td:last-child { text-align: right; padding-right: 0; }
+  tbody tr:hover { background: #fbfbfe; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .case code { display: block; font-family: "JetBrains Mono", Consolas, monospace; font-size: 10.5px; font-weight: 600; }
+  .case span { display: block; margin-top: 1px; font-size: 9.5px; color: var(--muted); }
+  .num { font-variant-numeric: tabular-nums; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px;
+    border-radius: 999px; font-size: 9.5px; font-weight: 600; white-space: nowrap;
+  }
+  .pill i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+  .p-pass { color: var(--pass); background: var(--pass-bg); }
+  .p-fail { color: var(--fail); background: var(--fail-bg); }
+  .p-warn { color: var(--warn); background: var(--warn-bg); }
+  .go {
+    display: inline-flex; align-items: center; height: 24px; padding: 0 9px;
+    border-radius: 999px; border: 1px solid var(--indigo-line); background: var(--indigo-soft);
+    color: var(--indigo); font-size: 10px; font-weight: 600; white-space: nowrap;
+    transition: background .18s ease;
+  }
+  .go:hover { background: #e3e8ff; }
+  .tile-foot {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hair);
+    font-size: 10px; color: var(--muted);
+  }
+  .tile-foot a { color: var(--indigo); font-weight: 600; }
+
+  /* 参数 */
+  .params { margin: 0; display: flex; flex-direction: column; }
+  .params div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; font-size: 11px; border-bottom: 1px solid var(--hair); }
+  .params div:last-child { border-bottom: 0; padding-bottom: 0; }
+  .params dt { color: var(--muted); }
+  .params dd { margin: 0; font-weight: 550; font-variant-numeric: tabular-nums; }
+  .params dd.ok { color: var(--pass); }
+
+  /* 最近批次 */
+  .runs { margin: 0; padding: 0; list-style: none; }
+  .runs li { border-bottom: 1px solid var(--hair); }
+  .runs li:last-child { border-bottom: 0; }
+  .runs a {
+    display: flex; align-items: center; gap: 10px; padding: 8px 0;
+    transition: color .18s ease;
+  }
+  .runs a:hover .name { color: var(--indigo); }
+  .runs .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+  .runs .name { font-size: 11px; font-weight: 550; min-width: 0; }
+  .runs .name small { display: block; font-family: "JetBrains Mono", Consolas, monospace; font-size: 8.5px; color: var(--muted); font-weight: 400; }
+  .runs .pct { margin-left: auto; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+  /* ---------- 版本条 ---------- */
+  .version-strip {
+    margin-top: 22px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    font-size: 10.5px; color: var(--muted); padding: 12px 16px;
+    background: rgba(255,255,255,.6); border: 1px solid var(--line); border-radius: 14px;
+  }
+  .version-strip a {
+    border: 1px solid var(--line); background: #fff; border-radius: 999px;
+    padding: 3px 10px; color: var(--ink-2);
+  }
+  .version-strip a:hover { border-color: var(--indigo); color: var(--indigo); }
+  .version-strip a[aria-current="true"] { border-color: var(--indigo); color: var(--indigo); background: var(--indigo-soft); }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width: 1180px) {
+    .b1 { grid-column: span 4; }
+    .b2 { grid-column: span 8; }
+    .b3 { grid-column: span 12; }
+    .b4 { grid-column: span 12; grid-row: auto; }
+    .b5, .b6 { grid-column: span 6; }
+    .side { width: 76px; flex-basis: 76px; padding: 16px 0 16px 12px; }
+    .side-inner { padding: 14px 8px 10px; align-items: center; }
+    .brand { padding: 0; }
+    .side-search, .nav-label, .lbl, .side-user { display: none; }
+    .nav a { justify-content: center; padding: 0; width: 40px; }
+    .side-foot { justify-content: center; width: 100%; padding-left: 0; padding-right: 0; }
+  }
+  @media (max-width: 720px) {
+    .page { padding: 16px 12px 32px; }
+    .side { width: 64px; flex-basis: 64px; padding: 10px 0 10px 10px; }
+    h1 { font-size: 21px; }
+    .b1, .b2, .b3, .b5, .b6 { grid-column: span 12; }
+    .legend { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 12px; }
+    .actions { width: 100%; }
+    .actions .btn { flex: 1; justify-content: center; }
+    .rate { gap: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside class="side">
+    <div class="side-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">问</div>
+        <div><b>问账 QA</b><span>Billing QA</span></div>
+      </div>
+      <div class="side-search" role="search">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span>搜索任务 / 用例</span>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <div class="nav-label">工作台</div>
+        <a href="#" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
+          <span class="lbl">测试大盘</span>
+        </a>
+        <a href="#">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg>
+          <span class="lbl">用例资产</span>
+        </a>
+        <a href="#">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14"/></svg>
+          <span class="lbl">Prompt 资产</span>
+        </a>
+        <a href="#">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/></svg>
+          <span class="lbl">执行记录</span>
+        </a>
+        <a href="#">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3c0-.34-.03-.67-.1-1l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L14.8 3h-4l-.4 2.6a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.07-.33.1-.66.1-1Z"/></svg>
+          <span class="lbl">环境与模型</span>
+        </a>
+        <div class="nav-label">快捷</div>
+        <a href="#">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"/></svg>
+          <span class="lbl">新建批量任务</span>
+        </a>
+      </nav>
+      <div class="side-foot">
+        <button class="round" type="button" aria-label="通知">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+        </button>
+        <div class="avatar" aria-hidden="true">A</div>
+        <div class="side-user"><b>admin</b><span>管理员</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+
+<main class="page">
+  <div class="head">
+    <div>
+      <div class="eyebrow">Batch Run · 2026-11-14 17:28</div>
+      <h1>批量执行 11/14 17:28</h1>
+      <div class="meta-chips">
+        <span class="meta-chip ok"><i style="width:5px;height:5px;border-radius:50%;background:#047857" aria-hidden="true"></i>已完成</span>
+        <span class="meta-chip code">BATCH20261114172830216</span>
+        <span class="meta-chip">用例 <b>7</b></span>
+        <span class="meta-chip">并发 <b>3</b> · QPS <b>5</b></span>
+        <span class="meta-chip">重试 <b>2</b> 次</span>
+        <span class="meta-chip">耗时 <b>6.2s</b></span>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        导出
+      </button>
+      <button class="btn primary" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        新建批量任务
+      </button>
+    </div>
+  </div>
+
+  <div class="bento">
+    <!-- 通过率 -->
+    <section class="tile b1" aria-labelledby="rate-title">
+      <div class="tile-head">
+        <h2 id="rate-title">通过率</h2>
+        <span class="hint">本次</span>
+      </div>
+      <div class="rate">
+        <div class="donut">
+          <svg width="92" height="92" viewBox="0 0 92 92" role="img" aria-label="通过率 57.1%">
+            <circle cx="46" cy="46" r="38" fill="none" stroke="#f1f2f6" stroke-width="9"/>
+            <circle cx="46" cy="46" r="38" fill="none" stroke="#4f46e5" stroke-width="9"
+              stroke-linecap="round" stroke-dasharray="136.3 238.8" transform="rotate(-90 46 46)"/>
+          </svg>
+          <div class="donut-center"><div><b>57.1%</b><small>4 / 7</small></div></div>
+        </div>
+        <div class="rate-info">
+          <div class="label">较上次运行</div>
+          <div class="delta">▲ 4.2%</div>
+          <div class="sub">失败 2 · 超限 1</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 分布 -->
+    <section class="tile b2" aria-labelledby="dist-title">
+      <div class="tile-head">
+        <h2 id="dist-title">状态分布</h2>
+        <span class="count">7 / 7 完成</span>
+      </div>
+      <div class="stack" role="img" aria-label="通过 4 条、失败 2 条、轮次超限 1 条">
+        <span style="width:57.1%;background:#4f46e5"></span>
+        <span style="width:28.6%;background:#f43f5e"></span>
+        <span style="width:14.3%;background:#f59e0b"></span>
+      </div>
+      <dl class="legend">
+        <div><dt><i style="background:#4f46e5" aria-hidden="true"></i>通过</dt><dd>4<small>57.1%</small></dd></div>
+        <div><dt><i style="background:#f43f5e" aria-hidden="true"></i>失败</dt><dd>2<small>28.6%</small></dd></div>
+        <div><dt><i style="background:#f59e0b" aria-hidden="true"></i>超限</dt><dd>1<small>14.3%</small></dd></div>
+        <div><dt><i style="background:#a78bfa" aria-hidden="true"></i>异常</dt><dd>0<small>0%</small></dd></div>
+        <div><dt><i style="background:#cbd5e1" aria-hidden="true"></i>中断</dt><dd>0<small>0%</small></dd></div>
+      </dl>
+    </section>
+
+    <!-- 时延 -->
+    <section class="tile b3" aria-labelledby="lat-title">
+      <div class="tile-head">
+        <h2 id="lat-title">平均时延</h2>
+        <span class="hint">TTFT 340 ms · P95 1.2 s</span>
+      </div>
+      <div class="latency"><b>680</b><span>ms / 次</span></div>
+      <div class="spark">
+        <svg width="100%" height="52" viewBox="0 0 300 52" preserveAspectRatio="none" role="img" aria-label="近 8 次平均时延在 560ms 到 760ms 之间波动">
+          <defs>
+            <linearGradient id="latFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#4f46e5" stop-opacity=".16"/>
+              <stop offset="100%" stop-color="#4f46e5" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="M0 34 L43 26 L86 30 L129 18 L172 24 L215 14 L258 20 L300 10 L300 52 L0 52 Z" fill="url(#latFill)"/>
+          <path d="M0 34 L43 26 L86 30 L129 18 L172 24 L215 14 L258 20 L300 10"
+                fill="none" stroke="#4f46e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 用例结果 -->
+    <section class="tile b4" aria-labelledby="res-title">
+      <div class="tile-head">
+        <h2 id="res-title">用例执行结果</h2>
+        <span class="count">7 条用例</span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">用例</th>
+              <th scope="col">状态</th>
+              <th scope="col">得分</th>
+              <th scope="col">轮次</th>
+              <th scope="col">尝试</th>
+              <th scope="col">时延</th>
+              <th scope="col"><span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">操作</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><div class="case"><code>API-SMOKE-1794576016</code><span>API 冒烟用例 · v3</span></div></td>
+              <td><span class="pill p-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">94.0</td><td class="num">1</td><td class="num">1</td><td class="num">377 ms</td>
+              <td><a class="go" href="#" aria-label="查看用例 API-SMOKE-1794576016 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-SINGLE-001</code><span>单轮 · 标准账单查询 · v1</span></div></td>
+              <td><span class="pill p-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">96.0</td><td class="num">1</td><td class="num">1</td><td class="num">362 ms</td>
+              <td><a class="go" href="#" aria-label="查看用例 DEMO-SINGLE-001 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-DYNAMIC-MAXTURNS</code><span>动态多轮 · 最大轮次熔断 · v1</span></div></td>
+              <td><span class="pill p-warn"><i aria-hidden="true"></i>轮次超限</span></td>
+              <td class="num">61.0</td><td class="num">3</td><td class="num">1</td><td class="num">1.36 s</td>
+              <td><a class="go" href="#" aria-label="查看用例 DEMO-DYNAMIC-MAXTURNS 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-DYNAMIC-001</code><span>动态多轮 · 隐藏信息释放 · v1</span></div></td>
+              <td><span class="pill p-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">92.0</td><td class="num">3</td><td class="num">1</td><td class="num">982 ms</td>
+              <td><a class="go" href="#" aria-label="查看用例 DEMO-DYNAMIC-001 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-STATIC-001</code><span>静态多轮 · 指代继承与明细追问 · v1</span></div></td>
+              <td><span class="pill p-fail"><i aria-hidden="true"></i>失败</span></td>
+              <td class="num">58.0</td><td class="num">2</td><td class="num">1</td><td class="num">744 ms</td>
+              <td><a class="go" href="#" aria-label="查看用例 DEMO-STATIC-001 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-SINGLE-FAIL</code><span>单轮 · 数据幻觉红线 · v1</span></div></td>
+              <td><span class="pill p-fail"><i aria-hidden="true"></i>失败</span></td>
+              <td class="num">18.0</td><td class="num">1</td><td class="num">2</td><td class="num">512 ms</td>
+              <td><a class="go" href="#" aria-label="查看用例 DEMO-SINGLE-FAIL 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>API-SMOKE-1794573004</code><span>API 冒烟用例 · v3</span></div></td>
+              <td><span class="pill p-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">94.0</td><td class="num">1</td><td class="num">1</td><td class="num">297 ms</td>
+              <td><a class="go" href="#" aria-label="查看用例 API-SMOKE-1794573004 的执行结果">结果</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tile-foot">
+        <span>按用例汇总最新一次尝试，重试不重复计数</span>
+        <a href="#">全部执行记录 →</a>
+      </div>
+    </section>
+
+    <!-- 运行参数 -->
+    <section class="tile b5" aria-labelledby="cfg-title">
+      <div class="tile-head">
+        <h2 id="cfg-title">运行参数</h2>
+        <span class="hint">dev</span>
+      </div>
+      <dl class="params">
+        <div><dt>被测环境</dt><dd>Billing-Sandbox</dd></div>
+        <div><dt>裁判模型</dt><dd>judge-large</dd></div>
+        <div><dt>并发 / QPS</dt><dd>3 / 5</dd></div>
+        <div><dt>环境失败重试</dt><dd class="ok">开启 · 2 次</dd></div>
+        <div><dt>本次重试</dt><dd>1 次 · 已恢复</dd></div>
+      </dl>
+    </section>
+
+    <!-- 最近批次 -->
+    <section class="tile b6" aria-labelledby="runs-title">
+      <div class="tile-head">
+        <h2 id="runs-title">最近批次</h2>
+        <span class="hint">last 50</span>
+      </div>
+      <ul class="runs">
+        <li><a href="#"><i class="dot" style="background:#4f46e5" aria-hidden="true"></i><span class="name">批量执行 11/14 17:28<small>BATCH20261114172830216</small></span><span class="pct">57.1%</span></a></li>
+        <li><a href="#"><i class="dot" style="background:#10b981" aria-hidden="true"></i><span class="name">全量回归 11/14 15:24<small>BATCH20261114152429901</small></span><span class="pct">71.4%</span></a></li>
+        <li><a href="#"><i class="dot" style="background:#10b981" aria-hidden="true"></i><span class="name">账单冒烟 11/14 15:22<small>BATCH20261114152240477</small></span><span class="pct">100%</span></a></li>
+        <li><a href="#"><i class="dot" style="background:#10b981" aria-hidden="true"></i><span class="name">端到端冒烟 11/13 21:21<small>SMOKE-1794576110</small></span><span class="pct">100%</span></a></li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="version-strip">
+    <span>本批设计稿：</span>
+    <a href="./v4-precision.html">V4 精密仪表</a>
+    <a href="./v5-swiss.html">V5 瑞士网格</a>
+    <a href="./v6-ledger.html">V6 金融账本</a>
+    <a href="./v7-bento.html" aria-current="true">V7 Bento 工作台</a>
+    <span style="margin-left:8px">上一批：</span>
+    <a href="./v1-indigo.html">V1</a>
+    <a href="./v2-emerald.html">V2</a>
+    <a href="./v3-blue.html">V3</a>
+  </div>
+</main>
+  </div>
+</div>
+
+</body>
+</html>

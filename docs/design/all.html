@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>全部设计稿 · 问账 QA 视觉方案评审</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --line: #e6e8ee;
+    --line-soft: #eff1f5;
+    --ink: #101828;
+    --ink-2: #344054;
+    --muted: #667085;
+    --faint: #98a2b3;
+    --brand: #4f46e5;
+    --radius: 14px;
+    --mono: "JetBrains Mono", Consolas, monospace;
+    --font: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--font); font-size: 13px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important; transition-duration: .001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  .app { display: flex; min-height: 100vh; }
+
+  /* ---------- 左侧导航 ---------- */
+  .rail {
+    width: 258px; flex: 0 0 258px; position: sticky; top: 0; height: 100vh;
+    display: flex; flex-direction: column;
+    background: var(--panel); border-right: 1px solid var(--line); z-index: 30;
+  }
+  .rail-brand {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px 16px 14px; border-bottom: 1px solid var(--line-soft);
+  }
+  .rail-logo {
+    width: 30px; height: 30px; flex: 0 0 auto; border-radius: 9px;
+    background: linear-gradient(140deg, #6366f1, #4f46e5); color: #fff;
+    display: grid; place-items: center; font-size: 14px; font-weight: 700;
+  }
+  .rail-brand b { display: block; font-size: 13px; font-weight: 650; letter-spacing: -.2px; }
+  .rail-brand span { display: block; font-size: 9.5px; color: var(--faint); letter-spacing: .06em; text-transform: uppercase; }
+
+  .rail-scroll { flex: 1; overflow-y: auto; padding: 10px 10px 14px; }
+  .rail-label {
+    margin: 12px 8px 6px; font-size: 9.5px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--faint); font-weight: 600;
+  }
+  .rail-label:first-child { margin-top: 2px; }
+  .rail-item {
+    display: flex; align-items: center; gap: 9px; padding: 8px 9px;
+    border-radius: 10px; border: 1px solid transparent;
+    transition: background .16s ease, border-color .16s ease;
+  }
+  .rail-item:hover { background: #f7f8fa; }
+  .rail-item.is-on { background: #eef2ff; border-color: #e0e7ff; }
+  .rail-no {
+    width: 30px; height: 22px; flex: 0 0 auto; border-radius: 6px;
+    display: grid; place-items: center; font-family: var(--mono);
+    font-size: 9.5px; font-weight: 600; color: #475467; background: #f2f4f7;
+  }
+  .rail-item.is-on .rail-no { background: var(--brand); color: #fff; }
+  .rail-meta { min-width: 0; }
+  .rail-meta b { display: block; font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rail-meta span { display: block; font-size: 9.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rail-dots { margin-left: auto; display: flex; gap: 2px; flex: 0 0 auto; }
+  .rail-dots i { width: 7px; height: 7px; border-radius: 50%; display: block; }
+
+  .rail-foot {
+    padding: 10px 12px 12px; border-top: 1px solid var(--line-soft);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .rail-foot a {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 9px; border-radius: 8px; font-size: 11px; color: var(--ink-2);
+    border: 1px solid var(--line);
+  }
+  .rail-foot a:hover { border-color: #cdd3df; background: #fbfcfd; }
+  .rail-foot a span { color: var(--faint); font-family: var(--mono); font-size: 9.5px; }
+
+  /* ---------- 主区 ---------- */
+  .stage { flex: 1; min-width: 0; padding: 0 22px 56px; }
+
+  .stage-head {
+    position: sticky; top: 0; z-index: 20; margin: 0 -22px 18px; padding: 14px 22px 12px;
+    background: rgba(245,246,248,.92); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .stage-head-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .stage-head h1 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.4px; }
+  .stage-head p { margin: 3px 0 0; font-size: 11.5px; color: var(--muted); }
+  .vp-group { display: flex; align-items: center; gap: 2px; border: 1px solid var(--line); background: #fff; border-radius: 9px; padding: 2px; }
+  .vp-group span { font-size: 9.5px; color: var(--faint); padding: 0 7px; }
+  .vp-btn {
+    border: 0; background: transparent; font: inherit; font-size: 10.5px; color: var(--muted);
+    padding: 4px 9px; border-radius: 7px; cursor: pointer; font-variant-numeric: tabular-nums;
+  }
+  .vp-btn:hover { color: var(--ink); }
+  .vp-btn.is-on { background: #eef2ff; color: var(--brand); font-weight: 600; }
+
+  /* ---------- 单版区块 ---------- */
+  .case { scroll-margin-top: 96px; }
+  .case + .case { margin-top: 30px; }
+  .case-head {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 14px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px 12px 0 0; border-bottom: 0;
+  }
+  .case-no {
+    font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--brand);
+    background: #eef2ff; border-radius: 6px; padding: 2px 7px;
+  }
+  .case-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .case-title h2 { margin: 0; font-size: 13px; font-weight: 650; letter-spacing: -.1px; }
+  .case-title span { font-size: 10.5px; color: var(--faint); }
+  .case-tags { display: flex; gap: 5px; flex-wrap: wrap; }
+  .case-tag {
+    font-size: 9.5px; color: #475467; background: #f2f4f7;
+    border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  }
+  .case-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .case-actions a {
+    display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px;
+    border: 1px solid var(--line); border-radius: 8px; font-size: 10.5px; color: var(--ink-2);
+    background: #fff;
+  }
+  .case-actions a:hover { border-color: #cdd3df; color: var(--ink); }
+
+  .frame-shell {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 0 0 12px 12px;
+    overflow: hidden;
+  }
+  .frame-bar {
+    display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+    background: #fbfbfc; border-bottom: 1px solid var(--line-soft);
+  }
+  .frame-bar .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .frame-addr {
+    flex: 1; min-width: 0; height: 22px; display: flex; align-items: center; padding: 0 9px;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff;
+    font-family: var(--mono); font-size: 10px; color: var(--faint);
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .frame-bar em { font-size: 9.5px; font-style: normal; color: var(--faint); font-family: var(--mono); }
+  .frame-wrap { position: relative; overflow: hidden; background: #fff; }
+  .frame-wrap iframe { border: 0; display: block; background: #fff; transform-origin: top left; }
+  .frame-legend {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 8px 14px; border-top: 1px solid var(--line-soft); background: #fcfcfd;
+    font-size: 10px; color: var(--faint); flex-wrap: wrap;
+  }
+  .frame-legend b { color: #475467; font-weight: 500; }
+
+  .toast {
+    position: fixed; right: 18px; bottom: 18px; z-index: 60;
+    background: #101828; color: #fff; font-size: 11.5px;
+    padding: 8px 13px; border-radius: 9px; box-shadow: 0 12px 28px -18px rgba(16,24,40,.9);
+    opacity: 0; transform: translateY(6px); transition: opacity .18s ease, transform .18s ease;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: none; }
+
+  @media (max-width: 980px) {
+    .rail { width: 76px; flex-basis: 76px; }
+    .rail-brand { justify-content: center; padding: 14px 8px; }
+    .rail-brand > div:last-child, .rail-meta, .rail-label, .rail-dots, .rail-foot { display: none; }
+    .rail-scroll { padding: 10px 8px; }
+    .rail-item { justify-content: center; padding: 7px 0; }
+    .rail-no { width: 34px; height: 26px; }
+    .stage { padding: 0 14px 44px; }
+    .stage-head { margin: 0 -14px 14px; padding: 12px 14px 10px; }
+  }
+  @media (max-width: 640px) {
+    .rail { width: 62px; flex-basis: 62px; }
+    .stage-head h1 { font-size: 15px; }
+    .case-head { padding: 9px 11px; gap: 8px; }
+    .case-actions { width: 100%; margin-left: 0; }
+    .case-actions a { flex: 1; justify-content: center; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside class="rail" aria-label="设计稿导航">
+    <div class="rail-brand">
+      <div class="rail-logo" aria-hidden="true">问</div>
+      <div>
+        <b>设计稿评审</b>
+        <span>7 版 · Billing QA</span>
+      </div>
+    </div>
+
+    <div class="rail-scroll" id="railList"></div>
+
+    <div class="rail-foot">
+      <a href="./index-batch2.html">第二批对比页 <span>V4–V7</span></a>
+      <a href="./index.html">第一批对比页 <span>V1–V3</span></a>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <header class="stage-head">
+      <div class="stage-head-row">
+        <div>
+          <h1>全部设计稿 · 同一份数据</h1>
+          <p>同一批量任务 <b style="font-family:var(--mono);font-weight:500">BATCH20261114172830216</b> · 7 条用例 · 仅切换视觉语言，信息架构与功能一致</p>
+        </div>
+        <div class="vp-group" role="group" aria-label="预览宽度">
+          <span>预览宽度</span>
+          <button class="vp-btn is-on" type="button" data-vp="1440">1440</button>
+          <button class="vp-btn" type="button" data-vp="1024">1024</button>
+          <button class="vp-btn" type="button" data-vp="768">768</button>
+          <button class="vp-btn" type="button" data-vp="375">375</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="cases"></div>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+  const DESIGNS = [
+    {
+      id: 'v7-bento', no: 'V7', batch: 2,
+      name: 'Bento 工作台', styleName: 'Bento Box Grid', font: 'Inter',
+      colors: ['#4f46e5', '#059669', '#111827', '#f5f5f7'],
+      tags: ['非对称模块网格', '22px 圆角', 'hover 1.01', '环形通过率'],
+      note: '模块化最强，弱化后台感；适合长期迭代、后续还要加卡片。'
+    },
+    {
+      id: 'v6-ledger', no: 'V6', batch: 2,
+      name: '金融账本', styleName: 'Trust & Authority', font: 'IBM Plex Sans / Mono',
+      colors: ['#0f172a', '#a16207', '#52606f', '#f6f7f9'],
+      tags: ['账单抬头', '结算摘要', '虚线引导', '右对齐数字'],
+      note: '最正式可信，审计/对账气质；适合对外汇报与留档。'
+    },
+    {
+      id: 'v5-swiss', no: 'V5', batch: 2,
+      name: '瑞士网格', styleName: 'Minimalism & Swiss', font: 'Inter',
+      colors: ['#111827', '#15803d', '#6b7280', '#ffffff'],
+      tags: ['发丝线', '零圆角', '大字号', '单一强调色'],
+      note: '最克制、排版驱动；适合演示与追求"高级感"的场景。'
+    },
+    {
+      id: 'v4-precision', no: 'V4', batch: 2,
+      name: '精密仪表', styleName: 'Data-Dense Dashboard', font: 'Fira Sans / Fira Code',
+      colors: ['#1e40af', '#d97706', '#0f172a', '#f8fafc'],
+      tags: ['6 连 KPI', '36px 行高', '等宽数字', '信息密度 8/10'],
+      note: '信息密度最高，像工程仪表盘；适合研发日常高频使用。'
+    },
+    {
+      id: 'v3-blue', no: 'V3', batch: 1,
+      name: '克莱因蓝左右分栏', styleName: 'Split Console', font: 'Inter',
+      colors: ['#1d4ed8', '#0f172a', '#dbeafe', '#f8fafc'],
+      tags: ['图标窄栏', '批次列表 + 详情分栏', '蓝色强调'],
+      note: '左侧批次列表常驻，切换批次最快。'
+    },
+    {
+      id: 'v2-emerald', no: 'V2', batch: 1,
+      name: '祖母绿卡片式', styleName: 'Card Workspace', font: 'Inter',
+      colors: ['#059669', '#1c1917', '#ecfdf5', '#fafaf8'],
+      tags: ['卡片分层', '暖灰底', '祖母绿强调'],
+      note: '柔和亲和，卡片边界清晰。'
+    },
+    {
+      id: 'v1-indigo', no: 'V1', batch: 1,
+      name: '靛蓝侧栏式', styleName: 'Indigo Sidebar', font: 'Inter',
+      colors: ['#4f46e5', '#0f172a', '#eef2ff', '#f8fafc'],
+      tags: ['左侧栏 + 顶栏', '靛蓝强调', '面板布局'],
+      note: '最接近现有应用的布局骨架。'
+    }
+  ];
+
+  let viewport = 1440;
+  const railList = document.getElementById('railList');
+  const casesEl = document.getElementById('cases');
+  const toastEl = document.getElementById('toast');
+
+  function showToast(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toastEl.classList.remove('show'), 1800);
+  }
+
+  /* ---------- 左侧导航 ---------- */
+  function buildRail() {
+    const groups = [
+      { label: '第二批 · 本轮', items: DESIGNS.filter((d) => d.batch === 2) },
+      { label: '第一批 · 上一轮', items: DESIGNS.filter((d) => d.batch === 1) }
+    ];
+    railList.innerHTML = groups.map((g) => `
+      <p class="rail-label">${g.label}</p>
+      ${g.items.map((d) => `
+        <a class="rail-item" href="#${d.id}" data-id="${d.id}">
+          <span class="rail-no">${d.no}</span>
+          <span class="rail-meta">
+            <b>${d.name}</b>
+            <span>${d.styleName}</span>
+          </span>
+          <span class="rail-dots">${d.colors.slice(0, 3).map((c) => `<i style="background:${c}"></i>`).join('')}</span>
+        </a>
+      `).join('')}
+    `).join('');
+  }
+
+  /* ---------- 单版区块 ---------- */
+  function buildCases() {
+    casesEl.innerHTML = DESIGNS.map((d) => `
+      <section class="case" id="${d.id}" data-id="${d.id}" aria-labelledby="${d.id}-title">
+        <div class="case-head">
+          <span class="case-no">${d.no}</span>
+          <div class="case-title">
+            <h2 id="${d.id}-title">${d.name}</h2>
+            <span>${d.styleName} · ${d.font}</span>
+          </div>
+          <div class="case-tags">${d.tags.map((t) => `<span class="case-tag">${t}</span>`).join('')}</div>
+          <div class="case-actions">
+            <a href="./${d.id}.html" target="_blank" rel="noopener">新标签打开 ↗</a>
+          </div>
+        </div>
+        <div class="frame-shell">
+          <div class="frame-bar">
+            <span class="dot" style="background:#f87171"></span>
+            <span class="dot" style="background:#fbbf24"></span>
+            <span class="dot" style="background:#34d399"></span>
+            <span class="frame-addr">docs/design/${d.id}.html</span>
+            <em data-meta="${d.id}">—</em>
+          </div>
+          <div class="frame-wrap" data-wrap="${d.id}">
+            <iframe data-frame="${d.id}" src="./${d.id}.html" title="${d.no} ${d.name}"></iframe>
+          </div>
+          <div class="frame-legend">
+            <span>${d.note}</span>
+            <span>配色 <b>${d.colors.join(' · ').toUpperCase()}</b></span>
+          </div>
+        </div>
+      </section>
+    `).join('');
+  }
+
+  /* ---------- 缩放适配 ---------- */
+  function fitFrame(frame) {
+    const wrap = frame.closest('.frame-wrap');
+    const width = parseInt(frame.dataset.baseWidth || viewport, 10);
+    const avail = wrap.clientWidth;
+    const scale = Math.min(1, avail / width);
+    let height = 900;
+    try {
+      const doc = frame.contentDocument;
+      if (doc && doc.documentElement) {
+        height = Math.max(doc.documentElement.scrollHeight, doc.body ? doc.body.scrollHeight : 0, 320);
+      }
+    } catch (err) { /* 跨域或未就绪 */ }
+    frame.style.width = width + 'px';
+    frame.style.height = height + 'px';
+    frame.style.transform = 'scale(' + scale + ')';
+    wrap.style.height = Math.round(height * scale) + 'px';
+    wrap.style.overflowX = scale < 1 ? 'hidden' : 'auto';
+    const meta = document.querySelector('[data-meta="' + frame.dataset.frame + '"]');
+    if (meta) meta.textContent = width + 'px · ' + Math.round(scale * 100) + '%';
+  }
+
+  function fitAll() {
+    document.querySelectorAll('iframe[data-frame]').forEach((frame) => {
+      if (frame.dataset.ready === '1') fitFrame(frame);
+    });
+  }
+
+  function applyViewport(vp) {
+    viewport = vp;
+    document.querySelectorAll('iframe[data-frame]').forEach((frame) => {
+      frame.dataset.baseWidth = String(vp);
+      frame.dataset.ready = '0';
+      frame.style.transform = 'none';
+      frame.style.width = vp + 'px';
+      frame.src = './' + frame.dataset.frame + '.html';
+    });
+  }
+
+  /* ---------- 导航高亮 ---------- */
+  function watchSections() {
+    const links = new Map([...document.querySelectorAll('.rail-item')].map((a) => [a.dataset.id, a]));
+    const sections = [...document.querySelectorAll('.case')];
+
+    function sync() {
+      const line = 130;
+      let current = sections[0];
+      for (const section of sections) {
+        if (section.getBoundingClientRect().top <= line) current = section;
+      }
+      links.forEach((a, id) => a.classList.toggle('is-on', current && id === current.dataset.id));
+    }
+
+    window.addEventListener('scroll', () => {
+      clearTimeout(sync._t);
+      sync._t = setTimeout(sync, 80);
+    }, { passive: true });
+    sync();
+  }
+
+  /* ---------- 启动 ---------- */
+  buildRail();
+  buildCases();
+  watchSections();
+
+  document.querySelectorAll('iframe[data-frame]').forEach((frame) => {
+    frame.dataset.baseWidth = String(viewport);
+    const onReady = () => {
+      frame.dataset.ready = '1';
+      fitFrame(frame);
+    };
+    frame.addEventListener('load', onReady);
+    if (frame.contentDocument && frame.contentDocument.readyState === 'complete') onReady();
+  });
+
+  window.addEventListener('resize', () => {
+    clearTimeout(fitAll._t);
+    fitAll._t = setTimeout(fitAll, 120);
+  });
+
+  document.querySelectorAll('.vp-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.vp-btn').forEach((b) => b.classList.toggle('is-on', b === btn));
+      applyViewport(parseInt(btn.dataset.vp, 10));
+      showToast('预览宽度 ' + btn.dataset.vp + 'px');
+    });
+  });
+
+  railList.addEventListener('click', (event) => {
+    const link = event.target.closest('.rail-item');
+    if (!link) return;
+    railList.querySelectorAll('.rail-item').forEach((a) => a.classList.toggle('is-on', a === link));
+  });
+</script>
+</body>
+</html>

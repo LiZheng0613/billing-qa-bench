@@ -64,17 +64,17 @@ onBeforeUnmount(() => {
     <div
       v-if="modelValue"
       ref="overlayRef"
-      class="modal-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/80 p-3 backdrop-blur-sm sm:p-6"
+      class="modal-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-3 backdrop-blur-sm sm:p-6"
       @click.self="closeOnBackdrop && close()"
     >
       <div class="card my-4 w-full animate-fade-up sm:my-8" :class="widthClass">
-        <header class="flex items-start justify-between gap-4 border-b border-slate-800 px-5 py-4">
+        <header class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
           <div class="min-w-0">
-            <h2 class="truncate text-base font-semibold text-slate-100">{{ title }}</h2>
+            <h2 class="truncate text-base font-semibold text-slate-900">{{ title }}</h2>
             <p v-if="subtitle" class="mt-1 text-xs text-slate-500">{{ subtitle }}</p>
           </div>
           <button
-            class="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-800 hover:text-slate-200"
+            class="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
             aria-label="关闭"
             @click="close"
           >
@@ -88,7 +88,7 @@ onBeforeUnmount(() => {
         </div>
         <footer
           v-if="$slots.footer"
-          class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-800 px-5 py-3"
+          class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 px-5 py-3"
         >
           <slot name="footer" />
         </footer>

@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../api'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
+import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import type {
   Environment,
@@ -523,15 +524,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h2 class="text-lg font-semibold text-slate-100">环境与模型</h2>
-        <p class="mt-1 text-xs text-slate-500">
-          配置被测系统接入（SSE / 非流式）、环境变量与鉴权钩子，并管理模拟器与裁判模型。
-        </p>
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
+  <div class="space-y-4">
+    <PageHeader
+      eyebrow="Config · 接入配置"
+      title="环境与模型"
+      description="配置被测系统接入（SSE / 非流式）、环境变量与鉴权钩子，并管理模拟器与裁判模型。"
+    >
+      <template #actions>
         <button class="btn-ghost" @click="loadEnvironments(); loadModels()">刷新</button>
         <button v-if="activeTab === 'environments'" class="btn-primary" @click="openCreateEnv">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -545,10 +544,10 @@ onMounted(() => {
           </svg>
           注册模型
         </button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
-    <div class="flex flex-wrap items-center gap-1 rounded-xl border border-slate-800 bg-slate-900/50 p-1">
+    <div class="flex flex-wrap items-center gap-1 rounded-tile border border-line bg-slate-100/70 p-1">
       <button
         class="tab-btn"
         :class="activeTab === 'environments' ? 'tab-btn-active' : ''"
@@ -563,7 +562,7 @@ onMounted(() => {
       >
         模型注册（{{ models.length }}）
       </button>
-      <span class="ml-auto px-2 text-[11px] text-slate-500">
+      <span class="ml-auto px-2 text-[11px] text-slate-600">
         模拟器 {{ modelRoleCount.simulator }} · 裁判 {{ modelRoleCount.judge }}
       </span>
     </div>
@@ -586,24 +585,24 @@ onMounted(() => {
           <tbody>
             <tr v-for="item in environments" :key="item.id">
               <td class="td max-w-[240px]">
-                <p class="text-sm font-medium text-slate-100">{{ item.name }}</p>
-                <p class="mt-0.5 font-mono text-[11px] text-indigo-300">{{ item.code }}</p>
+                <p class="text-sm font-medium text-slate-900">{{ item.name }}</p>
+                <p class="mt-0.5 font-mono text-[11px] text-indigo-600">{{ item.code }}</p>
                 <p class="mt-0.5 truncate text-[11px] text-slate-500" :title="item.description ?? ''">
                   {{ item.description || '—' }}
                 </p>
               </td>
-              <td class="td max-w-[260px] text-[11px] text-slate-400">
+              <td class="td max-w-[260px] text-[11px] text-slate-600">
                 <p class="truncate font-mono">{{ item.api_method }} {{ item.base_url }}{{ item.api_path }}</p>
                 <p class="mt-0.5 truncate font-mono text-slate-500">探活 {{ item.health_path }}</p>
                 <p class="mt-0.5 text-slate-500">
                   超时 {{ item.timeout_seconds }}s · SSL {{ item.verify_ssl ? '校验' : '忽略' }}
-                  <span v-if="item.pre_hook?.enabled" class="text-amber-400"> · 前置鉴权</span>
+                  <span v-if="item.pre_hook?.enabled" class="text-amber-700"> · 前置鉴权</span>
                 </p>
               </td>
               <td class="td">
                 <span
                   class="rounded-md px-1.5 py-0.5 text-[10px]"
-                  :class="item.is_stream ? 'bg-sky-500/10 text-sky-300' : 'bg-slate-800 text-slate-400'"
+                  :class="item.is_stream ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-600'"
                 >
                   {{ item.is_stream ? 'SSE 流式' : '非流式' }}
                 </span>
@@ -614,8 +613,8 @@ onMounted(() => {
               <td class="td">
                 <div class="space-y-1">
                   <StatusPill v-if="item.last_health_status" :status="item.last_health_status" size="sm" />
-                  <span v-else class="text-[11px] text-slate-600">未探活</span>
-                  <p v-if="item.last_health_at" class="text-[10px] text-slate-600">
+                  <span v-else class="text-[11px] text-slate-500">未探活</span>
+                  <p v-if="item.last_health_at" class="text-[10px] text-slate-500">
                     {{ formatDateTime(item.last_health_at) }}
                     <span v-if="item.last_health_latency_ms !== null">
                       · {{ formatMs(item.last_health_latency_ms) }}
@@ -671,8 +670,8 @@ onMounted(() => {
           <tbody>
             <tr v-for="item in models" :key="item.id">
               <td class="td max-w-[220px]">
-                <p class="text-sm font-medium text-slate-100">{{ item.name }}</p>
-                <p class="mt-0.5 font-mono text-[11px] text-indigo-300">{{ item.code }}</p>
+                <p class="text-sm font-medium text-slate-900">{{ item.name }}</p>
+                <p class="mt-0.5 font-mono text-[11px] text-indigo-600">{{ item.code }}</p>
                 <p class="mt-0.5 truncate text-[11px] text-slate-500">{{ item.provider }}</p>
               </td>
               <td class="td">
@@ -680,19 +679,19 @@ onMounted(() => {
                   class="rounded-md px-1.5 py-0.5 text-[10px]"
                   :class="
                     item.role === 'SIMULATOR'
-                      ? 'bg-fuchsia-500/10 text-fuchsia-300'
-                      : 'bg-emerald-500/10 text-emerald-300'
+                      ? 'bg-fuchsia-500/10 text-fuchsia-700'
+                      : 'bg-emerald-50 text-emerald-700'
                   "
                 >
                   {{ roleLabel(item.role) }}
                 </span>
               </td>
-              <td class="td max-w-[260px] text-[11px] text-slate-400">
+              <td class="td max-w-[260px] text-[11px] text-slate-600">
                 <p class="truncate font-mono">{{ item.base_url }}</p>
                 <p class="mt-0.5 truncate font-mono text-slate-500">{{ item.model_name }}</p>
-                <p class="mt-0.5 font-mono text-slate-600">Key {{ item.api_key_masked || '未设置' }}</p>
+                <p class="mt-0.5 font-mono text-slate-500">Key {{ item.api_key_masked || '未设置' }}</p>
               </td>
-              <td class="td text-[11px] text-slate-400">
+              <td class="td text-[11px] text-slate-600">
                 <p>温度 {{ item.effective_temperature }} · top_p {{ item.top_p ?? '默认' }}</p>
                 <p class="mt-0.5 text-slate-500">max {{ item.max_tokens }} · 超时 {{ item.timeout_seconds }}s</p>
                 <p class="mt-0.5 text-slate-500">RPM {{ item.rpm_limit }} · 重试 {{ item.max_retries }}</p>
@@ -704,7 +703,7 @@ onMounted(() => {
                     {{ formatMs(testResults[item.id].latency_ms) }}
                   </p>
                 </template>
-                <span v-else class="text-slate-600">未测试</span>
+                <span v-else class="text-slate-500">未测试</span>
               </td>
               <td class="td">
                 <StatusPill :status="item.is_active ? 'ACTIVE' : 'DISABLED'" size="sm" />
@@ -780,12 +779,12 @@ onMounted(() => {
             <label class="label">探活路径</label>
             <input v-model="envForm.health_path" class="input font-mono" placeholder="/health" />
           </div>
-          <label class="mt-6 flex items-center gap-2 text-sm text-slate-300">
-            <input v-model="envForm.is_stream" type="checkbox" class="h-4 w-4 rounded border-slate-600 bg-slate-900" />
+          <label class="mt-6 flex items-center gap-2 text-sm text-slate-700">
+            <input v-model="envForm.is_stream" type="checkbox" class="h-4 w-4 rounded border-slate-300 bg-white" />
             SSE 流式响应
           </label>
-          <label class="mt-6 flex items-center gap-2 text-sm text-slate-300">
-            <input v-model="envForm.verify_ssl" type="checkbox" class="h-4 w-4 rounded border-slate-600 bg-slate-900" />
+          <label class="mt-6 flex items-center gap-2 text-sm text-slate-700">
+            <input v-model="envForm.verify_ssl" type="checkbox" class="h-4 w-4 rounded border-slate-300 bg-white" />
             校验 SSL 证书
           </label>
         </div>
@@ -805,13 +804,13 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+        <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <label class="flex items-center gap-2 text-sm text-slate-300">
+            <label class="flex items-center gap-2 text-sm text-slate-700">
               <input
                 v-model="envForm.preHookEnabled"
                 type="checkbox"
-                class="h-4 w-4 rounded border-slate-600 bg-slate-900"
+                class="h-4 w-4 rounded border-slate-300 bg-white"
               />
               启用前置鉴权钩子
             </label>
@@ -827,8 +826,8 @@ onMounted(() => {
         </div>
 
         <div class="flex flex-wrap items-center gap-6">
-          <label class="flex items-center gap-2 text-sm text-slate-300">
-            <input v-model="envForm.is_active" type="checkbox" class="h-4 w-4 rounded border-slate-600 bg-slate-900" />
+          <label class="flex items-center gap-2 text-sm text-slate-700">
+            <input v-model="envForm.is_active" type="checkbox" class="h-4 w-4 rounded border-slate-300 bg-white" />
             启用该环境
           </label>
         </div>
@@ -852,7 +851,7 @@ onMounted(() => {
         <div
           v-for="(row, index) in variableRows"
           :key="index"
-          class="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/40 p-2 sm:grid-cols-[150px_minmax(0,1fr)_70px_minmax(0,1fr)_auto]"
+          class="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2 sm:grid-cols-[150px_minmax(0,1fr)_70px_minmax(0,1fr)_auto]"
         >
           <input v-model="row.key" class="input font-mono text-xs" placeholder="KEY" />
           <input
@@ -861,8 +860,8 @@ onMounted(() => {
             :type="row.is_secret ? 'password' : 'text'"
             placeholder="值（留空不修改）"
           />
-          <label class="flex items-center justify-center gap-1 text-[11px] text-slate-400">
-            <input v-model="row.is_secret" type="checkbox" class="h-3.5 w-3.5 rounded border-slate-600 bg-slate-900" />
+          <label class="flex items-center justify-center gap-1 text-[11px] text-slate-600">
+            <input v-model="row.is_secret" type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300 bg-white" />
             密钥
           </label>
           <input v-model="row.description" class="input text-xs" placeholder="说明" />
@@ -947,16 +946,16 @@ onMounted(() => {
             <label class="label">最大重试</label>
             <input v-model.number="modelForm.max_retries" class="input" type="number" min="0" max="10" />
           </div>
-          <label class="mt-6 flex items-center gap-2 text-sm text-slate-300">
+          <label class="mt-6 flex items-center gap-2 text-sm text-slate-700">
             <input
               v-model="modelForm.response_format_json"
               type="checkbox"
-              class="h-4 w-4 rounded border-slate-600 bg-slate-900"
+              class="h-4 w-4 rounded border-slate-300 bg-white"
             />
             强制 JSON 输出
           </label>
-          <label class="mt-6 flex items-center gap-2 text-sm text-slate-300">
-            <input v-model="modelForm.is_active" type="checkbox" class="h-4 w-4 rounded border-slate-600 bg-slate-900" />
+          <label class="mt-6 flex items-center gap-2 text-sm text-slate-700">
+            <input v-model="modelForm.is_active" type="checkbox" class="h-4 w-4 rounded border-slate-300 bg-white" />
             启用模型
           </label>
         </div>

@@ -104,7 +104,7 @@ watch(
       <EmptyState title="暂无版本记录" description="该用例还没有生成版本快照。" />
     </div>
     <div v-else class="space-y-5">
-      <div class="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3 sm:grid-cols-[1fr_auto_1fr_auto] sm:items-end">
+      <div class="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 sm:grid-cols-[1fr_auto_1fr_auto] sm:items-end">
         <div>
           <label class="label">基线版本</label>
           <select v-model="fromVersion" class="input">
@@ -123,12 +123,12 @@ watch(
         </button>
       </div>
 
-      <div v-if="diff" class="overflow-hidden rounded-xl border border-slate-800">
-        <div class="flex items-center justify-between border-b border-slate-800 bg-slate-950/60 px-3 py-2">
-          <span class="text-xs text-slate-400">
+      <div v-if="diff" class="overflow-hidden rounded-xl border border-slate-200">
+        <div class="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2">
+          <span class="text-xs text-slate-600">
             v{{ diff.from_version }} → v{{ diff.to_version }}，共 {{ diff.total }} 处变更
           </span>
-          <span class="text-[11px] text-slate-600">字段级快照对比</span>
+          <span class="text-[11px] text-slate-500">字段级快照对比</span>
         </div>
         <table v-if="diff.changes.length" class="table-shell">
           <thead>
@@ -142,23 +142,23 @@ watch(
           <tbody>
             <tr v-for="change in diff.changes" :key="change.path">
               <td class="td">
-                <p class="text-slate-200">{{ change.label }}</p>
+                <p class="text-slate-800">{{ change.label }}</p>
                 <p class="font-mono text-[10px] text-slate-500">{{ change.path }}</p>
               </td>
               <td class="td">
                 <span
                   class="rounded-md px-1.5 py-0.5 text-[10px]"
                   :class="{
-                    'bg-emerald-500/10 text-emerald-300': change.change_type === 'added',
-                    'bg-rose-500/10 text-rose-300': change.change_type === 'removed',
-                    'bg-amber-500/10 text-amber-300': change.change_type === 'modified',
+                    'bg-emerald-50 text-emerald-700': change.change_type === 'added',
+                    'bg-rose-50 text-rose-700': change.change_type === 'removed',
+                    'bg-amber-50 text-amber-700': change.change_type === 'modified',
                   }"
                 >
                   {{ change.change_type === 'added' ? '新增' : change.change_type === 'removed' ? '删除' : '修改' }}
                 </span>
               </td>
               <td class="td max-w-[240px] break-all text-xs text-slate-500">{{ display(change.old) }}</td>
-              <td class="td max-w-[240px] break-all text-xs text-slate-200">{{ display(change.new) }}</td>
+              <td class="td max-w-[240px] break-all text-xs text-slate-800">{{ display(change.new) }}</td>
             </tr>
           </tbody>
         </table>
@@ -171,16 +171,16 @@ watch(
           <li
             v-for="revision in revisions"
             :key="revision.id"
-            class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2.5"
+            class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5"
           >
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">
-                <span class="font-mono text-xs font-semibold text-indigo-300">v{{ revision.version }}</span>
+                <span class="font-mono text-xs font-semibold text-indigo-600">v{{ revision.version }}</span>
                 <StatusPill :status="revision.change_type" size="sm" />
                 <span v-if="revision.version === caseData?.current_version" class="tag">当前版本</span>
               </div>
-              <p class="mt-1 text-xs text-slate-300">{{ revision.summary || statusLabel(revision.change_type) }}</p>
-              <p class="mt-0.5 text-[10px] text-slate-600">
+              <p class="mt-1 text-xs text-slate-700">{{ revision.summary || statusLabel(revision.change_type) }}</p>
+              <p class="mt-0.5 text-[10px] text-slate-500">
                 {{ revision.operator }} · {{ formatDateTime(revision.created_at) }}
               </p>
             </div>

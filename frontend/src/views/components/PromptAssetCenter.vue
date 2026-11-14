@@ -28,14 +28,14 @@ const versions = computed(() =>
       description="查看版本历史、引用影响，并在沙盒中试用 Prompt。"
     />
     <template v-else>
-      <header class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 px-5 py-4">
+      <header class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
-            <h2 class="text-base font-semibold text-slate-100">{{ template.name }}</h2>
-            <span class="rounded-md bg-slate-800 px-1.5 py-0.5 text-[11px] text-slate-300">
+            <h2 class="text-base font-semibold text-slate-900">{{ template.name }}</h2>
+            <span class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-700">
               {{ templateTypeLabel(template.template_type) }}
             </span>
-            <span v-if="template.is_builtin" class="tag border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">内置</span>
+            <span v-if="template.is_builtin" class="tag border border-indigo-200 bg-indigo-50 text-indigo-600">内置</span>
             <StatusPill :status="template.is_active ? 'ACTIVE' : 'DISABLED'" size="sm" />
           </div>
           <p class="mt-1 font-mono text-[11px] text-slate-500">{{ template.code }}</p>
@@ -50,22 +50,22 @@ const versions = computed(() =>
         </div>
       </header>
 
-      <div class="grid grid-cols-2 gap-3 border-b border-slate-800 px-5 py-3 sm:grid-cols-4">
+      <div class="grid grid-cols-2 gap-3 border-b border-slate-200 px-5 py-3 sm:grid-cols-4">
         <div>
           <p class="text-[10px] uppercase tracking-wider text-slate-500">当前版本</p>
-          <p class="mt-0.5 text-lg font-semibold text-indigo-300">v{{ template.current_version }}</p>
+          <p class="mt-0.5 text-lg font-semibold text-indigo-600">v{{ template.current_version }}</p>
         </div>
         <div>
           <p class="text-[10px] uppercase tracking-wider text-slate-500">引用用例</p>
-          <p class="mt-0.5 text-lg font-semibold text-slate-100">{{ template.ref_count }}</p>
+          <p class="mt-0.5 text-lg font-semibold text-slate-900">{{ template.ref_count }}</p>
         </div>
         <div>
           <p class="text-[10px] uppercase tracking-wider text-slate-500">创建时间</p>
-          <p class="mt-0.5 text-xs text-slate-300">{{ formatDateTime(template.created_at) }}</p>
+          <p class="mt-0.5 text-xs text-slate-700">{{ formatDateTime(template.created_at) }}</p>
         </div>
         <div>
           <p class="text-[10px] uppercase tracking-wider text-slate-500">更新时间</p>
-          <p class="mt-0.5 text-xs text-slate-300">{{ formatDateTime(template.updated_at) }}</p>
+          <p class="mt-0.5 text-xs text-slate-700">{{ formatDateTime(template.updated_at) }}</p>
         </div>
       </div>
 
@@ -75,14 +75,14 @@ const versions = computed(() =>
           <div
             v-for="version in versions"
             :key="version.id"
-            class="rounded-xl border border-slate-800 bg-slate-950/40"
+            class="rounded-xl border border-slate-200 bg-slate-50"
           >
             <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
               <div class="flex flex-wrap items-center gap-2">
-                <span class="font-mono text-xs font-semibold text-indigo-300">v{{ version.version }}</span>
+                <span class="font-mono text-xs font-semibold text-indigo-600">v{{ version.version }}</span>
                 <span v-if="version.version === template.current_version" class="tag">当前</span>
-                <span class="text-[11px] text-slate-400">{{ version.changelog || '无变更说明' }}</span>
-                <span class="text-[10px] text-slate-600">{{ version.created_by || 'system' }} · {{ formatDateTime(version.created_at) }}</span>
+                <span class="text-[11px] text-slate-600">{{ version.changelog || '无变更说明' }}</span>
+                <span class="text-[10px] text-slate-500">{{ version.created_by || 'system' }} · {{ formatDateTime(version.created_at) }}</span>
               </div>
               <button class="btn-ghost btn-xs" @click="emit('sandbox', version.version)">用此版本试用</button>
             </div>
@@ -91,17 +91,17 @@ const versions = computed(() =>
                 {{ variable }}
               </span>
             </div>
-            <details class="border-t border-slate-800/70">
-              <summary class="cursor-pointer px-3 py-1.5 text-[11px] text-slate-500 hover:text-slate-300">
+            <details class="border-t border-slate-200">
+              <summary class="cursor-pointer px-3 py-1.5 text-[11px] text-slate-500 hover:text-slate-700">
                 查看模板内容
               </summary>
-              <pre class="mono max-h-64 overflow-auto whitespace-pre-wrap border-t border-slate-800/60 p-3 text-slate-300">{{ version.content }}</pre>
+              <pre class="mono max-h-64 overflow-auto whitespace-pre-wrap border-t border-slate-200 p-3 text-slate-700">{{ version.content }}</pre>
             </details>
           </div>
           <EmptyState v-if="versions.length === 0" compact title="暂无版本内容" />
         </div>
 
-        <p class="mt-4 text-[11px] leading-relaxed text-slate-600">
+        <p class="mt-4 text-[11px] leading-relaxed text-slate-500">
           模板类型：{{ statusLabel(template.template_type) }}。模拟器模板用于动态多轮的用户代理，
           裁判模板用于结构化评分与红线判定。
         </p>

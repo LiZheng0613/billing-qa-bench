@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>设计稿 V5 · 瑞士网格 · 问账 QA</title>
+<style>
+  /* ============================================================
+     V5 瑞士网格 · Minimalism & Swiss Style
+     Query: "swiss minimal enterprise analytics tool" --design-system
+     风格 minimalism-and-swiss-style（light 适配）
+     颜色：近黑 #111827 / 白 / 单一强调 #15803D
+     规则：无卡片投影、0-2px 圆角、严格 12 栏网格、发丝线分隔
+     ============================================================ */
+  :root {
+    --paper: #ffffff;
+    --ink: #111827;
+    --ink-2: #374151;
+    --muted: #6b7280;
+    --rule: #e5e7eb;
+    --rule-strong: #111827;
+    --accent: #15803d;
+    --accent-soft: #f0fdf4;
+    --fail: #b91c1c;
+    --warn: #b45309;
+    --font: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--font); font-size: 13px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important; transition-duration: .001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* ---------- 左侧导航（无卡片、发丝线） ---------- */
+  .app { display: flex; min-height: 100vh; }
+  .main { flex: 1; min-width: 0; }
+  .side {
+    width: 212px; flex: 0 0 212px; position: sticky; top: 0; height: 100vh;
+    display: flex; flex-direction: column; gap: 26px;
+    padding: 26px 20px 18px; background: var(--paper);
+    border-right: 1px solid var(--rule-strong);
+  }
+  .wordmark b { display: block; font-size: 15px; font-weight: 700; letter-spacing: -.4px; }
+  .wordmark span {
+    display: block; margin-top: 4px; font-family: var(--mono); font-size: 8.5px;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
+  }
+  .side nav { display: flex; flex-direction: column; }
+  .side nav a {
+    display: flex; align-items: baseline; gap: 10px; padding: 9px 0 8px;
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); border-bottom: 1px solid var(--rule);
+    transition: color .15s linear, border-color .15s linear;
+  }
+  .side nav a .idx {
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: .06em;
+    color: var(--faint); flex: 0 0 auto;
+  }
+  .side nav a:hover { color: var(--ink); }
+  .side nav a[aria-current="page"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }
+  .side nav a[aria-current="page"] .idx { color: var(--accent); }
+  .side-foot {
+    margin-top: auto; padding-top: 14px; border-top: 1px solid var(--rule);
+    display: flex; flex-direction: column; gap: 6px;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .side-foot b { font-weight: 500; color: var(--ink-2); }
+
+  /* ---------- 版面 ---------- */
+  .page { max-width: 1320px; margin: 0 auto; padding: 30px 32px 56px; }
+
+  .head { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 24px; padding-bottom: 26px; border-bottom: 1px solid var(--rule); }
+  .head-main { grid-column: span 7; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  h1 {
+    margin: 12px 0 0; font-size: 40px; line-height: 1.03; font-weight: 600;
+    letter-spacing: -1.6px;
+  }
+  .head-sub { margin: 14px 0 0; max-width: 46ch; color: var(--ink-2); font-size: 12.5px; }
+  .head-meta { grid-column: span 5; display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 24px; align-content: end; }
+  .head-meta div { border-top: 1px solid var(--rule); padding-top: 7px; }
+  .head-meta dt {
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .head-meta dd { margin: 3px 0 0; font-size: 12.5px; font-weight: 500; }
+  .head-meta dd.mono { font-family: var(--mono); font-size: 11px; }
+
+  /* ---------- 巨型统计 ---------- */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--rule); }
+  .stat { padding: 24px 24px 22px 0; }
+  .stat + .stat { padding-left: 24px; border-left: 1px solid var(--rule); }
+  .stat dt {
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .stat dd {
+    margin: 10px 0 0; display: flex; align-items: baseline; gap: 4px;
+    font-size: 42px; font-weight: 300; letter-spacing: -2px; line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat dd em { font-style: normal; font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--muted); }
+  .stat dd.accent { color: var(--accent); }
+  .stat .note { margin-top: 9px; font-size: 10.5px; color: var(--muted); }
+
+  /* ---------- 主区 ---------- */
+  .body-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 32px; padding-top: 26px; }
+  .col-main { grid-column: span 8; min-width: 0; }
+  .col-side { grid-column: span 4; min-width: 0; }
+
+  .sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding-bottom: 9px; border-bottom: 2px solid var(--rule-strong); }
+  .sec-head h2 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .sec-head .aside { font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; }
+
+  .filters { display: flex; gap: 18px; padding: 10px 0 0; font-size: 11px; }
+  .filters button {
+    border: 0; background: none; padding: 2px 0; font-family: inherit; font-size: 11px;
+    color: var(--muted); cursor: pointer; border-bottom: 1px solid transparent;
+  }
+  .filters button:hover { color: var(--ink); }
+  .filters button[aria-pressed="true"] { color: var(--ink); font-weight: 600; border-color: var(--ink); }
+
+  /* ---------- 表格 ---------- */
+  .table-scroll { overflow-x: auto; contain: paint; }
+  table { width: 100%; border-collapse: collapse; min-width: 700px; }
+  thead th {
+    text-align: left; padding: 10px 12px 9px 0;
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--muted); font-weight: 500;
+    border-bottom: 1px solid var(--rule); white-space: nowrap;
+  }
+  thead th:last-child { text-align: right; padding-right: 0; }
+  tbody td { padding: 12px 12px 12px 0; border-bottom: 1px solid var(--rule); font-size: 12px; vertical-align: middle; }
+  tbody tr:hover { background: #fafafa; }
+  tbody td:last-child { text-align: right; padding-right: 0; }
+  .case code { display: block; font-family: var(--mono); font-size: 11.5px; font-weight: 500; }
+  .case span { display: block; margin-top: 2px; font-size: 10.5px; color: var(--muted); }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+  .status i { width: 6px; height: 6px; display: block; }
+  .s-pass { color: var(--accent); }
+  .s-pass i { background: var(--accent); }
+  .s-fail { color: var(--fail); }
+  .s-fail i { background: var(--fail); }
+  .s-warn { color: var(--warn); }
+  .s-warn i { background: var(--warn); }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .dim { color: var(--muted); }
+  .go {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase;
+    border-bottom: 1px solid var(--ink); padding-bottom: 1px;
+  }
+  .go:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ---------- 分布 ---------- */
+  .stack { display: flex; height: 10px; margin: 14px 0 16px; gap: 2px; }
+  .stack span { display: block; height: 100%; }
+  .dist-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 20px; }
+  .dist-grid div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--rule); padding-bottom: 8px; }
+  .dist-grid dt { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--ink-2); }
+  .dist-grid dt i { width: 7px; height: 7px; }
+  .dist-grid dd { margin: 0; display: flex; align-items: baseline; gap: 6px; }
+  .dist-grid dd b { font-size: 18px; font-weight: 400; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+  .dist-grid dd span { font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
+
+  /* ---------- 侧栏区块 ---------- */
+  .side-block { margin-top: 28px; }
+  .side-block:first-child { margin-top: 0; }
+  .side-block .sec-head { border-bottom-width: 1px; }
+
+  .params { margin: 0; }
+  .params div { display: flex; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 11.5px; }
+  .params dt { color: var(--muted); }
+  .params dd { margin: 0; font-family: var(--mono); font-size: 11px; text-align: right; }
+  .params dd.ok { color: var(--accent); }
+
+  .runs { margin: 0; padding: 0; list-style: none; }
+  .runs li { border-bottom: 1px solid var(--rule); padding: 11px 0; }
+  .runs li:first-child { padding-top: 12px; }
+  .runs a { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .runs .name { font-size: 11.5px; font-weight: 500; }
+  .runs .name small { display: block; margin-top: 2px; font-family: var(--mono); font-size: 9px; color: var(--muted); letter-spacing: .04em; }
+  .runs .pct { font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+  .runs li:hover .name { text-decoration: underline; text-underline-offset: 3px; }
+
+  /* ---------- 版本条 ---------- */
+  .version-strip {
+    margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--rule);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
+    font-family: var(--mono); font-size: 9px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .version-strip a { border-bottom: 1px solid var(--rule); padding-bottom: 1px; }
+  .version-strip a:hover { color: var(--ink); border-color: var(--ink); }
+  .version-strip a[aria-current="true"] { color: var(--ink); border-color: var(--ink); font-weight: 600; }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width: 1080px) {
+    .head { gap: 20px; }
+    .head-main, .head-meta { grid-column: span 12; }
+    .head-meta { grid-template-columns: repeat(3, 1fr); align-content: start; }
+    .col-main, .col-side { grid-column: auto; }
+    .body-grid { grid-template-columns: minmax(0, 1fr); gap: 26px; }
+    h1 { font-size: 34px; }
+    .side { width: 60px; flex-basis: 60px; padding: 18px 8px 12px; align-items: center; gap: 18px; }
+    .wordmark b { font-size: 13px; letter-spacing: -.4px; }
+    .wordmark span { display: none; }
+    .side nav { width: 100%; }
+    .side nav a { justify-content: center; padding: 7px 0; gap: 0; }
+    .side nav a .lbl { display: none; }
+    .side nav a .idx { font-size: 9.5px; }
+    .side-foot { align-items: center; }
+    .side-foot span:last-child { display: none; }
+  }
+  @media (max-width: 720px) {
+    .page { padding: 20px 18px 40px; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .stat:nth-child(3) { border-left: 0; padding-left: 0; }
+    .stat:nth-child(n + 3) { border-top: 1px solid var(--rule); }
+    h1 { font-size: 28px; letter-spacing: -1px; }
+    .head-meta { grid-template-columns: repeat(2, 1fr); }
+    .stat dd { font-size: 34px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside class="side">
+    <div class="wordmark">
+      <b>问账 QA</b>
+      <span>Billing QA</span>
+    </div>
+    <nav aria-label="主导航">
+      <a href="#" aria-current="page"><span class="idx">01</span><span class="lbl">测试大盘</span></a>
+      <a href="#"><span class="idx">02</span><span class="lbl">用例资产</span></a>
+      <a href="#"><span class="idx">03</span><span class="lbl">Prompt 资产</span></a>
+      <a href="#"><span class="idx">04</span><span class="lbl">执行记录</span></a>
+      <a href="#"><span class="idx">05</span><span class="lbl">环境与模型</span></a>
+    </nav>
+    <div class="side-foot">
+      <span>env <b>dev</b></span>
+      <span>user <b>admin</b></span>
+    </div>
+  </aside>
+
+  <div class="main">
+<main class="page">
+  <section class="head">
+    <div class="head-main">
+      <div class="eyebrow">Batch Run · 2026-11-14 17:28</div>
+      <h1>批量执行<br />11/14 17:28</h1>
+      <p class="head-sub">
+        共 7 条用例，全部完成。下表按用例汇总最新一次尝试，可进入单笔执行结果或该用例的完整历史。
+      </p>
+    </div>
+    <dl class="head-meta">
+      <div><dt>任务编号</dt><dd class="mono">BATCH20261114172830216</dd></div>
+      <div><dt>状态</dt><dd>已完成 · 57.1% 通过</dd></div>
+      <div><dt>并发 / QPS</dt><dd class="mono">3 / 5</dd></div>
+      <div><dt>环境重试</dt><dd>2 次 · 已触发 1 次</dd></div>
+      <div><dt>开始 / 耗时</dt><dd class="mono">17:28:30 · 6.2s</dd></div>
+      <div><dt>设计稿</dt><dd>V5 瑞士网格</dd></div>
+    </dl>
+  </section>
+
+  <section class="stats" aria-label="批次核心指标">
+    <dl class="stat">
+      <dt>用例</dt>
+      <dd>7<em>条</em></dd>
+      <div class="note">启用 124 · 全量 128</div>
+    </dl>
+    <dl class="stat">
+      <dt>通过率</dt>
+      <dd class="accent">57.1<em>%</em></dd>
+      <div class="note">通过 4 · 失败 2 · 超限 1</div>
+    </dl>
+    <dl class="stat">
+      <dt>平均 TTFT</dt>
+      <dd>340<em>ms</em></dd>
+      <div class="note">P95 端到端 1.2s</div>
+    </dl>
+    <dl class="stat">
+      <dt>Tokens</dt>
+      <dd>12.4<em>k</em></dd>
+      <div class="note">裁判 12.4k · 模拟 0</div>
+    </dl>
+  </section>
+
+  <div class="body-grid">
+    <!-- 主表 -->
+    <section class="col-main" aria-labelledby="cases-title">
+      <div class="sec-head">
+        <h2 id="cases-title">用例执行结果</h2>
+        <span class="aside">7 rows · latest attempt</span>
+      </div>
+      <div class="filters" role="group" aria-label="按状态筛选">
+        <button type="button" aria-pressed="true">全部 7</button>
+        <button type="button" aria-pressed="false">通过 4</button>
+        <button type="button" aria-pressed="false">失败 2</button>
+        <button type="button" aria-pressed="false">超限 1</button>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">用例</th>
+              <th scope="col">状态</th>
+              <th scope="col">得分</th>
+              <th scope="col">轮次</th>
+              <th scope="col">尝试</th>
+              <th scope="col">时延</th>
+              <th scope="col">开始</th>
+              <th scope="col"><span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">操作</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><div class="case"><code>API-SMOKE-1794576016</code><span>API 冒烟用例 · v3</span></div></td>
+              <td><span class="status s-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">94.0</td><td class="num">1</td><td class="num">1</td><td class="num">377 ms</td><td class="num dim">17:28:33</td>
+              <td><a class="go" href="#" aria-label="查看用例 API-SMOKE-1794576016 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-SINGLE-001</code><span>单轮 · 标准账单查询 · v1</span></div></td>
+              <td><span class="status s-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">96.0</td><td class="num">1</td><td class="num">1</td><td class="num">362 ms</td><td class="num dim">17:28:33</td>
+              <td><a class="go" href="#" aria-label="查看用例 DEMO-SINGLE-001 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-DYNAMIC-MAXTURNS</code><span>动态多轮 · 最大轮次熔断 · v1</span></div></td>
+              <td><span class="status s-warn"><i aria-hidden="true"></i>轮次超限</span></td>
+              <td class="num">61.0</td><td class="num">3</td><td class="num">1</td><td class="num">1.36 s</td><td class="num dim">17:28:32</td>
+              <td><a class="go" href="#" aria-label="查看用例 DEMO-DYNAMIC-MAXTURNS 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-DYNAMIC-001</code><span>动态多轮 · 隐藏信息释放 · v1</span></div></td>
+              <td><span class="status s-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">92.0</td><td class="num">3</td><td class="num">1</td><td class="num">982 ms</td><td class="num dim">17:28:32</td>
+              <td><a class="go" href="#" aria-label="查看用例 DEMO-DYNAMIC-001 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-STATIC-001</code><span>静态多轮 · 指代继承与明细追问 · v1</span></div></td>
+              <td><span class="status s-fail"><i aria-hidden="true"></i>失败</span></td>
+              <td class="num">58.0</td><td class="num">2</td><td class="num">1</td><td class="num">744 ms</td><td class="num dim">17:28:31</td>
+              <td><a class="go" href="#" aria-label="查看用例 DEMO-STATIC-001 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-SINGLE-FAIL</code><span>单轮 · 数据幻觉红线 · v1</span></div></td>
+              <td><span class="status s-fail"><i aria-hidden="true"></i>失败</span></td>
+              <td class="num">18.0</td><td class="num">1</td><td class="num">2</td><td class="num">512 ms</td><td class="num dim">17:28:31</td>
+              <td><a class="go" href="#" aria-label="查看用例 DEMO-SINGLE-FAIL 的执行结果">结果</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>API-SMOKE-1794573004</code><span>API 冒烟用例 · v3</span></div></td>
+              <td><span class="status s-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">94.0</td><td class="num">1</td><td class="num">1</td><td class="num">297 ms</td><td class="num dim">17:28:30</td>
+              <td><a class="go" href="#" aria-label="查看用例 API-SMOKE-1794573004 的执行结果">结果</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding-top:12px;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">
+        <span>Page 1 / 1 · 7 cases</span>
+        <a href="#" style="border-bottom:1px solid var(--rule)">全部执行记录（含重试）</a>
+      </div>
+    </section>
+
+    <!-- 侧栏 -->
+    <aside class="col-side">
+      <section>
+        <div class="sec-head">
+          <h2>状态分布</h2>
+          <span class="aside">7 / 7</span>
+        </div>
+        <div class="stack" role="img" aria-label="通过 4 条、失败 2 条、轮次超限 1 条">
+          <span style="width:57.1%;background:#15803d"></span>
+          <span style="width:28.6%;background:#b91c1c"></span>
+          <span style="width:14.3%;background:#b45309"></span>
+        </div>
+        <dl class="dist-grid">
+          <div><dt><i style="background:#15803d" aria-hidden="true"></i>通过</dt><dd><b>4</b><span>57.1%</span></dd></div>
+          <div><dt><i style="background:#b91c1c" aria-hidden="true"></i>失败</dt><dd><b>2</b><span>28.6%</span></dd></div>
+          <div><dt><i style="background:#b45309" aria-hidden="true"></i>轮次超限</dt><dd><b>1</b><span>14.3%</span></dd></div>
+          <div><dt><i style="background:#9ca3af" aria-hidden="true"></i>异常 / 中断</dt><dd><b>0</b><span>0%</span></dd></div>
+        </dl>
+      </section>
+
+      <section class="side-block">
+        <div class="sec-head">
+          <h2>运行参数</h2>
+          <span class="aside">config</span>
+        </div>
+        <dl class="params">
+          <div><dt>环境</dt><dd>Billing-Sandbox</dd></div>
+          <div><dt>裁判模型</dt><dd>judge-large</dd></div>
+          <div><dt>最大轮次</dt><dd>3</dd></div>
+          <div><dt>环境失败重试</dt><dd class="ok">开启 · 2 次</dd></div>
+          <div><dt>本次重试</dt><dd>1 次 · 已恢复</dd></div>
+        </dl>
+      </section>
+
+      <section class="side-block">
+        <div class="sec-head">
+          <h2>最近批次</h2>
+          <span class="aside">last 50</span>
+        </div>
+        <ul class="runs">
+          <li>
+            <a href="#">
+              <span class="name">批量执行 11/14 17:28<small>BATCH20261114172830216</small></span>
+              <span class="pct">57.1%</span>
+            </a>
+          </li>
+          <li>
+            <a href="#">
+              <span class="name">全量回归 11/14 15:24<small>BATCH20261114152429901</small></span>
+              <span class="pct">71.4%</span>
+            </a>
+          </li>
+          <li>
+            <a href="#">
+              <span class="name">账单冒烟 11/14 15:22<small>BATCH20261114152240477</small></span>
+              <span class="pct">100%</span>
+            </a>
+          </li>
+          <li>
+            <a href="#">
+              <span class="name">端到端冒烟 11/13 21:21<small>SMOKE-1794576110</small></span>
+              <span class="pct">100%</span>
+            </a>
+          </li>
+        </ul>
+      </section>
+    </aside>
+  </div>
+
+  <div class="version-strip">
+    <span>本批设计稿</span>
+    <a href="./v4-precision.html">V4 精密仪表</a>
+    <a href="./v5-swiss.html" aria-current="true">V5 瑞士网格</a>
+    <a href="./v6-ledger.html">V6 金融账本</a>
+    <a href="./v7-bento.html">V7 Bento 工作台</a>
+    <span style="margin-left:12px">上一批</span>
+    <a href="./v1-indigo.html">V1</a>
+    <a href="./v2-emerald.html">V2</a>
+    <a href="./v3-blue.html">V3</a>
+  </div>
+</main>
+  </div>
+</div>
+
+</body>
+</html>

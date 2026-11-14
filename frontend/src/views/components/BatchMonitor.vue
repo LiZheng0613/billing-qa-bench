@@ -111,23 +111,23 @@ const stats = computed(() => [
 
 <template>
   <section class="card overflow-hidden">
-    <header class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 px-5 py-4">
+    <header class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
-          <h2 class="text-sm font-semibold text-slate-100">批量任务详情</h2>
-          <span class="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] text-indigo-300">
+          <h2 class="text-sm font-semibold text-slate-900">批量任务详情</h2>
+          <span class="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-600">
             批量
           </span>
           <span
             v-if="live"
-            class="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300"
+            class="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700"
           >
             <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
             WebSocket 实时
           </span>
         </div>
         <p v-if="task" class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-          <span class="font-mono text-slate-400">{{ task.code }}</span>
+          <span class="font-mono text-slate-600">{{ task.code }}</span>
           <span>·</span>
           <span class="truncate">{{ task.name }}</span>
           <span>·</span>
@@ -164,21 +164,21 @@ const stats = computed(() => [
     </div>
 
     <template v-else>
-      <div class="border-b border-slate-800 px-5 py-4">
-        <div class="flex items-center justify-between text-xs text-slate-400">
+      <div class="border-b border-slate-200 px-5 py-4">
+        <div class="flex items-center justify-between text-xs text-slate-600">
           <span>
             {{ metrics ? `${metrics.finished_cases} / ${metrics.total_cases}` : `${task.finished_cases} / ${task.total_cases}` }}
             条已完成
           </span>
           <span class="tabular-nums">{{ progress.toFixed(1) }}%</span>
         </div>
-        <div class="mt-2 h-2 overflow-hidden rounded-full bg-slate-800">
+        <div class="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
           <div
-            class="h-full rounded-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-500"
+            class="h-full rounded-full bg-gradient-to-r from-indigo-500 to-indigo-600 transition-all duration-500"
             :style="{ width: `${Math.min(100, Math.max(0, progress))}%` }"
           />
         </div>
-        <div v-if="segmented.length" class="mt-3 flex h-2 overflow-hidden rounded-full bg-slate-800">
+        <div v-if="segmented.length" class="mt-3 flex h-2 overflow-hidden rounded-full bg-slate-100">
           <div
             v-for="segment in segmented"
             :key="segment.key"
@@ -196,11 +196,11 @@ const stats = computed(() => [
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-3 border-b border-slate-800 px-5 py-4 sm:grid-cols-3 xl:grid-cols-6">
+      <div class="grid grid-cols-2 gap-3 border-b border-slate-200 px-5 py-4 sm:grid-cols-3 xl:grid-cols-6">
         <div v-for="item in stats" :key="item.label">
           <p class="text-[10px] uppercase tracking-wider text-slate-500">{{ item.label }}</p>
-          <p class="mt-0.5 text-lg font-semibold tabular-nums text-slate-100">{{ item.value }}</p>
-          <p v-if="item.hint" class="mt-0.5 text-[10px] text-slate-600">{{ item.hint }}</p>
+          <p class="mt-0.5 text-xl font-semibold leading-tight tracking-[-0.02em] tabular-nums text-slate-900">{{ item.value }}</p>
+          <p v-if="item.hint" class="mt-0.5 text-[10px] text-slate-500">{{ item.hint }}</p>
         </div>
       </div>
 
@@ -237,10 +237,10 @@ const stats = computed(() => [
             >
               <td class="td font-mono text-xs text-slate-500">#{{ item.id }}</td>
               <td class="td">
-                <p class="font-mono text-xs text-slate-200">{{ item.case_code || `用例 #${item.case_id ?? '—'}` }}</p>
+                <p class="font-mono text-xs text-slate-800">{{ item.case_code || `用例 #${item.case_id ?? '—'}` }}</p>
                 <p class="mt-0.5 max-w-[240px] truncate text-[11px] text-slate-500">
                   {{ item.case_name || '—' }} · v{{ item.case_version }}
-                  <span v-if="item.attempt_no > 1" class="text-amber-400"> · 第 {{ item.attempt_no }} 次尝试</span>
+                  <span v-if="item.attempt_no > 1" class="text-amber-700"> · 第 {{ item.attempt_no }} 次尝试</span>
                 </p>
               </td>
               <td class="td"><StatusPill :status="item.status" size="sm" /></td>
@@ -265,7 +265,7 @@ const stats = computed(() => [
         />
         <div
           v-if="executionTotal > executionPageSize"
-          class="flex items-center justify-between border-t border-slate-800 px-5 py-3"
+          class="flex items-center justify-between border-t border-slate-200 px-5 py-3"
         >
           <span class="text-[11px] text-slate-500">
             第 {{ executionPage }} / {{ executionPageCount }} 页

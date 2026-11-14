@@ -4,9 +4,9 @@ import { useToastStore } from '../stores/toast'
 const toast = useToastStore()
 
 const toneMap = {
-  success: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
-  error: 'border-rose-500/40 bg-rose-500/10 text-rose-200',
-  info: 'border-sky-500/40 bg-sky-500/10 text-sky-200',
+  success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  error: 'border-rose-200 bg-rose-50 text-rose-700',
+  info: 'border-sky-200 bg-sky-50 text-sky-700',
 } as const
 
 const iconMap = {
@@ -22,7 +22,7 @@ const iconMap = {
       <div
         v-for="item in toast.items"
         :key="item.id"
-        class="pointer-events-auto flex w-full max-w-md items-start gap-3 rounded-xl border px-4 py-3 shadow-2xl backdrop-blur"
+        class="pointer-events-auto flex w-full max-w-md items-start gap-3 rounded-2xl border px-4 py-3 shadow-tile-lift"
         :class="toneMap[item.type]"
       >
         <svg class="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

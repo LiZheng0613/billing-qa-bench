@@ -29,39 +29,48 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <div class="relative flex min-h-screen items-center justify-center overflow-hidden px-4">
-    <div class="pointer-events-none absolute -left-40 top-0 h-96 w-96 rounded-full bg-indigo-600/20 blur-3xl" />
-    <div class="pointer-events-none absolute -right-32 bottom-0 h-96 w-96 rounded-full bg-cyan-500/10 blur-3xl" />
+  <div class="relative flex min-h-screen items-center justify-center overflow-hidden bg-canvas px-4 py-10">
+    <div class="pointer-events-none absolute -left-32 top-0 h-80 w-80 rounded-full bg-indigo-200/40 blur-3xl" />
+    <div class="pointer-events-none absolute -right-28 bottom-0 h-80 w-80 rounded-full bg-sky-200/40 blur-3xl" />
 
-    <div class="relative grid w-full max-w-4xl gap-8 lg:grid-cols-[1.1fr_1fr] lg:items-center">
+    <div class="relative grid w-full max-w-5xl gap-8 lg:grid-cols-[1.05fr_1fr] lg:items-center">
       <div class="hidden lg:block">
-        <div
-          class="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-lg font-bold text-white shadow-xl shadow-indigo-500/30"
-        >
-          问
+        <div class="flex items-center gap-3">
+          <div
+            class="flex h-11 w-11 items-center justify-center rounded-[13px] bg-gradient-to-br from-indigo-500 to-indigo-600 text-lg font-bold text-white shadow-[0_12px_28px_-16px_rgba(79,70,229,0.9)]"
+          >
+            问
+          </div>
+          <div>
+            <p class="text-sm font-semibold leading-tight text-ink">问账 QA</p>
+            <p class="text-[9.5px] font-medium uppercase tracking-[0.14em] text-slate-600">Billing QA Console</p>
+          </div>
         </div>
-        <h1 class="text-3xl font-semibold leading-tight text-white">
+
+        <h1 class="mt-8 text-[34px] font-semibold leading-[1.18] tracking-[-0.03em] text-ink">
           问账智能客服<br />批量测试平台
         </h1>
-        <p class="mt-4 max-w-md text-sm leading-relaxed text-slate-400">
+        <p class="mt-4 max-w-md text-[13px] leading-relaxed text-slate-500">
           面向账单问答场景的自动化回归工作台：版本快照绑定、静态/动态多轮模拟、三重熔断、
           多裁判混合裁决与全链路 Trace 追踪。
         </p>
-        <ul class="mt-6 space-y-2 text-xs text-slate-500">
-          <li class="flex items-center gap-2">
-            <span class="h-1.5 w-1.5 rounded-full bg-indigo-400" />用例版本 Diff 与一键回滚
+
+        <ul class="mt-7 grid gap-2.5 text-xs text-slate-600">
+          <li class="flex items-center gap-2.5 rounded-xl border border-line bg-white px-3 py-2.5 shadow-tile">
+            <span class="h-1.5 w-1.5 rounded-full bg-indigo-500" aria-hidden="true" />用例版本 Diff 与一键回滚
           </li>
-          <li class="flex items-center gap-2">
-            <span class="h-1.5 w-1.5 rounded-full bg-cyan-400" />WebSocket 实时批量执行大盘
+          <li class="flex items-center gap-2.5 rounded-xl border border-line bg-white px-3 py-2.5 shadow-tile">
+            <span class="h-1.5 w-1.5 rounded-full bg-sky-500" aria-hidden="true" />WebSocket 实时批量执行大盘
           </li>
-          <li class="flex items-center gap-2">
-            <span class="h-1.5 w-1.5 rounded-full bg-emerald-400" />规则硬校验 + LLM 混合裁决
+          <li class="flex items-center gap-2.5 rounded-xl border border-line bg-white px-3 py-2.5 shadow-tile">
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />规则硬校验 + LLM 混合裁决
           </li>
         </ul>
       </div>
 
       <div class="card w-full p-6 sm:p-7">
-        <h2 class="text-lg font-semibold text-slate-100">管理员登录</h2>
+        <p class="eyebrow">Sign in · 控制台</p>
+        <h2 class="mt-2 text-xl font-semibold tracking-[-0.02em] text-ink">管理员登录</h2>
         <p class="mt-1 text-xs text-slate-500">使用平台账号进入测试控制台</p>
 
         <form class="mt-6 space-y-4" @submit.prevent="submit">
@@ -91,7 +100,7 @@ async function submit(): Promise<void> {
 
           <p
             v-if="localError"
-            class="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300"
+            class="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700"
           >
             {{ localError }}
           </p>
@@ -111,8 +120,8 @@ async function submit(): Promise<void> {
           </button>
         </form>
 
-        <p class="mt-5 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-[11px] leading-relaxed text-slate-500">
-          演示账号：<span class="text-slate-300">admin / admin123</span><br />
+        <p class="mt-5 rounded-xl border border-line-soft bg-canvas px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">
+          演示账号：<span class="font-medium text-ink-soft">admin / admin123</span><br />
           默认连接本机 MySQL 与 Redis，Mock 服务端口 8001 / 8002。
         </p>
       </div>

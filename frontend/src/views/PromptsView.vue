@@ -4,6 +4,7 @@ import { api } from '../api'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
 import JsonViewer from '../components/JsonViewer.vue'
+import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import PromptAssetCenter from './components/PromptAssetCenter.vue'
 import type {
@@ -338,25 +339,25 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h2 class="text-lg font-semibold text-slate-100">Prompt 资产</h2>
-        <p class="mt-1 text-xs text-slate-500">
-          用户模拟器与 LLM 裁判模板的版本管理、引用影响分析与沙盒试跑。
-        </p>
-      </div>
-      <button class="btn-primary" @click="openCreate">
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" d="M12 5v14M5 12h14" />
-        </svg>
-        新建模板
-      </button>
-    </div>
+  <div class="space-y-4">
+    <PageHeader
+      eyebrow="Assets · 提示词"
+      title="Prompt 资产"
+      description="用户模拟器与 LLM 裁判模板的版本管理、引用影响分析与沙盒试跑。"
+    >
+      <template #actions>
+        <button class="btn-primary" @click="openCreate">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+          </svg>
+          新建模板
+        </button>
+      </template>
+    </PageHeader>
 
     <div class="grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
       <section class="card flex max-h-[720px] flex-col overflow-hidden">
-        <div class="space-y-2 border-b border-slate-800 p-3">
+        <div class="space-y-2 border-b border-slate-200 p-3">
           <input v-model="keyword" class="input !py-1.5 text-xs" placeholder="搜索编码 / 名称" @keyup.enter="loadTemplates" />
           <div class="flex gap-2">
             <select v-model="typeFilter" class="input !py-1.5 text-xs" @change="loadTemplates">
@@ -371,20 +372,20 @@ onMounted(() => {
           <button
             v-for="item in filteredTemplates"
             :key="item.id"
-            class="w-full border-b border-slate-800/60 px-4 py-3 text-left transition hover:bg-slate-800/40"
-            :class="item.id === selectedId ? 'bg-indigo-500/10' : ''"
+            class="w-full border-b border-slate-200 px-4 py-3 text-left transition hover:bg-slate-100/70"
+            :class="item.id === selectedId ? 'bg-indigo-50' : ''"
             @click="selectTemplate(item.id)"
           >
             <div class="flex items-center justify-between gap-2">
-              <span class="truncate text-sm font-medium text-slate-200">{{ item.name }}</span>
+              <span class="truncate text-sm font-medium text-slate-800">{{ item.name }}</span>
               <StatusPill :status="item.is_active ? 'ACTIVE' : 'DISABLED'" size="sm" />
             </div>
-            <p class="mt-1 font-mono text-[10px] text-slate-500">{{ item.code }}</p>
-            <div class="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+            <p class="mt-1 font-mono text-[10px] text-slate-600">{{ item.code }}</p>
+            <div class="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-slate-600">
               <span class="tag">{{ templateTypeLabel(item.template_type) }}</span>
               <span>v{{ item.current_version }}</span>
               <span>引用 {{ item.ref_count }}</span>
-              <span v-if="item.is_builtin" class="text-indigo-400">内置</span>
+              <span v-if="item.is_builtin" class="text-indigo-600">内置</span>
             </div>
           </button>
           <EmptyState
@@ -480,21 +481,21 @@ onMounted(() => {
       <div v-if="usageLoading" class="py-8 text-center text-sm text-slate-500">加载引用用例…</div>
       <div v-else-if="usage" class="space-y-4">
         <div class="grid grid-cols-2 gap-3">
-          <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+          <div class="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2">
             <p class="text-[10px] uppercase tracking-wider text-slate-500">引用数量</p>
-            <p class="text-lg font-semibold text-slate-100">{{ usage.ref_count }}</p>
+            <p class="text-lg font-semibold text-slate-900">{{ usage.ref_count }}</p>
           </div>
-          <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+          <div class="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2">
             <p class="text-[10px] uppercase tracking-wider text-slate-500">可删除</p>
-            <p class="text-lg font-semibold" :class="usage.can_delete ? 'text-emerald-300' : 'text-rose-300'">
+            <p class="text-lg font-semibold" :class="usage.can_delete ? 'text-emerald-700' : 'text-rose-700'">
               {{ usage.can_delete ? '是' : '否' }}
             </p>
           </div>
         </div>
-        <div v-if="usage.delete_blockers.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+        <div v-if="usage.delete_blockers.length" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
           <p v-for="blocker in usage.delete_blockers" :key="blocker">{{ blocker }}</p>
         </div>
-        <div class="overflow-hidden rounded-xl border border-slate-800">
+        <div class="overflow-hidden rounded-xl border border-slate-200">
           <table class="table-shell">
             <thead>
               <tr>
@@ -506,13 +507,13 @@ onMounted(() => {
             <tbody>
               <tr v-for="item in usage.cases" :key="`${item.id}-${item.strategy}`">
                 <td class="td">
-                  <p class="font-mono text-xs text-slate-300">{{ item.code }}</p>
+                  <p class="font-mono text-xs text-slate-700">{{ item.code }}</p>
                   <p class="text-[11px] text-slate-500">{{ item.name }}</p>
                 </td>
                 <td class="td">
                   <span class="tag">{{ item.strategy === 'PINNED' ? '锁定版本' : '跟随最新' }}</span>
                 </td>
-                <td class="td text-xs text-slate-400">{{ item.pinned_version ? `v${item.pinned_version}` : '—' }}</td>
+                <td class="td text-xs text-slate-600">{{ item.pinned_version ? `v${item.pinned_version}` : '—' }}</td>
               </tr>
             </tbody>
           </table>
@@ -531,8 +532,8 @@ onMounted(() => {
           <label class="label">描述</label>
           <textarea v-model="metaForm.description" class="input" rows="2" />
         </div>
-        <label class="flex items-center gap-2 text-sm text-slate-300">
-          <input v-model="metaForm.is_active" type="checkbox" class="h-4 w-4 rounded border-slate-600 bg-slate-900" />
+        <label class="flex items-center gap-2 text-sm text-slate-700">
+          <input v-model="metaForm.is_active" type="checkbox" class="h-4 w-4 rounded border-slate-300 bg-white" />
           启用该模板
         </label>
       </div>
@@ -597,38 +598,38 @@ onMounted(() => {
         <div class="space-y-3">
           <template v-if="sandboxResult">
             <div class="grid grid-cols-3 gap-2">
-              <div class="rounded-lg border border-slate-800 bg-slate-950/50 px-2 py-1.5">
+              <div class="rounded-lg border border-slate-200 bg-slate-50/80 px-2 py-1.5">
                 <p class="text-[10px] text-slate-500">时延</p>
-                <p class="text-sm font-semibold text-slate-200">{{ sandboxResult.latency_ms.toFixed(0) }} ms</p>
+                <p class="text-sm font-semibold text-slate-800">{{ sandboxResult.latency_ms.toFixed(0) }} ms</p>
               </div>
-              <div class="rounded-lg border border-slate-800 bg-slate-950/50 px-2 py-1.5">
+              <div class="rounded-lg border border-slate-200 bg-slate-50/80 px-2 py-1.5">
                 <p class="text-[10px] text-slate-500">Tokens</p>
-                <p class="text-sm font-semibold text-slate-200">
+                <p class="text-sm font-semibold text-slate-800">
                   {{ sandboxResult.prompt_tokens }} / {{ sandboxResult.completion_tokens }}
                 </p>
               </div>
-              <div class="rounded-lg border border-slate-800 bg-slate-950/50 px-2 py-1.5">
+              <div class="rounded-lg border border-slate-200 bg-slate-50/80 px-2 py-1.5">
                 <p class="text-[10px] text-slate-500">模型</p>
-                <p class="truncate text-xs font-medium text-slate-200">{{ sandboxResult.model_name }}</p>
+                <p class="truncate text-xs font-medium text-slate-800">{{ sandboxResult.model_name }}</p>
               </div>
             </div>
             <div
               v-if="sandboxResult.missing_variables.length"
-              class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"
+              class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700"
             >
               缺失变量：{{ sandboxResult.missing_variables.join(', ') }}
             </div>
             <div>
               <p class="label">渲染后的 Prompt</p>
-              <pre class="mono max-h-52 overflow-auto whitespace-pre-wrap rounded-xl border border-slate-800 bg-slate-950/80 p-3 text-slate-300">{{ sandboxResult.rendered_prompt }}</pre>
+              <pre class="mono max-h-52 overflow-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-700">{{ sandboxResult.rendered_prompt }}</pre>
             </div>
             <div>
               <p class="label">解析输出</p>
               <JsonViewer :value="sandboxResult.output" max-height="200px" label="结构化 JSON" />
             </div>
-            <details class="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-              <summary class="cursor-pointer text-xs text-slate-400">原始模型输出</summary>
-              <pre class="mono mt-2 max-h-52 overflow-auto whitespace-pre-wrap text-slate-400">{{ sandboxResult.raw_content }}</pre>
+            <details class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <summary class="cursor-pointer text-xs text-slate-600">原始模型输出</summary>
+              <pre class="mono mt-2 max-h-52 overflow-auto whitespace-pre-wrap text-slate-600">{{ sandboxResult.raw_content }}</pre>
             </details>
           </template>
           <EmptyState

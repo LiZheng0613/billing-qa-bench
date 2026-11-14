@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import EmptyState from '../components/EmptyState.vue'
+import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import CaseTraceInspector from './components/CaseTraceInspector.vue'
 import type { BatchTask, ExecutionDetail, ExecutionListItem } from '../types'
@@ -187,16 +188,14 @@ watch(
 </script>
 
 <template>
-  <div class="space-y-5">
+  <div class="space-y-4">
     <template v-if="!singleMode">
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 class="text-lg font-semibold text-slate-100">执行记录</h2>
-          <p class="mt-1 text-xs text-slate-500">
-            批量 / 调试 / 重跑产生的全部执行记录；点击任意记录进入单笔执行结果页。
-          </p>
-        </div>
-        <div class="flex flex-wrap items-center gap-2">
+      <PageHeader
+        eyebrow="Runs · 全链路记录"
+        title="执行记录"
+        description="批量 / 调试 / 重跑产生的全部执行记录；点击任意记录进入单笔执行结果页。"
+      >
+        <template #actions>
           <button
             v-if="filterTask"
             class="btn-ghost btn-xs"
@@ -207,12 +206,12 @@ watch(
           <button v-if="caseIdFilter" class="btn-ghost btn-xs" @click="clearCaseFilter">
             清除用例筛选
           </button>
-        </div>
-      </div>
+        </template>
+      </PageHeader>
 
       <div
         v-if="caseIdFilter || taskIdFilter"
-        class="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2.5 text-xs text-indigo-200"
+        class="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs text-indigo-700"
       >
         <span v-if="caseIdFilter">
           用例历史：<span class="font-mono font-semibold">{{ caseCode || `#${caseIdFilter}` }}</span>
@@ -265,7 +264,7 @@ watch(
       </div>
 
       <section class="card overflow-hidden">
-        <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
+        <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
           <span class="panel-title">执行记录列表</span>
           <span class="text-[11px] text-slate-500">共 {{ total }} 条 · 点击行查看单笔执行结果</span>
         </header>
@@ -293,26 +292,26 @@ watch(
                 class="cursor-pointer"
                 @click="selectExecution(item.id)"
               >
-                <td class="td font-mono text-xs text-indigo-300">#{{ item.id }}</td>
+                <td class="td font-mono text-xs text-indigo-600">#{{ item.id }}</td>
                 <td class="td">
-                  <p class="font-mono text-xs text-slate-200">{{ item.case_code || '—' }}</p>
+                  <p class="font-mono text-xs text-slate-800">{{ item.case_code || '—' }}</p>
                   <p class="mt-0.5 max-w-[220px] truncate text-[11px] text-slate-500">
                     {{ item.case_name || '—' }} · v{{ item.case_version }}
                   </p>
                 </td>
-                <td class="td text-xs text-slate-400">{{ sourceLabel(item.source) }}</td>
+                <td class="td text-xs text-slate-600">{{ sourceLabel(item.source) }}</td>
                 <td class="td"><StatusPill :status="item.status" size="sm" /></td>
                 <td class="td tabular-nums">{{ formatScore(item.total_score) }}</td>
                 <td class="td tabular-nums">{{ item.turns_used }}</td>
                 <td class="td tabular-nums">
-                  <span :class="item.attempt_no > 1 ? 'text-amber-300' : 'text-slate-400'">
+                  <span :class="item.attempt_no > 1 ? 'text-amber-700' : 'text-slate-600'">
                     {{ item.attempt_no }}
                   </span>
                 </td>
                 <td class="td tabular-nums">{{ formatMs(item.latency_ms) }}</td>
                 <td class="td text-xs text-slate-500">
                   <span v-if="item.task_id" class="font-mono">#{{ item.task_id }}</span>
-                  <span v-else class="text-slate-600">调试 / 单条</span>
+                  <span v-else class="text-slate-500">调试 / 单条</span>
                 </td>
                 <td class="td text-xs text-slate-500">{{ formatDateTime(item.started_at) }}</td>
                 <td class="td text-right">
@@ -330,7 +329,7 @@ watch(
             description="运行一次批量任务或单条调试后再来查看。"
           />
         </div>
-        <div class="flex items-center justify-between border-t border-slate-800 px-4 py-3">
+        <div class="flex items-center justify-between border-t border-slate-200 px-4 py-3">
           <span class="text-[11px] text-slate-500">第 {{ page }} / {{ pageCount }} 页</span>
           <div class="flex gap-1">
             <button class="btn-ghost btn-xs" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
@@ -341,29 +340,30 @@ watch(
     </template>
 
     <template v-else>
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0">
-          <p class="text-[11px] font-medium uppercase tracking-wider text-indigo-300">单笔执行结果</p>
-          <h2 class="mt-1 flex flex-wrap items-center gap-2 text-lg font-semibold text-slate-100">
+      <PageHeader eyebrow="Single run · 单笔执行结果">
+        <template #title>
+          <h1 class="mt-2 flex flex-wrap items-center gap-2 text-[22px] font-semibold leading-tight tracking-[-0.02em] text-ink">
             执行 #{{ detail?.id ?? route.query.execution }}
-            <span v-if="detail?.case_code" class="font-mono text-sm text-slate-300">
+            <span v-if="detail?.case_code" class="font-mono text-sm font-medium text-slate-600">
               · {{ detail.case_code }}
             </span>
             <StatusPill v-if="detail" :status="detail.status" size="sm" />
-          </h2>
-          <p class="mt-1 text-xs text-slate-500">
+          </h1>
+        </template>
+        <template #sub>
+          <p class="mt-2 text-xs text-slate-600">
             <span v-if="detail?.case_name">{{ detail.case_name }} · </span>
             <span v-if="relationTask">
               所属批量任务
-              <button class="font-mono text-indigo-300 underline decoration-dotted" @click="openBreadcrumb('task')">
+              <button class="font-mono text-indigo-600 underline decoration-dotted" @click="openBreadcrumb('task')">
                 {{ relationTask.code }}
               </button>
               {{ relationTask.name ? `· ${relationTask.name}` : '' }}
             </span>
             <span v-else-if="detail">单笔调试 / 重跑记录</span>
           </p>
-        </div>
-        <div class="flex flex-wrap items-center gap-2">
+        </template>
+        <template #actions>
           <button class="btn-ghost btn-xs" @click="backToList">返回执行记录</button>
           <button v-if="detail?.task_id" class="btn-ghost btn-xs" @click="openBreadcrumb('task')">
             返回批量任务详情
@@ -372,8 +372,8 @@ watch(
             该用例全部历史
           </button>
           <button class="btn-ghost btn-xs" @click="refreshDetail">刷新</button>
-        </div>
-      </div>
+        </template>
+      </PageHeader>
 
       <CaseTraceInspector
         :detail="detail"

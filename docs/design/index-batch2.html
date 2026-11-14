@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>设计稿第二批 · 视觉风格对比 · 问账 QA</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #fff;
+    --border: #e3e5ea;
+    --text: #111827;
+    --muted: #5f6675;
+    --faint: #9aa1ac;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 13px; line-height: 1.55;
+  }
+  .wrap { max-width: 1560px; margin: 0 auto; padding: 20px 22px 36px; }
+
+  .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+  .head h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.5px; }
+  .head p { margin: 5px 0 0; font-size: 12px; color: var(--muted); max-width: 780px; }
+  .head-links { display: flex; gap: 8px; }
+  .head-links a {
+    font-size: 11px; color: var(--muted); text-decoration: none; border: 1px solid var(--border);
+    background: #fff; border-radius: 999px; padding: 5px 11px;
+  }
+  .head-links a:hover { border-color: #c9cdd6; color: var(--text); }
+
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tab {
+    display: flex; align-items: center; gap: 9px; border: 1px solid var(--border); background: #fff;
+    border-radius: 10px; padding: 9px 13px; cursor: pointer; font: inherit; font-size: 12px;
+    color: #374151; text-align: left; transition: border-color .15s, box-shadow .15s;
+  }
+  .tab:hover { border-color: #c9cdd6; }
+  .tab.on { border-color: var(--text); box-shadow: 0 1px 2px rgba(17,24,39,.08), 0 10px 24px -20px rgba(17,24,39,.7); }
+  .tab b { font-weight: 650; display: block; }
+  .tab small { color: var(--faint); font-size: 10.5px; display: block; }
+  .sw { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+
+  .panel { display: grid; grid-template-columns: minmax(0, 1fr) 296px; gap: 14px; align-items: start; }
+
+  .stage { background: #fff; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 1px 2px rgba(17,24,39,.04), 0 28px 52px -44px rgba(17,24,39,.6); }
+  .stage-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: #fbfbfc; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .addr {
+    flex: 1; height: 24px; border: 1px solid var(--border); border-radius: 6px; background: #fff;
+    display: flex; align-items: center; padding: 0 9px; font-size: 10.5px; color: var(--faint);
+    font-family: "JetBrains Mono", Consolas, monospace; overflow: hidden; white-space: nowrap;
+  }
+  .stage-bar a { font-size: 10.5px; color: #374151; text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: #fff; }
+
+  .frame-wrap { position: relative; width: 100%; height: 78vh; min-height: 600px; overflow: hidden; background: #fff; }
+  .frame-wrap iframe { position: absolute; top: 0; left: 0; width: 1440px; height: 900px; border: 0; display: block; background: #fff; transform-origin: top left; }
+  .fallback { position: absolute; inset: 0; display: grid; place-content: center; gap: 12px; text-align: center; background: #fff; padding: 24px; }
+  .fallback p { margin: 0; color: var(--muted); font-size: 12.5px; }
+
+  .side { display: flex; flex-direction: column; gap: 12px; }
+  .card { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 14px 15px; }
+  .card h2 { margin: 0; font-size: 13px; font-weight: 650; }
+  .card .sub { margin: 3px 0 12px; font-size: 10.5px; color: var(--faint); }
+  .palette { display: flex; gap: 6px; margin-bottom: 12px; }
+  .palette span { flex: 1; height: 28px; border-radius: 6px; border: 1px solid rgba(17,24,39,.06); position: relative; }
+  .kv { display: flex; flex-direction: column; gap: 8px; font-size: 11.5px; }
+  .kv div { display: flex; gap: 8px; }
+  .kv span:first-child { color: var(--faint); flex: 0 0 54px; }
+  .kv span:last-child { color: #374151; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+  .tag { font-size: 10px; color: #4b5563; background: #f3f4f6; border-radius: 999px; padding: 2px 8px; }
+  .note { font-size: 11px; color: var(--muted); line-height: 1.75; margin: 0; }
+  .check { margin: 0; padding-left: 16px; font-size: 11px; color: var(--muted); line-height: 1.8; }
+  .check li::marker { color: var(--faint); }
+  .pass { color: #047857; font-weight: 600; }
+  @media (max-width: 1080px) {
+    .panel { grid-template-columns: 1fr; }
+    .side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 680px) {
+    .side { grid-template-columns: 1fr; }
+    .wrap { padding: 14px 12px 28px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>设计稿第二批 · 4 种视觉风格</h1>
+      <p>
+        全部由 ui-ux-pro-max 检索出的风格 / 配色 / 字体推导，同一份批量任务详情数据（7 条用例 · 通过 4 / 失败 2 / 超限 1）。
+        仅切换视觉语言，不改信息架构与交互模型。
+      </p>
+    </div>
+    <div class="head-links">
+      <a href="./index.html">上一批 V1–V3</a>
+      <a href="./v4-precision.html" target="_blank" rel="noopener">新标签打开当前稿 ↗</a>
+    </div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-src="v4-precision.html" data-name="V4 精密仪表" data-sub="Data-Dense · Navy/Amber · Fira">
+      <span class="sw" style="background:#1e40af"></span>
+      <span><b>V4 精密仪表</b><small>Data-Dense · Navy/Amber · Fira</small></span>
+    </button>
+    <button class="tab" data-src="v5-swiss.html" data-name="V5 瑞士网格" data-sub="Swiss Minimal · 黑/白/绿 · Inter">
+      <span class="sw" style="background:#15803d"></span>
+      <span><b>V5 瑞士网格</b><small>Swiss Minimal · 黑/白/绿 · Inter</small></span>
+    </button>
+    <button class="tab" data-src="v6-ledger.html" data-name="V6 金融账本" data-sub="Trust &amp; Ledger · 墨蓝/金 · IBM Plex">
+      <span class="sw" style="background:#a16207"></span>
+      <span><b>V6 金融账本</b><small>Trust &amp; Ledger · 墨蓝/金 · IBM Plex</small></span>
+    </button>
+    <button class="tab" data-src="v7-bento.html" data-name="V7 Bento 工作台" data-sub="Bento Grid · Indigo/Emerald · Inter">
+      <span class="sw" style="background:#4f46e5"></span>
+      <span><b>V7 Bento 工作台</b><small>Bento Grid · Indigo/Emerald · Inter</small></span>
+    </button>
+  </div>
+
+  <div class="panel">
+    <div class="stage">
+      <div class="stage-bar">
+        <span class="dot" style="background:#f87171"></span>
+        <span class="dot" style="background:#fbbf24"></span>
+        <span class="dot" style="background:#34d399"></span>
+        <span class="addr" id="addr">docs/design/v4-precision.html</span>
+        <a id="openLink" href="v4-precision.html" target="_blank" rel="noopener">新标签打开 ↗</a>
+      </div>
+      <div class="frame-wrap" id="frameWrap">
+        <iframe id="frame" src="v4-precision.html" title="设计稿预览"></iframe>
+        <div class="fallback" id="fallback" hidden>
+          <p>当前环境不允许内嵌预览，请直接打开对应设计稿：</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+            <a href="v4-precision.html" target="_blank" rel="noopener">V4 ↗</a>
+            <a href="v5-swiss.html" target="_blank" rel="noopener">V5 ↗</a>
+            <a href="v6-ledger.html" target="_blank" rel="noopener">V6 ↗</a>
+            <a href="v7-bento.html" target="_blank" rel="noopener">V7 ↗</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="side">
+      <section class="card">
+        <h2 id="sideName">V4 精密仪表</h2>
+        <div class="sub" id="sideSub">Data-Dense Dashboard · Navy/Amber · Fira</div>
+        <div class="palette" id="palette">
+          <span style="background:#1e40af" title="#1E40AF"></span>
+          <span style="background:#d97706" title="#D97706"></span>
+          <span style="background:#0f172a" title="#0F172A"></span>
+          <span style="background:#f8fafc" title="#F8FAFC"></span>
+        </div>
+        <div class="kv" id="kv">
+          <div><span>风格</span><span>Data-Dense Dashboard</span></div>
+          <div><span>字体</span><span>Fira Sans + Fira Code</span></div>
+          <div><span>密度</span><span>8/10 · 36px 行高</span></div>
+          <div><span>适合</span><span>研发自用、指标密集</span></div>
+        </div>
+        <div class="tags" id="tags">
+          <span class="tag">等宽数字</span><span class="tag">紧凑表格</span><span class="tag">工程感</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>设计系统来源</h2>
+        <div class="sub">ui-ux-pro-max Query Contract</div>
+        <ul class="check">
+          <li>Q1 <code>QA testing platform batch dashboard analytics SaaS</code> → Data-Dense Dashboard + Analytics 配色</li>
+          <li>Q2 <code>swiss minimal enterprise analytics tool</code> → Minimalism &amp; Swiss</li>
+          <li>Q3 <code>fintech operations reconciliation audit console</code> → Trust &amp; Authority + IBM Plex</li>
+          <li>Q4 <code>bento grid workspace --domain style</code> → Bento Box Grid</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>交付前自检</h2>
+        <div class="sub">本批 4 份稿已执行</div>
+        <ul class="check">
+          <li><span class="pass">对比度</span> 31 组 token 全部 ≥ 4.5:1（`_contrast_check.py`）</li>
+          <li><span class="pass">焦点可见</span> 全局 `:focus-visible` 2px 描边</li>
+          <li><span class="pass">点击区域</span> 按钮 ≥ 32px 高，行内入口 ≥ 24px</li>
+          <li><span class="pass">响应式</span> 1440 / 1024 / 768 / 375 无横向溢出</li>
+          <li><span class="pass">reduced-motion</span> 全部动画与 hover 位移自动关闭</li>
+          <li><span class="pass">图标</span> 统一内联 SVG，无 emoji 图标</li>
+        </ul>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script>
+  const frame = document.getElementById('frame')
+  const frameWrap = document.getElementById('frameWrap')
+  const BASE_W = 1440
+
+  function fitFrame() {
+    const scale = frameWrap.clientWidth / BASE_W
+    frame.style.width = BASE_W + 'px'
+    frame.style.transform = 'scale(' + scale + ')'
+    const fallback = document.getElementById('fallback')
+    let h = 900
+    let blocked = false
+    try {
+      const doc = frame.contentDocument
+      if (doc && doc.body) {
+        h = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight, 900)
+      } else {
+        blocked = true
+      }
+    } catch (err) {
+      blocked = true
+    }
+    frame.style.height = h + 'px'
+    frameWrap.style.height = Math.round(h * scale) + 'px'
+    fallback.hidden = !blocked
+    frame.style.visibility = blocked ? 'hidden' : 'visible'
+  }
+
+  frame.addEventListener('load', fitFrame)
+  window.addEventListener('resize', fitFrame)
+  fitFrame()
+
+  const addr = document.getElementById('addr')
+  const openLink = document.getElementById('openLink')
+  const sideName = document.getElementById('sideName')
+  const sideSub = document.getElementById('sideSub')
+  const palette = document.getElementById('palette')
+  const kv = document.getElementById('kv')
+  const tags = document.getElementById('tags')
+
+  const META = {
+    'v4-precision.html': {
+      sub: 'Data-Dense Dashboard · Navy/Amber · Fira',
+      colors: ['#1e40af', '#d97706', '#0f172a', '#f8fafc'],
+      kv: [['风格', 'Data-Dense Dashboard'], ['字体', 'Fira Sans + Fira Code'], ['密度', '8/10 · 36px 行高'], ['适合', '研发自用、指标密集']],
+      tags: ['等宽数字', '紧凑表格', '工程感']
+    },
+    'v5-swiss.html': {
+      sub: 'Minimalism & Swiss · 黑白 + 单点绿 · Inter',
+      colors: ['#111827', '#15803d', '#6b7280', '#ffffff'],
+      kv: [['风格', 'Minimalism & Swiss'], ['字体', 'Inter（400/600/700）'], ['密度', '7/10 · 无卡片阴影'], ['适合', '对外演示、强排版']],
+      tags: ['发丝线', '零圆角', '大字号']
+    },
+    'v6-ledger.html': {
+      sub: 'Trust & Authority · 墨蓝/金 · IBM Plex',
+      colors: ['#0f172a', '#a16207', '#52606f', '#f6f7f9'],
+      kv: [['风格', 'Trust & Authority'], ['字体', 'IBM Plex Sans / Mono'], ['密度', '8/10 · 账本行 38px'], ['适合', '审计、对账、正式汇报']],
+      tags: ['虚线引导', '结算摘要', '右对齐数字']
+    },
+    'v7-bento.html': {
+      sub: 'Bento Box Grid · Indigo/Emerald · Inter',
+      colors: ['#4f46e5', '#059669', '#111827', '#f5f5f7'],
+      kv: [['风格', 'Bento Box Grid'], ['字体', 'Inter（650/700）'], ['密度', '6/10 · 22px 圆角'], ['适合', '模块化、弱化后台感']],
+      tags: ['非对称网格', '悬浮卡片', 'hover 1.01']
+    }
+  }
+
+  document.getElementById('tabs').addEventListener('click', (event) => {
+    const btn = event.target.closest('.tab')
+    if (!btn) return
+    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t === btn))
+    const src = btn.dataset.src
+    const meta = META[src]
+    frame.src = src
+    addr.textContent = 'docs/design/' + src
+    openLink.href = src
+    sideName.textContent = btn.dataset.name
+    sideSub.textContent = meta.sub
+    palette.innerHTML = meta.colors.map((c) => '<span style="background:' + c + '" title="' + c.toUpperCase() + '"></span>').join('')
+    kv.innerHTML = meta.kv.map(([k, v]) => '<div><span>' + k + '</span><span>' + v + '</span></div>').join('')
+    tags.innerHTML = meta.tags.map((t) => '<span class="tag">' + t + '</span>').join('')
+  })
+</script>
+</body>
+</html>

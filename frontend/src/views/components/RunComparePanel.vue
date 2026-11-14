@@ -106,7 +106,7 @@ watch([runA, runB], () => {
       description="至少需要两次执行记录，先跑一次调试或批量任务。"
     />
     <div v-else class="space-y-5">
-      <div class="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3 sm:grid-cols-2">
+      <div class="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 sm:grid-cols-2">
         <div>
           <label class="label">基线执行 A</label>
           <select v-model="runA" class="input">
@@ -127,7 +127,7 @@ watch([runA, runB], () => {
 
       <p
         v-if="runA === runB"
-        class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"
+        class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700"
       >
         两次执行相同，请选择不同的执行记录进行对比。
       </p>
@@ -139,44 +139,44 @@ watch([runA, runB], () => {
           <div
             v-for="(side, index) in [result.left, result.right]"
             :key="side.execution_id"
-            class="rounded-xl border border-slate-800 bg-slate-950/40 p-4"
+            class="rounded-xl border border-slate-200 bg-slate-50 p-4"
           >
             <div class="flex items-center justify-between">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <span class="text-xs font-semibold uppercase tracking-wider text-slate-600">
                 {{ index === 0 ? '基线 A' : '对比 B' }} · #{{ side.execution_id }}
               </span>
               <StatusPill :status="side.status" size="sm" />
             </div>
             <div class="mt-3 grid grid-cols-3 gap-2 text-center">
-              <div class="rounded-lg bg-slate-900/70 px-2 py-1.5">
+              <div class="rounded-lg bg-white px-2 py-1.5">
                 <p class="text-[10px] text-slate-500">版本</p>
-                <p class="text-sm font-semibold text-slate-200">v{{ side.case_version }}</p>
+                <p class="text-sm font-semibold text-slate-800">v{{ side.case_version }}</p>
               </div>
-              <div class="rounded-lg bg-slate-900/70 px-2 py-1.5">
+              <div class="rounded-lg bg-white px-2 py-1.5">
                 <p class="text-[10px] text-slate-500">得分</p>
-                <p class="text-sm font-semibold text-slate-200">{{ formatScore(side.total_score) }}</p>
+                <p class="text-sm font-semibold text-slate-800">{{ formatScore(side.total_score) }}</p>
               </div>
-              <div class="rounded-lg bg-slate-900/70 px-2 py-1.5">
+              <div class="rounded-lg bg-white px-2 py-1.5">
                 <p class="text-[10px] text-slate-500">开始</p>
-                <p class="text-[11px] text-slate-300">{{ formatDateTime(side.started_at).slice(11) }}</p>
+                <p class="text-[11px] text-slate-700">{{ formatDateTime(side.started_at).slice(11) }}</p>
               </div>
             </div>
             <dl class="mt-3 space-y-2 text-xs">
               <div>
                 <dt class="text-slate-500">最终回复</dt>
-                <dd class="mt-0.5 whitespace-pre-wrap break-words rounded-lg bg-slate-900/60 p-2 text-slate-300">
+                <dd class="mt-0.5 whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-slate-700">
                   {{ sideValue(side, 'final_answer') }}
                 </dd>
               </div>
               <div>
                 <dt class="text-slate-500">生成 SQL</dt>
-                <dd class="mono mt-0.5 break-all rounded-lg bg-slate-900/60 p-2 text-slate-400">
+                <dd class="mono mt-0.5 break-all rounded-lg bg-white p-2 text-slate-600">
                   {{ sideValue(side, 'generated_sql') }}
                 </dd>
               </div>
               <div>
                 <dt class="text-slate-500">裁判结论</dt>
-                <dd class="mt-0.5 whitespace-pre-wrap break-words rounded-lg bg-slate-900/60 p-2 text-slate-400">
+                <dd class="mt-0.5 whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-slate-600">
                   {{ sideValue(side, 'judge_reason') }}
                 </dd>
               </div>
@@ -184,20 +184,20 @@ watch([runA, runB], () => {
             <div class="mt-3">
               <JsonViewer label="底线取数 raw_db_data" :value="side.raw_db_data" max-height="160px" />
             </div>
-            <details class="mt-3 rounded-lg border border-slate-800 bg-slate-900/40 p-2">
-              <summary class="cursor-pointer text-[11px] text-slate-400">
+            <details class="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2">
+              <summary class="cursor-pointer text-[11px] text-slate-600">
                 轮次明细（{{ side.turns.length }} 轮）
               </summary>
               <div class="mt-2 space-y-2">
                 <div
                   v-for="turn in side.turns"
                   :key="String(turn.turn_index)"
-                  class="rounded-lg bg-slate-950/60 p-2 text-[11px]"
+                  class="rounded-lg bg-white p-2 text-[11px]"
                 >
-                  <p class="text-slate-400">
+                  <p class="text-slate-600">
                     T{{ turn.turn_index }} · {{ turn.query }}
                   </p>
-                  <p class="mt-1 text-slate-300">{{ turn.final_answer || '—' }}</p>
+                  <p class="mt-1 text-slate-700">{{ turn.final_answer || '—' }}</p>
                 </div>
               </div>
             </details>
@@ -206,7 +206,7 @@ watch([runA, runB], () => {
 
         <div>
           <h3 class="panel-title mb-2">关键差异（{{ result.diffs.length }}）</h3>
-          <div class="overflow-hidden rounded-xl border border-slate-800">
+          <div class="overflow-hidden rounded-xl border border-slate-200">
             <table v-if="result.diffs.length" class="table-shell">
               <thead>
                 <tr>
@@ -218,13 +218,13 @@ watch([runA, runB], () => {
               <tbody>
                 <tr v-for="change in result.diffs" :key="change.path">
                   <td class="td">
-                    <p class="text-slate-200">{{ change.label }}</p>
+                    <p class="text-slate-800">{{ change.label }}</p>
                     <p class="font-mono text-[10px] text-slate-500">{{ change.path }}</p>
                   </td>
                   <td class="td max-w-[260px] break-all text-xs text-slate-500">
                     {{ formatChangeValue(change.old) }}
                   </td>
-                  <td class="td max-w-[260px] break-all text-xs text-emerald-200">
+                  <td class="td max-w-[260px] break-all text-xs text-emerald-700">
                     {{ formatChangeValue(change.new) }}
                   </td>
                 </tr>

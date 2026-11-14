@@ -5,6 +5,7 @@ import { api } from '../api'
 import { buildWebSocketUrl } from '../api/client'
 import BaseModal from '../components/BaseModal.vue'
 import MetricCard from '../components/MetricCard.vue'
+import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import EmptyState from '../components/EmptyState.vue'
 import BatchMonitor from './components/BatchMonitor.vue'
@@ -449,15 +450,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h2 class="text-lg font-semibold text-slate-100">测试大盘</h2>
-        <p class="mt-1 text-xs text-slate-500">
-          批量任务概览与单次运行详情；选中任务后查看通过分布与用例级结果，点击用例行进入单笔执行结果页。
-        </p>
-      </div>
-      <div class="flex items-center gap-2">
+  <div class="space-y-4">
+    <PageHeader
+      eyebrow="Dashboard · 实时大盘"
+      title="批量任务测试大盘"
+      description="批量任务概览与单次运行详情；选中任务后查看通过分布与用例级结果，点击用例行进入单笔执行结果页。"
+    >
+      <template #actions>
         <button class="btn-ghost" @click="refreshCurrent">刷新数据</button>
         <button class="btn-primary" @click="openCreate">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -465,18 +464,19 @@ onBeforeUnmount(() => {
           </svg>
           新建批量任务
         </button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
-    <div class="grid grid-cols-2 gap-3 xl:grid-cols-4">
+    <div class="grid grid-cols-2 gap-3 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,0.92fr)_minmax(0,0.86fr)_minmax(0,1.3fr)]">
       <MetricCard label="用例总数" :value="cases.length" hint="当前可用用例" accent="sky" />
       <MetricCard label="批量任务" :value="tasks.length" hint="最近 50 条任务" accent="indigo" />
       <MetricCard label="运行中" :value="runningCount" hint="实时执行任务数" accent="amber" />
       <MetricCard
-        label="当前任务通过率"
+        label="任务通过率"
         :value="formatPercent(metrics?.pass_rate, 1)"
         :hint="activeTask ? activeTask.name : '尚未选择任务'"
         accent="emerald"
+        :progress="metrics?.pass_rate ?? null"
       />
     </div>
 
@@ -502,12 +502,12 @@ onBeforeUnmount(() => {
       </div>
 
       <section class="card flex flex-col overflow-hidden">
-        <header class="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+        <header class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
             <h2 class="panel-title">批量任务</h2>
-            <p class="mt-0.5 text-[10px] text-slate-600">点击任务查看批量详情</p>
+            <p class="mt-0.5 text-[10px] text-slate-500">点击任务查看批量详情</p>
           </div>
-          <button class="text-[11px] text-slate-500 transition hover:text-slate-200" @click="refreshTasks">
+          <button class="text-[11px] text-slate-500 transition hover:text-slate-800" @click="refreshTasks">
             刷新
           </button>
         </header>
@@ -515,25 +515,25 @@ onBeforeUnmount(() => {
           <button
             v-for="item in recentTasks"
             :key="item.id"
-            class="w-full border-b border-slate-800/60 px-4 py-3 text-left transition hover:bg-slate-800/40"
-            :class="item.id === selectedTaskId ? 'bg-indigo-500/10' : ''"
+            class="w-full border-b border-slate-200 px-4 py-3 text-left transition hover:bg-slate-100/70"
+            :class="item.id === selectedTaskId ? 'bg-indigo-50' : ''"
             @click="selectTask(item.id)"
           >
             <div class="flex items-center justify-between gap-2">
-              <span class="truncate text-sm font-medium text-slate-200">{{ item.name }}</span>
+              <span class="truncate text-sm font-medium text-slate-800">{{ item.name }}</span>
               <StatusPill :status="item.status" size="sm" />
             </div>
-            <p class="mt-1 font-mono text-[10px] text-slate-500">{{ item.code }}</p>
+            <p class="mt-1 font-mono text-[10px] text-slate-600">{{ item.code }}</p>
             <div class="mt-2 flex items-center gap-2">
-              <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
+              <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
                 <div
-                  class="h-full rounded-full bg-indigo-500/80"
+                  class="h-full rounded-full bg-indigo-500"
                   :style="{
                     width: `${item.total_cases ? Math.min(100, (item.finished_cases / item.total_cases) * 100) : 0}%`,
                   }"
                 />
               </div>
-              <span class="text-[10px] tabular-nums text-slate-500">
+              <span class="text-[10px] tabular-nums text-slate-600">
                 {{ item.finished_cases }}/{{ item.total_cases }}
               </span>
             </div>
@@ -581,12 +581,12 @@ onBeforeUnmount(() => {
               <input v-model.number="form.qps_limit" class="input" type="number" min="0.1" max="100" step="0.5" />
             </div>
           </div>
-          <div class="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-            <label class="flex items-start gap-2 text-sm text-slate-300">
+          <div class="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <label class="flex items-start gap-2 text-sm text-slate-700">
               <input
                 v-model="form.retry_on_env_error"
                 type="checkbox"
-                class="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-900"
+                class="mt-0.5 h-4 w-4 rounded border-slate-300 bg-white"
               />
               <span>
                 环境类失败自动重试
@@ -627,16 +627,16 @@ onBeforeUnmount(() => {
               第 n 次重试前等待 = 基础退避 × 2^(n-1)，重试同样受并发数与 QPS 限制，暂停/终止会立即生效。
             </p>
           </div>
-          <label class="flex items-center gap-2 text-sm text-slate-300">
-            <input v-model="form.auto_start" type="checkbox" class="h-4 w-4 rounded border-slate-600 bg-slate-900" />
+          <label class="flex items-center gap-2 text-sm text-slate-700">
+            <input v-model="form.auto_start" type="checkbox" class="h-4 w-4 rounded border-slate-300 bg-white" />
             创建后立即启动
           </label>
         </div>
 
-        <div class="flex min-h-0 flex-col rounded-xl border border-slate-800 bg-slate-950/50">
-          <div class="space-y-2 border-b border-slate-800 p-3">
+        <div class="flex min-h-0 flex-col rounded-xl border border-slate-200 bg-slate-50/80">
+          <div class="space-y-2 border-b border-slate-200 p-3">
             <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-slate-300">执行范围</span>
+              <span class="text-xs font-medium text-slate-700">执行范围</span>
               <span class="text-[11px] text-slate-500">
                 本次 {{ scopeCount }} 条 / 库内启用 {{ activeCaseCount }} 条
               </span>
@@ -645,38 +645,38 @@ onBeforeUnmount(() => {
               class="flex cursor-pointer items-start gap-2 rounded-lg border p-2 transition"
               :class="
                 form.case_scope === 'SELECTED'
-                  ? 'border-indigo-500/40 bg-indigo-500/10'
-                  : 'border-slate-800 hover:bg-slate-800/40'
+                  ? 'border-indigo-200 bg-indigo-50'
+                  : 'border-slate-200 hover:bg-slate-100/70'
               "
             >
               <input
                 v-model="form.case_scope"
                 type="radio"
                 value="SELECTED"
-                class="mt-0.5 h-4 w-4 border-slate-600 bg-slate-900"
+                class="mt-0.5 h-4 w-4 border-slate-300 bg-white"
               />
-              <span class="min-w-0 text-xs text-slate-200">
+              <span class="min-w-0 text-xs text-slate-800">
                 已选用例（{{ form.case_ids.length }} 条）
-                <span class="block text-[10px] text-slate-500">下方逐条勾选后执行。</span>
+                <span class="block text-[10px] text-slate-600">下方逐条勾选后执行。</span>
               </span>
             </label>
             <label
               class="flex cursor-pointer items-start gap-2 rounded-lg border p-2 transition"
               :class="
                 form.case_scope === 'ALL_ACTIVE'
-                  ? 'border-indigo-500/40 bg-indigo-500/10'
-                  : 'border-slate-800 hover:bg-slate-800/40'
+                  ? 'border-indigo-200 bg-indigo-50'
+                  : 'border-slate-200 hover:bg-slate-100/70'
               "
             >
               <input
                 v-model="form.case_scope"
                 type="radio"
                 value="ALL_ACTIVE"
-                class="mt-0.5 h-4 w-4 border-slate-600 bg-slate-900"
+                class="mt-0.5 h-4 w-4 border-slate-300 bg-white"
               />
-              <span class="min-w-0 text-xs text-slate-200">
+              <span class="min-w-0 text-xs text-slate-800">
                 全部启用用例（{{ activeCaseCount }} 条，跨分页）
-                <span class="block text-[10px] text-slate-500">
+                <span class="block text-[10px] text-slate-600">
                   自动执行用例库全部启用用例，不受勾选与分页限制。
                 </span>
               </span>
@@ -698,20 +698,20 @@ onBeforeUnmount(() => {
             <label
               v-for="item in filteredCases"
               :key="item.id"
-              class="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 transition hover:bg-slate-800/60"
+              class="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 transition hover:bg-slate-100"
             >
               <input
                 type="checkbox"
-                class="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-900"
+                class="mt-0.5 h-4 w-4 rounded border-slate-300 bg-white"
                 :checked="form.case_ids.includes(item.id)"
                 :disabled="item.status !== 'ACTIVE'"
                 :title="item.status === 'ACTIVE' ? '选择该用例' : '仅启用用例可批量执行'"
                 @change="toggleCase(item)"
               />
               <span class="min-w-0">
-                <span class="block truncate font-mono text-[11px] text-slate-300">{{ item.code }}</span>
-                <span class="block truncate text-[11px] text-slate-500">{{ item.name }}</span>
-                <span class="mt-0.5 inline-flex items-center gap-1 text-[10px] text-slate-600">
+                <span class="block truncate font-mono text-[11px] text-slate-700">{{ item.code }}</span>
+                <span class="block truncate text-[11px] text-slate-600">{{ item.name }}</span>
+                <span class="mt-0.5 inline-flex items-center gap-1 text-[10px] text-slate-500">
                   {{ caseTypeLabel(item.case_type) }} · v{{ item.current_version }}
                 </span>
               </span>

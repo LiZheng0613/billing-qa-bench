@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>明亮主题设计稿对比 · 问账 QA</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #fff;
+    --border: #e6e8ec;
+    --text: #12141a;
+    --muted: #6b7280;
+    --faint: #9aa1ac;
+    --ink: #111827;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    font-size: 13px; line-height: 1.55;
+  }
+  .wrap { max-width: 1480px; margin: 0 auto; padding: 20px 22px 36px; }
+
+  .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .head h1 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -.4px; }
+  .head p { margin: 5px 0 0; font-size: 12px; color: var(--muted); }
+  .hint { font-size: 11px; color: var(--faint); border: 1px dashed var(--border); background: #fff; border-radius: 8px; padding: 6px 10px; }
+
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tab {
+    display: flex; align-items: center; gap: 9px; border: 1px solid var(--border); background: #fff;
+    border-radius: 10px; padding: 9px 13px; cursor: pointer; font-size: 12px; color: #374151;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+  .tab:hover { border-color: #cfd4dc; }
+  .tab.on { border-color: var(--ink); box-shadow: 0 1px 2px rgba(17,24,39,.08), 0 8px 20px -16px rgba(17,24,39,.5); }
+  .tab .swatch { width: 9px; height: 9px; border-radius: 3px; }
+  .tab b { font-weight: 650; }
+  .tab small { color: var(--faint); font-size: 10.5px; }
+
+  .panel { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 14px; align-items: start; }
+
+  .stage {
+    background: #fff; border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    box-shadow: 0 1px 2px rgba(17,24,39,.04), 0 24px 48px -40px rgba(17,24,39,.45);
+  }
+  .stage-bar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border);
+    background: #fbfbfc;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .addr {
+    flex: 1; height: 24px; border: 1px solid var(--border); border-radius: 6px; background: #fff;
+    display: flex; align-items: center; padding: 0 9px; font-size: 10.5px; color: var(--faint);
+    font-family: "JetBrains Mono", Consolas, monospace; overflow: hidden; white-space: nowrap;
+  }
+  .stage-bar a { font-size: 10.5px; color: #374151; text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: #fff; }
+  .frame-wrap { position: relative; width: 100%; height: 78vh; min-height: 560px; overflow: hidden; background: #fff; }
+  .frame-wrap iframe {
+    position: absolute; top: 0; left: 0; width: 1440px; height: 900px;
+    border: 0; display: block; background: #fff; transform-origin: top left;
+  }
+  .fallback {
+    position: absolute; inset: 0; display: grid; place-content: center; gap: 12px;
+    text-align: center; background: #fff; padding: 24px;
+  }
+  .fallback p { margin: 0; color: var(--muted); font-size: 12.5px; }
+  .fallback-links { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .fallback-links a {
+    border: 1px solid var(--border); background: #fff; border-radius: 8px;
+    padding: 7px 12px; font-size: 12px; color: #111827; text-decoration: none;
+  }
+  .fallback-links a:hover { border-color: #9aa1ac; }
+
+  .side { display: flex; flex-direction: column; gap: 12px; }
+  .side-card { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 14px 15px; }
+  .side-card h2 { margin: 0; font-size: 13px; font-weight: 650; }
+  .side-card .sub { margin: 3px 0 10px; font-size: 10.5px; color: var(--faint); }
+  .side-card ul { margin: 0; padding-left: 16px; color: #374151; font-size: 11.5px; line-height: 1.8; }
+  .side-card li::marker { color: var(--faint); }
+  .kv { display: flex; flex-direction: column; gap: 8px; font-size: 11.5px; }
+  .kv div { display: flex; gap: 8px; }
+  .kv span:first-child { color: var(--faint); flex: 0 0 62px; }
+  .tagrow { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+  .tag { font-size: 10px; color: #4b5563; background: #f3f4f6; border-radius: 999px; padding: 2px 8px; }
+  .note { font-size: 10.5px; color: var(--faint); line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>明亮主题设计稿对比 · 批量任务详情</h1>
+      <p>三版共用同一套数据与页面结构（批量任务详情 / 单笔执行结果 / 用例历史），只比较视觉与布局方向。</p>
+    </div>
+    <div class="hint">点击上方标签切换版本；也可用底部链接或「新标签打开」单独查看</div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-src="v1-indigo.html" data-name="V1 靛蓝卡片式">
+      <span class="swatch" style="background:#4f46e5"></span>
+      <span><b>V1 靛蓝卡片式</b><br><small>侧边栏 + KPI 卡 · Linear / Stripe 风</small></span>
+    </button>
+    <button class="tab" data-src="v2-emerald.html" data-name="V2 祖母绿横向导航">
+      <span class="swatch" style="background:#059669"></span>
+      <span><b>V2 祖母绿横向导航</b><br><small>顶部导航 + 分隔线统计 + 环形图</small></span>
+    </button>
+    <button class="tab" data-src="v3-blue.html" data-name="V3 克莱因蓝左右分栏">
+      <span class="swatch" style="background:#2563eb"></span>
+      <span><b>V3 克莱因蓝左右分栏</b><br><small>图标栏 + 任务列表 / 批量详情</small></span>
+    </button>
+  </div>
+
+  <div class="panel">
+    <div class="stage">
+      <div class="stage-bar">
+        <span class="dot" style="background:#f87171"></span>
+        <span class="dot" style="background:#fbbf24"></span>
+        <span class="dot" style="background:#34d399"></span>
+        <span class="addr" id="addr">docs/design/v1-indigo.html</span>
+        <a id="openLink" href="v1-indigo.html" target="_blank" rel="noopener">新标签打开 ↗</a>
+      </div>
+      <div class="frame-wrap" id="frameWrap">
+        <iframe id="frame" src="v1-indigo.html" title="设计稿预览"></iframe>
+        <div class="fallback" id="fallback" hidden>
+          <p>当前环境不允许内嵌预览，请直接打开对应设计稿：</p>
+          <div class="fallback-links">
+            <a href="v1-indigo.html" target="_blank" rel="noopener">V1 靛蓝卡片式 ↗</a>
+            <a href="v2-emerald.html" target="_blank" rel="noopener">V2 祖母绿横向导航 ↗</a>
+            <a href="v3-blue.html" target="_blank" rel="noopener">V3 克莱因蓝左右分栏 ↗</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="side">
+      <section class="side-card">
+        <h2>本版特征</h2>
+        <div class="sub" id="sideName">V1 靛蓝卡片式</div>
+        <ul id="sideList">
+          <li>左侧 232px 白色侧边栏 + 顶部栏</li>
+          <li>四张 KPI 卡片，信息层级最清晰</li>
+          <li>状态分段条 + 六项指标网格</li>
+          <li>表格行悬停、描边小按钮</li>
+        </ul>
+        <div class="tagrow" id="tagrow">
+          <span class="tag">改动风险低</span>
+          <span class="tag">最接近现有结构</span>
+          <span class="tag">适合长期后台</span>
+        </div>
+      </section>
+
+      <section class="side-card">
+        <h2>三版对照</h2>
+        <div class="sub">共同点：浅色底 / 白卡 / 细边框 / 状态胶囊</div>
+        <div class="kv">
+          <div><span>V1</span><span>侧边栏导航，卡片化，稳重专业</span></div>
+          <div><span>V2</span><span>横向导航，无侧栏，轻盈有编辑感</span></div>
+          <div><span>V3</span><span>图标栏 + 左右分栏，层级与密度最高</span></div>
+        </div>
+      </section>
+
+      <section class="side-card">
+        <h2>选型建议</h2>
+        <p class="note">
+          V1 直接替换现有侧边栏配色即可，改造量最小；V2 需要重排导航与统计区，视觉变化最大；V3 适合任务数量多、需要「先选批次再看详情」的场景，屏幕宽度要求更高。
+        </p>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script>
+  const meta = {
+    'v1-indigo.html': {
+      list: [
+        '左侧 232px 白色侧边栏 + 顶部栏',
+        '四张 KPI 卡片，信息层级最清晰',
+        '状态分段条 + 六项指标网格',
+        '表格行悬停、描边小按钮'
+      ],
+      tags: ['改动风险低', '最接近现有结构', '适合长期后台']
+    },
+    'v2-emerald.html': {
+      list: [
+        '去掉侧边栏，改为顶部横向导航',
+        '统计项用分隔线而非卡片堆叠',
+        '环形分布图 + 横向对比条',
+        '暖白底 + 祖母绿，克制有编辑感'
+      ],
+      tags: ['视觉最轻盈', '导航需重排', '弱化后台感']
+    },
+    'v3-blue.html': {
+      list: [
+        '72px 图标栏，节省横向空间',
+        '左侧批量任务列表，右侧批次详情',
+        '指标卡 + 分布条 + 趋势折线',
+        '数据密度略高，表格更紧凑'
+      ],
+      tags: ['层级最清晰', '密度最高', '需要更宽屏']
+    }
+  }
+
+  const frame = document.getElementById('frame')
+  const frameWrap = document.getElementById('frameWrap')
+  const BASE_W = 1440
+
+  function fitFrame() {
+    const scale = frameWrap.clientWidth / BASE_W
+    frame.style.width = BASE_W + 'px'
+    frame.style.transform = 'scale(' + scale + ')'
+    const fallback = document.getElementById('fallback')
+    let h = 900
+    let blocked = false
+    try {
+      const doc = frame.contentDocument
+      if (doc && doc.body) {
+        h = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight, 900)
+      } else {
+        blocked = true
+      }
+    } catch (err) {
+      blocked = true
+    }
+    frame.style.height = h + 'px'
+    frameWrap.style.height = Math.round(h * scale) + 'px'
+    fallback.hidden = !blocked
+    frame.style.visibility = blocked ? 'hidden' : 'visible'
+  }
+
+  frame.addEventListener('load', fitFrame)
+  window.addEventListener('resize', fitFrame)
+  fitFrame()
+
+  const addr = document.getElementById('addr')
+  const openLink = document.getElementById('openLink')
+  const sideName = document.getElementById('sideName')
+  const sideList = document.getElementById('sideList')
+  const tagrow = document.getElementById('tagrow')
+
+  document.getElementById('tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab')
+    if (!btn) return
+    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t === btn))
+    const src = btn.dataset.src
+    frame.src = src
+    addr.textContent = 'docs/design/' + src
+    openLink.href = src
+    sideName.textContent = btn.dataset.name
+    sideList.innerHTML = meta[src].list.map((t) => '<li>' + t + '</li>').join('')
+    tagrow.innerHTML = meta[src].tags.map((t) => '<span class="tag">' + t + '</span>').join('')
+  })
+</script>
+</body>
+</html>

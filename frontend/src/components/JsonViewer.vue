@@ -34,13 +34,13 @@ async function copy(): Promise<void> {
 </script>
 
 <template>
-  <div class="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80">
-    <div class="flex items-center justify-between border-b border-slate-800 px-3 py-1.5">
+  <div class="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+    <div class="flex items-center justify-between border-b border-slate-200 px-3 py-1.5">
       <span class="text-[11px] uppercase tracking-wider text-slate-500">{{ label || 'JSON' }}</span>
-      <button class="text-[11px] text-slate-500 transition hover:text-slate-200" @click="copy">复制</button>
+      <button class="text-[11px] text-slate-500 transition hover:text-slate-800" @click="copy">复制</button>
     </div>
     <pre
-      class="mono overflow-auto p-3 text-slate-300"
+      class="mono overflow-auto p-3 text-slate-700"
       :style="{ maxHeight }"
     >{{ text }}</pre>
   </div>

@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>设计稿 V4 · 精密仪表 · 问账 QA</title>
+<style>
+  /* ============================================================
+     V4 精密仪表 · Data-Dense Dashboard
+     来源：ui-ux-pro-max --design-system
+       风格 data-dense-dashboard / 配色 Analytics Dashboard
+       主色 #1E40AF · 强调 #D97706 · Fira Sans + Fira Code
+     ============================================================ */
+  :root {
+    --bg: #f8fafc;
+    --surface: #ffffff;
+    --surface-2: #fbfcfe;
+    --line: #e2e8f0;
+    --hair: #edf2f7;
+    --ink: #0f172a;
+    --ink-2: #475569;
+    --ink-3: #64748b;
+    --brand: #1e40af;
+    --brand-2: #3b82f6;
+    --brand-soft: #eff4ff;
+    --amber: #b45309;
+    --amber-soft: #fef3c7;
+    --pass: #047857;
+    --pass-bg: #ecfdf5;
+    --fail: #b91c1c;
+    --fail-bg: #fef2f2;
+    --warn: #b45309;
+    --warn-bg: #fef3c7;
+    --radius: 6px;
+    --font: "Fira Sans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --mono: "Fira Code", "JetBrains Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--font); font-size: 12.5px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  .mono { font-family: var(--mono); font-variant-ligatures: none; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* ---------- 左侧导航 ---------- */
+  .app { display: flex; min-height: 100vh; }
+  .main { flex: 1; min-width: 0; }
+  .side {
+    width: 224px; flex: 0 0 224px; position: sticky; top: 0; height: 100vh;
+    display: flex; flex-direction: column; gap: 10px;
+    background: var(--surface); border-right: 1px solid var(--line); padding: 12px 10px 10px;
+  }
+  .side-brand { display: flex; align-items: center; gap: 9px; padding: 2px 4px 12px; border-bottom: 1px solid var(--hair); }
+  .logo {
+    width: 26px; height: 26px; border-radius: 5px; background: var(--brand); color: #fff;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: 0 0 auto;
+  }
+  .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .brand b { font-size: 13px; font-weight: 600; letter-spacing: -.1px; display: block; }
+  .brand small { display: block; font-family: var(--mono); font-size: 8.5px; color: var(--ink-3); letter-spacing: .6px; text-transform: uppercase; }
+  .side-search {
+    display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px;
+    border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2);
+    color: var(--ink-3); font-size: 11px;
+  }
+  .side-search span { flex: 1; white-space: nowrap; overflow: hidden; }
+  .side-search kbd {
+    font-family: var(--mono); font-size: 9px; border: 1px solid var(--line);
+    border-radius: 3px; padding: 0 4px; background: #fff; color: var(--ink-3);
+  }
+  .nav { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+  .nav-label {
+    padding: 9px 6px 4px; font-family: var(--mono); font-size: 8.5px; letter-spacing: .6px;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  .nav a {
+    display: flex; align-items: center; gap: 9px; height: 31px; padding: 0 8px;
+    font-size: 11.5px; color: var(--ink-2); border-radius: 4px;
+    transition: color .18s ease, background .18s ease;
+  }
+  .nav a svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; flex: 0 0 auto; }
+  .nav a:hover { color: var(--ink); background: var(--surface-2); }
+  .nav a[aria-current="page"] { color: var(--brand); background: var(--brand-soft); font-weight: 600; }
+  .side-foot {
+    display: flex; align-items: center; gap: 8px; padding: 9px 4px 2px;
+    border-top: 1px solid var(--hair);
+  }
+  .side-foot .env {
+    display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px;
+    border: 1px solid var(--line); border-radius: 4px; font-family: var(--mono);
+    font-size: 9px; color: var(--ink-2); background: var(--surface-2); text-transform: uppercase;
+  }
+  .side-foot .env i { width: 5px; height: 5px; border-radius: 50%; background: #16a34a; }
+  .side-user { min-width: 0; line-height: 1.2; margin-left: auto; }
+  .side-user b { display: block; font-size: 11.5px; font-weight: 500; }
+  .side-user span { display: block; font-size: 9.5px; color: var(--ink-3); }
+  .avatar {
+    width: 26px; height: 26px; flex: 0 0 auto; border-radius: 50%; background: #e2e8f0; color: #334155;
+    display: grid; place-items: center; font-size: 11px; font-weight: 600;
+  }
+  .iconbtn {
+    width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--surface); display: grid; place-items: center; color: var(--ink-2);
+    cursor: pointer; transition: background .18s ease, border-color .18s ease;
+  }
+  .iconbtn:hover { background: var(--surface-2); border-color: #cbd5e1; }
+
+  /* ---------- 页面 ---------- */
+  .page { max-width: 1560px; margin: 0 auto; padding: 16px 20px 40px; }
+  .crumb {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .5px;
+    color: var(--ink-3); text-transform: uppercase; display: flex; align-items: center; gap: 6px;
+  }
+  .crumb b { color: var(--brand); font-weight: 500; }
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 7px 0 14px; }
+  .title-line { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.3px; }
+  .tag {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .4px; text-transform: uppercase;
+    color: var(--brand); background: var(--brand-soft); border: 1px solid #dbeafe;
+    border-radius: 3px; padding: 1px 5px;
+  }
+  .sub { margin: 6px 0 0; color: var(--ink-2); font-size: 11.5px; display: flex; flex-wrap: wrap; gap: 5px 14px; }
+  .sub b { font-family: var(--mono); font-weight: 500; color: var(--ink); }
+  .actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+  .btn {
+    height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px;
+    border: 1px solid var(--line); border-radius: 5px; background: var(--surface);
+    color: var(--ink); font-family: inherit; font-size: 11.5px; font-weight: 500;
+    cursor: pointer; transition: background .18s ease, border-color .18s ease;
+  }
+  .btn:hover { background: var(--surface-2); border-color: #cbd5e1; }
+  .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+  .btn.primary:hover { background: #1c3a9e; }
+  .btn.ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
+  .btn.ghost:hover { background: var(--brand-soft); color: var(--brand); }
+  .btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+
+  /* ---------- KPI 横条 ---------- */
+  .kpis {
+    display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    margin-bottom: 12px; overflow: hidden;
+  }
+  .kpi { padding: 10px 13px 11px; position: relative; }
+  .kpi + .kpi { border-left: 1px solid var(--hair); }
+  .kpi dt {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .5px; text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .kpi dd {
+    margin: 4px 0 0; font-family: var(--mono); font-size: 20px; font-weight: 500;
+    letter-spacing: -.6px; font-variant-numeric: tabular-nums; line-height: 1.1;
+  }
+  .kpi dd small { font-size: 10px; color: var(--ink-3); letter-spacing: 0; margin-left: 2px; }
+  .kpi .foot { margin-top: 3px; font-size: 9.5px; color: var(--ink-3); }
+  .up { color: var(--pass); }
+  .down { color: var(--fail); }
+
+  /* ---------- 主网格 ---------- */
+  .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    min-width: 0;
+  }
+  .span-8 { grid-column: span 8; }
+  .span-4 { grid-column: span 4; }
+  .span-12 { grid-column: span 12; }
+  .card-head {
+    display: flex; align-items: center; gap: 10px; padding: 10px 13px;
+    border-bottom: 1px solid var(--hair); flex-wrap: wrap;
+  }
+  .card-head h2 {
+    margin: 0; font-size: 12px; font-weight: 600; letter-spacing: -.1px;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .count {
+    font-family: var(--mono); font-size: 9.5px; color: var(--ink-3);
+    border: 1px solid var(--line); border-radius: 3px; padding: 0 5px; background: var(--surface-2);
+  }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .seg button {
+    font-family: inherit; font-size: 10.5px; padding: 3px 8px; border: 0; background: var(--surface);
+    color: var(--ink-2); cursor: pointer; border-right: 1px solid var(--line);
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .card-head .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+  /* ---------- 表格 ---------- */
+  .table-scroll { overflow-x: auto; contain: paint; }
+  table { width: 100%; border-collapse: collapse; min-width: 720px; }
+  thead th {
+    position: sticky; top: 0; background: var(--surface-2); z-index: 1;
+    text-align: left; font-family: var(--mono); font-size: 9px; letter-spacing: .5px;
+    text-transform: uppercase; color: var(--ink-3); font-weight: 500;
+    padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  tbody td { padding: 7px 10px; border-bottom: 1px solid var(--hair); font-size: 11.5px; height: 36px; }
+  tbody tr:hover { background: #f9fbff; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .case { display: flex; flex-direction: column; gap: 1px; }
+  .case code { font-family: var(--mono); font-size: 11px; color: var(--ink); }
+  .case span { font-size: 9.5px; color: var(--ink-3); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px;
+    border-radius: 3px; font-size: 10px; font-weight: 500; white-space: nowrap;
+  }
+  .chip i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+  .c-pass { color: var(--pass); background: var(--pass-bg); }
+  .c-fail { color: var(--fail); background: var(--fail-bg); }
+  .c-warn { color: var(--warn); background: var(--warn-bg); }
+  .dim { color: var(--ink-3); }
+  .rowlink {
+    font-size: 10.5px; color: var(--brand); border: 1px solid #dbeafe; background: var(--brand-soft);
+    border-radius: 3px; padding: 2px 7px; white-space: nowrap; transition: background .18s ease;
+  }
+  .rowlink:hover { background: #e0ebff; }
+  .table-foot {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 8px 13px; border-top: 1px solid var(--hair); font-size: 10px; color: var(--ink-3);
+  }
+  .pager { display: inline-flex; gap: 4px; }
+  .pager button {
+    width: 24px; height: 22px; border: 1px solid var(--line); background: var(--surface);
+    border-radius: 3px; color: var(--ink-2); font-family: var(--mono); font-size: 10px; cursor: pointer;
+  }
+  .pager button[aria-current="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+
+  /* ---------- 分布 ---------- */
+  .dist-body { padding: 12px 13px 13px; }
+  .stack { display: flex; height: 8px; border-radius: 2px; overflow: hidden; gap: 2px; background: #eef3fa; }
+  .stack span { display: block; height: 100%; }
+  .stack span:first-child { border-radius: 2px 0 0 2px; }
+  .stack span:last-child { border-radius: 0 2px 2px 0; }
+  .legend { margin-top: 10px; display: flex; flex-direction: column; gap: 0; }
+  .legend-row {
+    display: grid; grid-template-columns: 12px minmax(0, 1fr) 42px 46px;
+    align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px dashed var(--hair);
+    font-size: 11px;
+  }
+  .legend-row:last-child { border-bottom: 0; }
+  .legend-row i { width: 7px; height: 7px; border-radius: 1px; }
+  .legend-row .n { color: var(--ink-2); }
+  .legend-row .v { text-align: right; font-family: var(--mono); font-size: 11px; }
+  .legend-row .p { text-align: right; font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); }
+  .dist-note {
+    margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--hair);
+    display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-3);
+  }
+  .dist-note b { font-family: var(--mono); color: var(--ink); font-weight: 500; }
+
+  /* ---------- 轨迹 ---------- */
+  .trail { padding: 4px 13px 10px; }
+  .trail li {
+    list-style: none; position: relative; padding: 7px 0 7px 18px;
+    font-size: 11px; color: var(--ink-2); border-left: 1px solid var(--line); margin-left: 3px;
+  }
+  .trail li::before {
+    content: ""; position: absolute; left: -3.5px; top: 12px; width: 6px; height: 6px;
+    border-radius: 50%; background: #fff; border: 1px solid var(--brand);
+  }
+  .trail li:first-child::before { background: var(--brand); }
+  .trail time { font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); margin-right: 6px; }
+  .trail b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- 趋势 ---------- */
+  .trend-body { padding: 10px 13px 8px; }
+  .trend-legend { display: flex; gap: 14px; font-size: 10px; color: var(--ink-3); margin-bottom: 4px; }
+  .trend-legend i { display: inline-block; width: 10px; height: 2px; margin-right: 5px; vertical-align: 3px; }
+
+  /* ---------- 环境 ---------- */
+  .kv { padding: 10px 13px 12px; display: flex; flex-direction: column; gap: 0; }
+  .kv > div {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 6px 0; border-bottom: 1px dashed var(--hair); font-size: 11px;
+  }
+  .kv > div:last-child { border-bottom: 0; }
+  .kv dt { color: var(--ink-3); }
+  .kv dd { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--ink); }
+  .badge-ok { color: var(--pass); background: var(--pass-bg); border-radius: 3px; padding: 1px 5px; font-size: 9.5px; }
+
+  /* ---------- 版本条 ---------- */
+  .version-strip {
+    margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    font-size: 10.5px; color: var(--ink-3);
+  }
+  .version-strip a {
+    border: 1px solid var(--line); background: var(--surface); border-radius: 4px;
+    padding: 3px 9px; color: var(--ink-2); transition: border-color .18s ease, color .18s ease;
+  }
+  .version-strip a:hover { border-color: var(--brand); color: var(--brand); }
+  .version-strip a[aria-current="true"] { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width: 1180px) {
+    .span-8, .span-4 { grid-column: span 12; }
+    .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .kpi:nth-child(4) { border-left: 0; }
+    .kpi:nth-child(n + 4) { border-top: 1px solid var(--hair); }
+  }
+  @media (max-width: 980px) {
+    .side { width: 60px; flex-basis: 60px; padding: 12px 6px 8px; align-items: center; }
+    .side-brand { border-bottom: 0; padding-bottom: 10px; }
+    .side-search, .nav-label, .side-label-text, .side-user, .side-foot .env, .iconbtn { display: none; }
+    .nav a { justify-content: center; padding: 0; width: 40px; }
+    .side-foot { justify-content: center; width: 100%; }
+  }
+  @media (max-width: 760px) {
+    .page { padding: 12px 12px 32px; }
+    .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .kpi:nth-child(odd) { border-left: 0; }
+    .kpi:nth-child(n + 3) { border-top: 1px solid var(--hair); }
+    .head { flex-direction: column; }
+    .actions { width: 100%; }
+    .actions .btn { flex: 1; justify-content: center; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside class="side">
+    <div class="side-brand">
+      <div class="logo" aria-hidden="true">问</div>
+      <div class="brand"><b>问账 QA</b><small>Billing QA</small></div>
+    </div>
+    <div class="side-search" role="search">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span>搜索任务 / 用例</span>
+      <kbd>⌘K</kbd>
+    </div>
+    <nav class="nav" aria-label="主导航">
+      <div class="nav-label">工作台</div>
+      <a href="#" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
+        <span class="side-label-text">测试大盘</span>
+      </a>
+      <a href="#">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg>
+        <span class="side-label-text">用例资产</span>
+      </a>
+      <a href="#">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14"/></svg>
+        <span class="side-label-text">Prompt 资产</span>
+      </a>
+      <a href="#">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/></svg>
+        <span class="side-label-text">执行记录</span>
+      </a>
+      <a href="#">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3c0-.34-.03-.67-.1-1l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L14.8 3h-4l-.4 2.6a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.07-.33.1-.66.1-1Z"/></svg>
+        <span class="side-label-text">环境与模型</span>
+      </a>
+      <div class="nav-label">快捷</div>
+      <a href="#">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"/></svg>
+        <span class="side-label-text">新建批量任务</span>
+      </a>
+    </nav>
+    <div class="side-foot">
+      <span class="env"><i aria-hidden="true"></i>dev</span>
+      <button class="iconbtn" type="button" aria-label="通知">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+      </button>
+      <div class="avatar" aria-hidden="true">A</div>
+    </div>
+  </aside>
+
+  <div class="main">
+<main class="page">
+  <div class="crumb">测试大盘 <span aria-hidden="true">/</span> <b>BATCH20261114172830216</b></div>
+
+  <div class="head">
+    <div>
+      <div class="title-line">
+        <h1>批量执行 11/14 17:28</h1>
+        <span class="chip c-pass"><i aria-hidden="true"></i>已完成</span>
+        <span class="tag">批量</span>
+        <span class="tag">V4 精密仪表</span>
+      </div>
+      <p class="sub">
+        <span>用例 <b>7</b></span>
+        <span>并发 <b>3</b></span>
+        <span>QPS <b>5</b></span>
+        <span>环境失败重试 <b>2</b> 次</span>
+        <span>开始 <b>17:28:30</b></span>
+        <span>耗时 <b>6.2s</b></span>
+      </p>
+    </div>
+    <div class="actions">
+      <button class="btn" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v5h5"/></svg>
+        刷新
+      </button>
+      <button class="btn" type="button">全部执行记录</button>
+      <button class="btn primary" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        新建批量任务
+      </button>
+    </div>
+  </div>
+
+  <!-- KPI -->
+  <dl class="kpis">
+    <div class="kpi"><dt>用例总数</dt><dd>7<small>条</small></dd><div class="foot">启用 124 / 全量 128</div></div>
+    <div class="kpi"><dt>通过率</dt><dd>57.1<small>%</small></dd><div class="foot"><span class="up">▲ 4.2%</span> 较上次</div></div>
+    <div class="kpi"><dt>进度</dt><dd>100<small>%</small></dd><div class="foot">7 / 7 完成</div></div>
+    <div class="kpi"><dt>平均 TTFT</dt><dd>340<small>ms</small></dd><div class="foot">首字响应</div></div>
+    <div class="kpi"><dt>P95 时延</dt><dd>1.2<small>s</small></dd><div class="foot">端到端</div></div>
+    <div class="kpi"><dt>Tokens</dt><dd>12.4<small>k</small></dd><div class="foot">裁判 12.4k · 模拟 0</div></div>
+  </dl>
+
+  <div class="grid">
+    <!-- 表格 -->
+    <section class="card span-8" aria-labelledby="res-title">
+      <div class="card-head">
+        <h2 id="res-title">用例执行结果 <span class="count">7</span></h2>
+        <div class="right">
+          <div class="seg" role="group" aria-label="按状态筛选">
+            <button type="button" aria-pressed="true">全部</button>
+            <button type="button" aria-pressed="false">通过 4</button>
+            <button type="button" aria-pressed="false">失败 2</button>
+            <button type="button" aria-pressed="false">超限 1</button>
+          </div>
+          <button class="btn ghost" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+            导出
+          </button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <caption class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">本次批量执行的用例级结果，按用例汇总最新一次尝试</caption>
+          <thead>
+            <tr>
+              <th scope="col">用例</th>
+              <th scope="col">状态</th>
+              <th scope="col">得分</th>
+              <th scope="col">轮次</th>
+              <th scope="col">尝试</th>
+              <th scope="col">时延</th>
+              <th scope="col">开始</th>
+              <th scope="col"><span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">操作</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><div class="case"><code>API-SMOKE-1794576016</code><span>API 冒烟用例 · v3</span></div></td>
+              <td><span class="chip c-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">94.0</td><td class="num">1</td><td class="num">1</td><td class="num">377 ms</td>
+              <td class="num dim">17:28:33</td>
+              <td><a class="rowlink" href="#" aria-label="查看用例 API-SMOKE-1794576016 的执行结果">结果 →</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-SINGLE-001</code><span>单轮 · 标准账单查询 · v1</span></div></td>
+              <td><span class="chip c-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">96.0</td><td class="num">1</td><td class="num">1</td><td class="num">362 ms</td>
+              <td class="num dim">17:28:33</td>
+              <td><a class="rowlink" href="#" aria-label="查看用例 DEMO-SINGLE-001 的执行结果">结果 →</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-DYNAMIC-MAXTURNS</code><span>动态多轮 · 最大轮次熔断 · v1</span></div></td>
+              <td><span class="chip c-warn"><i aria-hidden="true"></i>轮次超限</span></td>
+              <td class="num">61.0</td><td class="num">3</td><td class="num">1</td><td class="num">1.36 s</td>
+              <td class="num dim">17:28:32</td>
+              <td><a class="rowlink" href="#" aria-label="查看用例 DEMO-DYNAMIC-MAXTURNS 的执行结果">结果 →</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-DYNAMIC-001</code><span>动态多轮 · 隐藏信息释放 · v1</span></div></td>
+              <td><span class="chip c-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">92.0</td><td class="num">3</td><td class="num">1</td><td class="num">982 ms</td>
+              <td class="num dim">17:28:32</td>
+              <td><a class="rowlink" href="#" aria-label="查看用例 DEMO-DYNAMIC-001 的执行结果">结果 →</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-STATIC-001</code><span>静态多轮 · 指代继承与明细追问 · v1</span></div></td>
+              <td><span class="chip c-fail"><i aria-hidden="true"></i>失败</span></td>
+              <td class="num">58.0</td><td class="num">2</td><td class="num">1</td><td class="num">744 ms</td>
+              <td class="num dim">17:28:31</td>
+              <td><a class="rowlink" href="#" aria-label="查看用例 DEMO-STATIC-001 的执行结果">结果 →</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>DEMO-SINGLE-FAIL</code><span>单轮 · 数据幻觉红线 · v1</span></div></td>
+              <td><span class="chip c-fail"><i aria-hidden="true"></i>失败</span></td>
+              <td class="num">18.0</td><td class="num">1</td><td class="num">2</td><td class="num">512 ms</td>
+              <td class="num dim">17:28:31</td>
+              <td><a class="rowlink" href="#" aria-label="查看用例 DEMO-SINGLE-FAIL 的执行结果">结果 →</a></td>
+            </tr>
+            <tr>
+              <td><div class="case"><code>API-SMOKE-1794573004</code><span>API 冒烟用例 · v3</span></div></td>
+              <td><span class="chip c-pass"><i aria-hidden="true"></i>通过</span></td>
+              <td class="num">94.0</td><td class="num">1</td><td class="num">1</td><td class="num">297 ms</td>
+              <td class="num dim">17:28:30</td>
+              <td><a class="rowlink" href="#" aria-label="查看用例 API-SMOKE-1794573004 的执行结果">结果 →</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-foot">
+        <span>共 7 条用例 · 按用例汇总最新尝试</span>
+        <div class="pager" role="group" aria-label="分页">
+          <button type="button" aria-label="上一页">‹</button>
+          <button type="button" aria-current="true" aria-label="第 1 页">1</button>
+          <button type="button" aria-label="下一页">›</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 分布 -->
+    <section class="card span-4" aria-labelledby="dist-title">
+      <div class="card-head">
+        <h2 id="dist-title">状态分布</h2>
+        <span class="count">7 / 7</span>
+      </div>
+      <div class="dist-body">
+        <div class="stack" role="img" aria-label="通过 4 条、失败 2 条、轮次超限 1 条">
+          <span style="width:57.1%;background:#10b981"></span>
+          <span style="width:28.6%;background:#ef4444"></span>
+          <span style="width:14.3%;background:#f59e0b"></span>
+        </div>
+        <div class="legend">
+          <div class="legend-row"><i style="background:#10b981" aria-hidden="true"></i><span class="n">通过</span><span class="v">4</span><span class="p">57.1%</span></div>
+          <div class="legend-row"><i style="background:#ef4444" aria-hidden="true"></i><span class="n">失败</span><span class="v">2</span><span class="p">28.6%</span></div>
+          <div class="legend-row"><i style="background:#f59e0b" aria-hidden="true"></i><span class="n">轮次超限</span><span class="v">1</span><span class="p">14.3%</span></div>
+          <div class="legend-row"><i style="background:#a78bfa" aria-hidden="true"></i><span class="n">异常</span><span class="v">0</span><span class="p">0%</span></div>
+          <div class="legend-row"><i style="background:#94a3b8" aria-hidden="true"></i><span class="n">中断</span><span class="v">0</span><span class="p">0%</span></div>
+        </div>
+        <div class="dist-note"><span>完成度</span><b>100%</b></div>
+      </div>
+    </section>
+
+    <!-- 轨迹 -->
+    <section class="card span-4" aria-labelledby="trail-title">
+      <div class="card-head">
+        <h2 id="trail-title">运行轨迹</h2>
+        <span class="count">6.2s</span>
+      </div>
+      <ul class="trail" style="margin:0">
+        <li><time>17:28:30</time><b>任务启动</b> · 7 条用例入队</li>
+        <li><time>17:28:31</time><b>环境失败重试</b> · DEMO-SINGLE-FAIL 第 2 次</li>
+        <li><time>17:28:32</time><b>轮次熔断</b> · DYNAMIC-MAXTURNS 3 轮</li>
+        <li><time>17:28:33</time><b>4 条通过</b> · 平均 94.0 分</li>
+        <li><time>17:28:36</time><b>任务完成</b> · 57.1% 通过</li>
+      </ul>
+    </section>
+
+    <!-- 趋势 -->
+    <section class="card span-8" aria-labelledby="trend-title">
+      <div class="card-head">
+        <h2 id="trend-title">近 8 次运行</h2>
+        <div class="right"><span class="count">通过率 / P95</span></div>
+      </div>
+      <div class="trend-body">
+        <div class="trend-legend">
+          <span><i style="background:#1e40af" aria-hidden="true"></i>通过率</span>
+          <span><i style="background:#d97706" aria-hidden="true"></i>P95 时延</span>
+        </div>
+        <svg viewBox="0 0 640 96" width="100%" height="96" role="img" aria-label="近 8 次运行通过率从 50% 提升至 57.1%">
+          <line x1="0" y1="24" x2="640" y2="24" stroke="#edf2f7"/>
+          <line x1="0" y1="48" x2="640" y2="48" stroke="#edf2f7"/>
+          <line x1="0" y1="72" x2="640" y2="72" stroke="#edf2f7"/>
+          <path d="M0 68 L91 60 L182 64 L273 46 L364 52 L455 34 L546 38 L640 26"
+                fill="none" stroke="#1e40af" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          <path d="M0 36 L91 42 L182 38 L273 52 L364 48 L455 58 L546 54 L640 62"
+                fill="none" stroke="#d97706" stroke-width="1.6" stroke-dasharray="4 4" stroke-linecap="round"/>
+          <circle cx="640" cy="26" r="3" fill="#fff" stroke="#1e40af" stroke-width="2"/>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 环境 -->
+    <section class="card span-4" aria-labelledby="env-title">
+      <div class="card-head">
+        <h2 id="env-title">环境与重试</h2>
+        <span class="count">dev</span>
+      </div>
+      <dl class="kv" style="margin:0">
+        <div><dt>被测环境</dt><dd>Billing-Sandbox</dd></div>
+        <div><dt>裁判模型</dt><dd>judge-large</dd></div>
+        <div><dt>环境失败重试</dt><dd><span class="badge-ok">已开启 · 2 次</span></dd></div>
+        <div><dt>本次触发</dt><dd>1 次 · 已恢复</dd></div>
+        <div><dt>熔断阈值</dt><dd>3 轮 / 复读 2 次</dd></div>
+      </dl>
+    </section>
+  </div>
+
+  <div class="version-strip">
+    <span>本批设计稿：</span>
+    <a href="./v4-precision.html" aria-current="true">V4 精密仪表</a>
+    <a href="./v5-swiss.html">V5 瑞士网格</a>
+    <a href="./v6-ledger.html">V6 金融账本</a>
+    <a href="./v7-bento.html">V7 Bento 工作台</a>
+    <span style="margin-left:8px;color:#94a3b8">上一批：</span>
+    <a href="./v1-indigo.html">V1</a>
+    <a href="./v2-emerald.html">V2</a>
+    <a href="./v3-blue.html">V3</a>
+  </div>
+</main>
+  </div>
+</div>
+
+</body>
+</html>

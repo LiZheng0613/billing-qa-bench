@@ -417,21 +417,21 @@ function submit(): void {
     <Transition name="drawer">
       <div
         v-if="modelValue"
-        class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm"
+        class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm"
         @click.self="close"
       >
         <aside
-          class="absolute right-0 top-0 flex h-full w-full max-w-3xl flex-col border-l border-slate-800 bg-slate-900 shadow-2xl"
+          class="absolute right-0 top-0 flex h-full w-full max-w-3xl flex-col overflow-hidden rounded-l-tile border-l border-line bg-white shadow-tile-lift"
         >
-          <header class="flex items-start justify-between gap-3 border-b border-slate-800 px-5 py-4">
+          <header class="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
             <div class="min-w-0">
-              <h2 class="text-base font-semibold text-slate-100">{{ title }}</h2>
+              <h2 class="text-base font-semibold text-slate-900">{{ title }}</h2>
               <p class="mt-1 text-xs text-slate-500">
                 保存后自动生成版本快照，可用于 Diff 对比与一键回滚
               </p>
             </div>
             <button
-              class="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-800 hover:text-slate-200"
+              class="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
               @click="close"
             >
               <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -442,7 +442,7 @@ function submit(): void {
 
           <div class="flex-1 space-y-6 overflow-y-auto px-5 py-5">
             <section class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-300">基础信息</h3>
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">基础信息</h3>
               <div class="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label class="label">用例编号</label>
@@ -492,7 +492,7 @@ function submit(): void {
             </section>
 
             <section class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-300">用例类型</h3>
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">用例类型</h3>
               <div class="flex flex-wrap gap-2">
                 <button
                   v-for="type in CASE_TYPES"
@@ -500,8 +500,8 @@ function submit(): void {
                   class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
                   :class="
                     form.case_type === type
-                      ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-200'
-                      : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+                      ? 'border-indigo-500/60 bg-indigo-50 text-indigo-700'
+                      : 'border-slate-300 text-slate-600 hover:bg-slate-100'
                   "
                   :disabled="isEdit"
                   @click="form.case_type = type"
@@ -515,7 +515,7 @@ function submit(): void {
             </section>
 
             <section v-if="form.case_type === 'SINGLE'" class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-300">单轮配置</h3>
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">单轮配置</h3>
               <div>
                 <label class="label">用户提问（query）</label>
                 <textarea v-model="form.query" class="input" rows="2" placeholder="帮我查一下订单 A2024001 的含税金额和明细笔数" />
@@ -528,19 +528,19 @@ function submit(): void {
 
             <section v-else-if="form.case_type === 'STATIC_MULTI'" class="space-y-3">
               <div class="flex items-center justify-between">
-                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-300">静态多轮脚本</h3>
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">静态多轮脚本</h3>
                 <button class="btn-ghost btn-xs" @click="addTurn">添加一轮</button>
               </div>
               <div
                 v-for="(turn, index) in form.turns"
                 :key="index"
-                class="rounded-xl border border-slate-800 bg-slate-950/50 p-3"
+                class="rounded-xl border border-slate-200 bg-slate-50/80 p-3"
               >
                 <div class="flex items-center justify-between">
-                  <span class="text-xs font-medium text-slate-400">第 {{ index + 1 }} 轮</span>
+                  <span class="text-xs font-medium text-slate-600">第 {{ index + 1 }} 轮</span>
                   <button
                     v-if="form.turns.length > 1"
-                    class="text-[11px] text-rose-400 hover:text-rose-300"
+                    class="text-[11px] text-rose-700 hover:text-rose-700"
                     @click="form.turns.splice(index, 1)"
                   >
                     删除
@@ -567,14 +567,14 @@ function submit(): void {
                   placeholder='{"expected_answer":"...","expected_rules":{"amounts":[...]}}'
                 />
               </div>
-              <label class="flex items-center gap-2 text-sm text-slate-300">
-                <input v-model="form.failFast" type="checkbox" class="h-4 w-4 rounded border-slate-600 bg-slate-900" />
+              <label class="flex items-center gap-2 text-sm text-slate-700">
+                <input v-model="form.failFast" type="checkbox" class="h-4 w-4 rounded border-slate-300 bg-white" />
                 任一规则失败即中止后续轮次（fail_fast）
               </label>
             </section>
 
             <section v-else class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-300">动态多轮配置</h3>
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">动态多轮配置</h3>
               <div>
                 <label class="label">用户目标（user_goal）</label>
                 <textarea v-model="form.userGoal" class="input" rows="2" placeholder="在不直接提供订单号的前提下，通过追问拿到订单 A2024001 的含税金额与明细笔数" />
@@ -604,7 +604,7 @@ function submit(): void {
               <div
                 v-for="(item, index) in form.hidden"
                 :key="index"
-                class="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3 sm:grid-cols-[120px_1fr_110px_auto]"
+                class="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3 sm:grid-cols-[120px_1fr_110px_auto]"
               >
                 <input v-model="item.key" class="input" placeholder="键，如 order_no" />
                 <input v-model="item.content" class="input" placeholder="内容，如 A2024001" />
@@ -615,7 +615,7 @@ function submit(): void {
 
             <section v-if="form.case_type !== 'STATIC_MULTI'" class="space-y-3">
               <div class="flex items-center justify-between">
-                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-300">规则硬校验</h3>
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">规则硬校验</h3>
                 <div class="flex gap-2">
                   <button class="btn-ghost btn-xs" @click="addAmount">添加金额</button>
                   <button class="btn-ghost btn-xs" @click="addCount">添加笔数</button>
@@ -649,8 +649,8 @@ function submit(): void {
             </section>
 
             <section class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-300">Prompt 与模型</h3>
-              <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">Prompt 与模型</h3>
+              <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <label class="label">用户模拟器模板（USER_SIMULATOR）</label>
                 <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_130px]">
                   <select v-model="form.simulator_template_id" class="input">
@@ -676,7 +676,7 @@ function submit(): void {
                 </div>
               </div>
 
-              <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+              <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <label class="label">LLM 裁判模板（LLM_JUDGE）</label>
                 <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_130px]">
                   <select v-model="form.judge_template_id" class="input">
@@ -726,13 +726,13 @@ function submit(): void {
                     class="flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition"
                     :class="
                       form.judge_model_ids.includes(item.id)
-                        ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-200'
-                        : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+                        ? 'border-indigo-500/50 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-300 text-slate-600 hover:bg-slate-100'
                     "
                   >
                     <input
                       type="checkbox"
-                      class="h-3.5 w-3.5 rounded border-slate-600 bg-slate-900"
+                      class="h-3.5 w-3.5 rounded border-slate-300 bg-white"
                       :checked="form.judge_model_ids.includes(item.id)"
                       @change="toggleJudge(item.id)"
                     />
@@ -749,12 +749,12 @@ function submit(): void {
             </section>
 
             <section v-if="isEdit" class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-300">变更说明</h3>
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">变更说明</h3>
               <input v-model="form.change_summary" class="input" placeholder="例如：调整预期金额与裁判阈值" />
             </section>
           </div>
 
-          <footer class="flex items-center justify-between gap-2 border-t border-slate-800 px-5 py-3">
+          <footer class="flex items-center justify-between gap-2 border-t border-slate-200 px-5 py-3">
             <p class="text-[11px] text-slate-500">
               {{ isEdit ? '保存会生成新版本快照' : '创建后版本号为 v1' }}
             </p>
