@@ -57,9 +57,12 @@ const compareCase = ref<TestCase | null>(null)
 const selectedIds = ref<number[]>([])
 const batchOpen = ref(false)
 const batchCreating = ref(false)
+const allActiveCount = ref(0)
+const allActiveLoading = ref(false)
 const batchForm = reactive({
   name: '',
   environment_id: null as number | null,
+  scope: 'SELECTED' as 'SELECTED' | 'ALL_ACTIVE',
   concurrency: 3,
   qps_limit: 5,
   retry_on_env_error: true,
@@ -67,6 +70,10 @@ const batchForm = reactive({
   retry_backoff_seconds: 3,
   auto_start: true,
 })
+
+const batchScopeCount = computed(() =>
+  batchForm.scope === 'ALL_ACTIVE' ? allActiveCount.value : selectedIds.value.length,
+)
 
 const activeOnPage = computed(() => cases.value.filter((item) => item.status === 'ACTIVE'))
 
@@ -304,14 +311,23 @@ function clearSelection(): void {
   selectedIds.value = []
 }
 
-function openBatch(): void {
-  if (selectedIds.value.length === 0) {
-    toast.error('请先勾选要执行的用例')
-    return
+async function loadAllActiveCount(): Promise<void> {
+  allActiveLoading.value = true
+  try {
+    const data = await api.cases.list({ page: 1, page_size: 1, status: 'ACTIVE' })
+    allActiveCount.value = data.total
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  } finally {
+    allActiveLoading.value = false
   }
+}
+
+function openBatch(): void {
   const stamp = new Date()
   batchForm.name = `批量执行 ${stamp.getMonth() + 1}/${stamp.getDate()} ${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}`
   batchForm.environment_id = null
+  batchForm.scope = selectedIds.value.length > 0 ? 'SELECTED' : 'ALL_ACTIVE'
   batchForm.concurrency = 3
   batchForm.qps_limit = 5
   batchForm.retry_on_env_error = true
@@ -319,6 +335,7 @@ function openBatch(): void {
   batchForm.retry_backoff_seconds = 3
   batchForm.auto_start = true
   batchOpen.value = true
+  void loadAllActiveCount()
 }
 
 async function submitBatch(): Promise<void> {
@@ -326,8 +343,12 @@ async function submitBatch(): Promise<void> {
     toast.error('请填写任务名称')
     return
   }
-  if (selectedIds.value.length === 0) {
-    toast.error('请至少选择一条用例')
+  if (batchForm.scope === 'SELECTED' && selectedIds.value.length === 0) {
+    toast.error('请先勾选用例，或将执行范围切换为「全部启用用例」')
+    return
+  }
+  if (batchForm.scope === 'ALL_ACTIVE' && allActiveCount.value === 0) {
+    toast.error('用例库中没有启用用例，无法批量执行')
     return
   }
   batchCreating.value = true
@@ -335,7 +356,8 @@ async function submitBatch(): Promise<void> {
     const created = await api.tasks.create({
       name: batchForm.name.trim(),
       environment_id: batchForm.environment_id,
-      case_ids: [...selectedIds.value],
+      case_scope: batchForm.scope,
+      case_ids: batchForm.scope === 'SELECTED' ? [...selectedIds.value] : [],
       concurrency: batchForm.concurrency,
       qps_limit: batchForm.qps_limit,
       retry_on_env_error: batchForm.retry_on_env_error,
@@ -343,7 +365,7 @@ async function submitBatch(): Promise<void> {
       retry_backoff_seconds: batchForm.retry_backoff_seconds,
       auto_start: batchForm.auto_start,
     })
-    toast.success(`批量任务 ${created.code} 已创建，共 ${selectedIds.value.length} 条用例`)
+    toast.success(`批量任务 ${created.code} 已创建，共 ${created.total_cases} 条用例`)
     batchOpen.value = false
     selectedIds.value = []
     await router.push({ name: 'dashboard', query: { task: String(created.id) } })
@@ -382,14 +404,13 @@ onMounted(() => {
         <button class="btn-ghost" @click="exportCases('xlsx')">导出 Excel</button>
         <button
           class="btn-primary"
-          :class="selectedIds.length ? '' : 'opacity-50'"
-          :disabled="selectedIds.length === 0"
+          title="选择当前页、跨页筛选结果或全部启用用例执行"
           @click="openBatch"
         >
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4L19 7" />
           </svg>
-          批量执行（{{ selectedIds.length }}）
+          批量执行<span v-if="selectedIds.length">（{{ selectedIds.length }}）</span>
         </button>
         <button class="btn-primary" @click="openCreate">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -443,7 +464,7 @@ onMounted(() => {
           <span v-if="selectedIds.length" class="text-[11px] text-indigo-300">
             已选 {{ selectedIds.length }} 条
           </span>
-          <button class="btn-ghost btn-xs" @click="selectAllFiltered">全选筛选结果</button>
+          <button class="btn-ghost btn-xs" @click="selectAllFiltered">全选筛选结果（跨页）</button>
           <button v-if="selectedIds.length" class="btn-ghost btn-xs" @click="clearSelection">
             清空选择
           </button>
@@ -558,8 +579,53 @@ onMounted(() => {
       width="lg"
     >
       <div class="space-y-4">
+        <div class="space-y-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+          <p class="text-xs font-medium text-slate-300">执行范围</p>
+          <label
+            class="flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 transition"
+            :class="
+              batchForm.scope === 'SELECTED'
+                ? 'border-indigo-500/40 bg-indigo-500/10'
+                : 'border-slate-800 hover:bg-slate-800/40'
+            "
+          >
+            <input
+              v-model="batchForm.scope"
+              type="radio"
+              value="SELECTED"
+              class="mt-1 h-4 w-4 border-slate-600 bg-slate-900"
+            />
+            <span class="min-w-0 text-sm text-slate-200">
+              已选用例（{{ selectedIds.length }} 条）
+              <span class="block text-[11px] text-slate-500">
+                当前页勾选，或通过「全选筛选结果（跨页）」选中的用例。
+              </span>
+            </span>
+          </label>
+          <label
+            class="flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 transition"
+            :class="
+              batchForm.scope === 'ALL_ACTIVE'
+                ? 'border-indigo-500/40 bg-indigo-500/10'
+                : 'border-slate-800 hover:bg-slate-800/40'
+            "
+          >
+            <input
+              v-model="batchForm.scope"
+              type="radio"
+              value="ALL_ACTIVE"
+              class="mt-1 h-4 w-4 border-slate-600 bg-slate-900"
+            />
+            <span class="min-w-0 text-sm text-slate-200">
+              全部启用用例（{{ allActiveLoading ? '统计中…' : `${allActiveCount} 条` }}）
+              <span class="block text-[11px] text-slate-500">
+                自动跨分页执行用例库中所有启用用例，不受当前筛选与分页影响，适合全量回归。
+              </span>
+            </span>
+          </label>
+        </div>
         <div class="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">
-          已选择 <span class="font-semibold">{{ selectedIds.length }}</span> 条启用用例，执行进度可在「测试大盘」实时查看。
+          本次将执行 <span class="font-semibold">{{ batchScopeCount }}</span> 条用例，执行进度可在「测试大盘」实时查看。
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
           <div>
@@ -644,7 +710,7 @@ onMounted(() => {
       <template #footer>
         <button class="btn-ghost" @click="batchOpen = false">取消</button>
         <button class="btn-primary" :disabled="batchCreating" @click="submitBatch">
-          {{ batchCreating ? '创建中…' : `创建并执行（${selectedIds.length} 条）` }}
+          {{ batchCreating ? '创建中…' : `创建并执行（${batchScopeCount} 条）` }}
         </button>
       </template>
     </BaseModal>

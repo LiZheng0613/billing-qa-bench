@@ -249,6 +249,45 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     assert len(trend["points"]) >= 1
 
 
+async def test_task_create_with_all_active_scope(client: httpx.AsyncClient) -> None:
+    """ALL_ACTIVE 由后端跨分页解析全部启用用例，避免前端只看当前页漏选。"""
+    cases = (
+        await client.get("/cases", params={"status": "ACTIVE", "page_size": 200})
+    ).json()
+    expected = sorted(item["id"] for item in cases["items"])
+    assert expected, "演示数据应包含启用用例"
+
+    response = await client.post(
+        "/tasks",
+        json={
+            "name": f"pytest 全量范围 {uuid.uuid4().hex[:6]}",
+            "case_scope": "ALL_ACTIVE",
+            "auto_start": False,
+            "concurrency": 2,
+            "qps_limit": 5,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "PENDING"
+    assert body["total_cases"] == len(expected)
+    assert sorted(body["case_ids"]) == expected
+
+
+async def test_task_create_requires_case_selection(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/tasks",
+        json={
+            "name": "pytest 空用例任务",
+            "case_scope": "SELECTED",
+            "case_ids": [],
+            "auto_start": False,
+        },
+    )
+    assert response.status_code == 422
+    assert "至少选择一条用例" in response.json()["message"]
+
+
 async def test_sandbox_template_type_guard(client: httpx.AsyncClient) -> None:
     prompts = (await client.get("/prompts", params={"page_size": 200})).json()
     simulator = next(item for item in prompts["items"] if item["code"] == "SIM_DEFAULT_BILLING_USER")

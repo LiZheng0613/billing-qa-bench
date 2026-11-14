@@ -170,7 +170,8 @@ export const api = {
       name: string
       description?: string | null
       environment_id?: number | null
-      case_ids: number[]
+      case_scope?: 'SELECTED' | 'ALL_ACTIVE'
+      case_ids?: number[]
       concurrency?: number
       qps_limit?: number
       retry_on_env_error?: boolean

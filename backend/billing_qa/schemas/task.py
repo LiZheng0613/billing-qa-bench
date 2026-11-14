@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -15,7 +15,9 @@ class TaskCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
     environment_id: int | None = None
-    case_ids: list[int] = Field(min_length=1)
+    # SELECTED：按 case_ids 执行；ALL_ACTIVE：忽略 case_ids，跨分页执行用例库全部启用用例
+    case_scope: Literal["SELECTED", "ALL_ACTIVE"] = "SELECTED"
+    case_ids: list[int] = Field(default_factory=list)
     concurrency: int = Field(default=3, ge=1, le=20)
     qps_limit: float = Field(default=5.0, gt=0, le=100)
     retry_on_env_error: bool = True

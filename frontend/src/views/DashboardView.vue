@@ -46,9 +46,18 @@ const form = reactive({
   retry_on_env_error: true,
   max_env_retries: 2,
   retry_backoff_seconds: 3,
+  case_scope: 'SELECTED' as 'SELECTED' | 'ALL_ACTIVE',
   case_ids: [] as number[],
   auto_start: true,
 })
+
+const activeCaseCount = computed(
+  () => cases.value.filter((item) => item.status === 'ACTIVE').length,
+)
+
+const scopeCount = computed(() =>
+  form.case_scope === 'ALL_ACTIVE' ? activeCaseCount.value : form.case_ids.length,
+)
 
 let socket: WebSocket | null = null
 let pollTimer: number | null = null
@@ -314,20 +323,24 @@ function openCreate(): void {
   form.retry_on_env_error = true
   form.max_env_retries = 2
   form.retry_backoff_seconds = 3
+  form.case_scope = 'SELECTED'
   form.case_ids = []
   form.auto_start = true
   caseKeyword.value = ''
   showCreate.value = true
 }
 
-function toggleCase(caseId: number): void {
-  const index = form.case_ids.indexOf(caseId)
+function toggleCase(item: TestCase): void {
+  if (item.status !== 'ACTIVE') return
+  const index = form.case_ids.indexOf(item.id)
   if (index >= 0) form.case_ids.splice(index, 1)
-  else form.case_ids.push(caseId)
+  else form.case_ids.push(item.id)
 }
 
 function selectAllFiltered(): void {
-  const ids = filteredCases.value.map((item) => item.id)
+  const ids = filteredCases.value
+    .filter((item) => item.status === 'ACTIVE')
+    .map((item) => item.id)
   form.case_ids = Array.from(new Set([...form.case_ids, ...ids]))
 }
 
@@ -340,8 +353,12 @@ async function submitCreate(): Promise<void> {
     toast.error('请填写任务名称')
     return
   }
-  if (form.case_ids.length === 0) {
-    toast.error('请至少选择一个用例')
+  if (form.case_scope === 'SELECTED' && form.case_ids.length === 0) {
+    toast.error('请至少选择一个用例，或切换为「全部启用用例」')
+    return
+  }
+  if (form.case_scope === 'ALL_ACTIVE' && activeCaseCount.value === 0) {
+    toast.error('用例库中没有启用用例，无法批量执行')
     return
   }
   creating.value = true
@@ -350,7 +367,8 @@ async function submitCreate(): Promise<void> {
       name: form.name.trim(),
       description: form.description.trim() || null,
       environment_id: form.environment_id,
-      case_ids: [...form.case_ids],
+      case_scope: form.case_scope,
+      case_ids: form.case_scope === 'SELECTED' ? [...form.case_ids] : [],
       concurrency: form.concurrency,
       qps_limit: form.qps_limit,
       retry_on_env_error: form.retry_on_env_error,
@@ -358,7 +376,7 @@ async function submitCreate(): Promise<void> {
       retry_backoff_seconds: form.retry_backoff_seconds,
       auto_start: form.auto_start,
     })
-    toast.success(`任务 ${created.code} 已创建`)
+    toast.success(`任务 ${created.code} 已创建，共 ${created.total_cases} 条用例`)
     showCreate.value = false
     await refreshTasks()
     await selectTask(created.id)
@@ -566,20 +584,67 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="flex min-h-0 flex-col rounded-xl border border-slate-800 bg-slate-950/50">
-          <div class="border-b border-slate-800 p-3">
+          <div class="space-y-2 border-b border-slate-800 p-3">
             <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-slate-300">选择用例</span>
-              <span class="text-[11px] text-slate-500">已选 {{ form.case_ids.length }} / 共 {{ cases.length }}</span>
+              <span class="text-xs font-medium text-slate-300">执行范围</span>
+              <span class="text-[11px] text-slate-500">
+                本次 {{ scopeCount }} 条 / 库内启用 {{ activeCaseCount }} 条
+              </span>
             </div>
-            <input v-model="caseKeyword" class="input mt-2 !py-1.5 text-xs" placeholder="搜索编号 / 名称 / 标签" />
-            <div class="mt-2 flex gap-2">
-              <button class="btn-ghost btn-xs" @click="selectAllFiltered">
-                全选筛选结果（{{ filteredCases.length }}）
-              </button>
-              <button class="btn-ghost btn-xs" @click="clearSelected">清空</button>
-            </div>
+            <label
+              class="flex cursor-pointer items-start gap-2 rounded-lg border p-2 transition"
+              :class="
+                form.case_scope === 'SELECTED'
+                  ? 'border-indigo-500/40 bg-indigo-500/10'
+                  : 'border-slate-800 hover:bg-slate-800/40'
+              "
+            >
+              <input
+                v-model="form.case_scope"
+                type="radio"
+                value="SELECTED"
+                class="mt-0.5 h-4 w-4 border-slate-600 bg-slate-900"
+              />
+              <span class="min-w-0 text-xs text-slate-200">
+                已选用例（{{ form.case_ids.length }} 条）
+                <span class="block text-[10px] text-slate-500">下方逐条勾选后执行。</span>
+              </span>
+            </label>
+            <label
+              class="flex cursor-pointer items-start gap-2 rounded-lg border p-2 transition"
+              :class="
+                form.case_scope === 'ALL_ACTIVE'
+                  ? 'border-indigo-500/40 bg-indigo-500/10'
+                  : 'border-slate-800 hover:bg-slate-800/40'
+              "
+            >
+              <input
+                v-model="form.case_scope"
+                type="radio"
+                value="ALL_ACTIVE"
+                class="mt-0.5 h-4 w-4 border-slate-600 bg-slate-900"
+              />
+              <span class="min-w-0 text-xs text-slate-200">
+                全部启用用例（{{ activeCaseCount }} 条，跨分页）
+                <span class="block text-[10px] text-slate-500">
+                  自动执行用例库全部启用用例，不受勾选与分页限制。
+                </span>
+              </span>
+            </label>
+            <template v-if="form.case_scope === 'SELECTED'">
+              <input v-model="caseKeyword" class="input !py-1.5 text-xs" placeholder="搜索编号 / 名称 / 标签" />
+              <div class="flex gap-2">
+                <button class="btn-ghost btn-xs" @click="selectAllFiltered">
+                  全选筛选结果（{{ filteredCases.length }}）
+                </button>
+                <button class="btn-ghost btn-xs" @click="clearSelected">清空</button>
+              </div>
+            </template>
           </div>
-          <div class="max-h-[320px] flex-1 overflow-y-auto p-2">
+          <div
+            class="max-h-[320px] flex-1 overflow-y-auto p-2"
+            :class="form.case_scope === 'ALL_ACTIVE' ? 'pointer-events-none opacity-40' : ''"
+          >
             <label
               v-for="item in filteredCases"
               :key="item.id"
@@ -589,7 +654,9 @@ onBeforeUnmount(() => {
                 type="checkbox"
                 class="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-900"
                 :checked="form.case_ids.includes(item.id)"
-                @change="toggleCase(item.id)"
+                :disabled="item.status !== 'ACTIVE'"
+                :title="item.status === 'ACTIVE' ? '选择该用例' : '仅启用用例可批量执行'"
+                @change="toggleCase(item)"
               />
               <span class="min-w-0">
                 <span class="block truncate font-mono text-[11px] text-slate-300">{{ item.code }}</span>
@@ -607,7 +674,7 @@ onBeforeUnmount(() => {
       <template #footer>
         <button class="btn-ghost" @click="showCreate = false">取消</button>
         <button class="btn-primary" :disabled="creating" @click="submitCreate">
-          {{ creating ? '创建中…' : '创建并执行' }}
+          {{ creating ? '创建中…' : `创建并执行（${scopeCount} 条）` }}
         </button>
       </template>
     </BaseModal>

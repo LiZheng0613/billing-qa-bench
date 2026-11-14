@@ -92,7 +92,25 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
     operator: str = Depends(get_current_operator),
 ) -> TaskOut:
-    case_ids = list(dict.fromkeys(payload.case_ids))
+    if payload.case_scope == "ALL_ACTIVE":
+        case_ids = list(
+            (
+                await db.execute(
+                    select(TestCase.id)
+                    .where(TestCase.deleted_at.is_(None), TestCase.status == "ACTIVE")
+                    .order_by(TestCase.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not case_ids:
+            raise ValidationError("用例库中没有启用用例，请先在用例资产中启用后再批量执行")
+    else:
+        case_ids = list(dict.fromkeys(payload.case_ids))
+        if not case_ids:
+            raise ValidationError("请至少选择一条用例，或选择“全部启用用例”执行范围")
+
     cases = (
         await db.execute(
             select(TestCase).where(
