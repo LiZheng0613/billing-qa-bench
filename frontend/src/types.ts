@@ -423,6 +423,7 @@ export interface CaseExecutionItem {
   source: string
   status: string
   attempt_no: number
+  attempt_count?: number
   error_kind: string | null
   pass_flag: boolean | null
   total_score: number | null

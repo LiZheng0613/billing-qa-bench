@@ -158,6 +158,7 @@ class ExecutionListItem(BaseModel):
     source: str
     status: str
     attempt_no: int = 1
+    attempt_count: int = 1
     error_kind: str | None = None
     pass_flag: bool | None
     total_score: float | None

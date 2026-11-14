@@ -21,6 +21,7 @@ const props = defineProps<{ modelValue: boolean; caseData: TestCase | null }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
   (e: 'select-execution', executionId: number): void
+  (e: 'view-all'): void
 }>()
 
 const toast = useToastStore()
@@ -179,7 +180,10 @@ watch(
       </div>
 
       <div>
-        <h3 class="panel-title mb-2">最近执行记录</h3>
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="panel-title">最近执行记录</h3>
+          <button class="btn-ghost btn-xs" @click="emit('view-all')">查看全部历史</button>
+        </div>
         <div class="overflow-x-auto rounded-xl border border-slate-800">
           <table class="table-shell">
             <thead>

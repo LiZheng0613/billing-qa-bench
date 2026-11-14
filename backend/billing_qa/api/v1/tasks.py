@@ -246,14 +246,31 @@ async def task_metrics(task_id: int, db: AsyncSession = Depends(get_db)) -> Task
 async def task_executions(
     task_id: int,
     status: str | None = None,
+    latest_per_case: bool = Query(
+        default=False, description="是否按用例只返回最新一次尝试（批量任务详情用）"
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ) -> Page[CaseExecutionItem]:
     await _get_task(db, task_id)
-    conditions = [ExecutionRecord.task_id == task_id]
-    if status:
-        conditions.append(ExecutionRecord.status == status)
+    attempt_counts: dict[int, int] = {}
+
+    if latest_per_case:
+        latest_ids = (
+            select(func.max(ExecutionRecord.id).label("max_id"))
+            .where(ExecutionRecord.task_id == task_id)
+            .group_by(ExecutionRecord.case_id)
+            .subquery()
+        )
+        conditions = [ExecutionRecord.id.in_(select(latest_ids.c.max_id))]
+        if status:
+            conditions.append(ExecutionRecord.status == status)
+    else:
+        conditions = [ExecutionRecord.task_id == task_id]
+        if status:
+            conditions.append(ExecutionRecord.status == status)
+
     total = (
         await db.execute(select(func.count()).select_from(ExecutionRecord).where(*conditions))
     ).scalar_one()
@@ -266,6 +283,20 @@ async def task_executions(
             .limit(page_size)
         )
     ).scalars().all()
+
+    if latest_per_case and rows:
+        count_rows = (
+            await db.execute(
+                select(ExecutionRecord.case_id, func.count())
+                .where(
+                    ExecutionRecord.task_id == task_id,
+                    ExecutionRecord.case_id.in_({record.case_id for record in rows}),
+                )
+                .group_by(ExecutionRecord.case_id)
+            )
+        ).all()
+        attempt_counts = {int(case_id): int(count) for case_id, count in count_rows}
+
     case_map = {
         case.id: (case.code, case.name)
         for case in (
@@ -284,6 +315,7 @@ async def task_executions(
             source=record.source,
             status=record.status,
             attempt_no=record.attempt_no,
+            attempt_count=attempt_counts.get(record.case_id, 1),
             error_kind=record.error_kind,
             pass_flag=record.pass_flag,
             total_score=record.total_score,

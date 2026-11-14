@@ -35,7 +35,7 @@ const routes: RouteRecordRaw[] = [
         path: 'trace',
         name: 'trace',
         component: () => import('./views/TraceView.vue'),
-        meta: { title: '执行追踪' },
+        meta: { title: '执行记录' },
       },
       {
         path: 'settings',

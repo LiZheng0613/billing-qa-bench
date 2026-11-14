@@ -35,7 +35,7 @@ const navItems: NavItem[] = [
   },
   {
     name: 'trace',
-    label: '执行追踪',
+    label: '执行记录',
     path: '/trace',
     icon: 'M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z',
   },

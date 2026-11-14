@@ -18,8 +18,11 @@ const props = withDefaults(
     metrics: TaskMetrics | null
     executions: CaseExecutionItem[]
     live?: boolean
+    executionTotal?: number
+    executionPage?: number
+    executionPageSize?: number
   }>(),
-  { live: false },
+  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30 },
 )
 
 const emit = defineEmits<{
@@ -30,6 +33,7 @@ const emit = defineEmits<{
   (e: 'retry'): void
   (e: 'select-execution', executionId: number): void
   (e: 'view-task-trace', taskId: number): void
+  (e: 'page-change', page: number): void
 }>()
 
 const segmented = computed(() => {
@@ -62,6 +66,20 @@ const canRetry = computed(() =>
 )
 
 const progress = computed(() => props.metrics?.progress ?? 0)
+
+const executionPageCount = computed(() =>
+  Math.max(1, Math.ceil(props.executionTotal / props.executionPageSize)),
+)
+
+function previousPage(): void {
+  if (props.executionPage > 1) emit('page-change', props.executionPage - 1)
+}
+
+function nextPage(): void {
+  if (props.executionPage < executionPageCount.value) {
+    emit('page-change', props.executionPage + 1)
+  }
+}
 
 const stats = computed(() => [
   {
@@ -96,7 +114,10 @@ const stats = computed(() => [
     <header class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 px-5 py-4">
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
-          <h2 class="text-sm font-semibold text-slate-100">批量执行监控</h2>
+          <h2 class="text-sm font-semibold text-slate-100">批量任务详情</h2>
+          <span class="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] text-indigo-300">
+            批量
+          </span>
           <span
             v-if="live"
             class="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300"
@@ -109,6 +130,8 @@ const stats = computed(() => [
           <span class="font-mono text-slate-400">{{ task.code }}</span>
           <span>·</span>
           <span class="truncate">{{ task.name }}</span>
+          <span>·</span>
+          <span>{{ task.total_cases }} 条用例</span>
           <span>·</span>
           <span>{{ task.environment_name || '未绑定环境' }}</span>
           <span>·</span>
@@ -131,7 +154,7 @@ const stats = computed(() => [
           class="btn-ghost btn-xs"
           @click="emit('view-task-trace', task.id)"
         >
-          执行明细
+          全部执行记录（含重试）
         </button>
       </div>
     </header>
@@ -182,30 +205,37 @@ const stats = computed(() => [
       </div>
 
       <div class="overflow-x-auto">
-        <div class="flex items-center justify-between px-5 pt-4">
-          <h3 class="panel-title">最近执行</h3>
-          <span class="text-[11px] text-slate-500">点击行查看全链路 Trace</span>
+        <div class="flex flex-wrap items-center justify-between gap-2 px-5 pt-4">
+          <div>
+            <h3 class="panel-title">用例执行结果</h3>
+            <p class="mt-0.5 text-[11px] text-slate-500">
+              按用例汇总最新一次尝试；点击行进入该用例的单笔执行结果页。
+            </p>
+          </div>
+          <span class="text-[11px] text-slate-500">共 {{ executionTotal }} 条用例</span>
         </div>
         <table class="table-shell mt-2">
           <thead>
             <tr>
-              <th class="th">#</th>
+              <th class="th">执行号</th>
               <th class="th">用例</th>
               <th class="th">状态</th>
               <th class="th">得分</th>
               <th class="th">轮次</th>
+              <th class="th">尝试</th>
               <th class="th">时延</th>
               <th class="th">开始时间</th>
+              <th class="th text-right">结果</th>
             </tr>
           </thead>
           <tbody>
             <tr
               v-for="item in executions"
-              :key="item.id"
+              :key="item.case_id ?? item.id"
               class="cursor-pointer"
               @click="emit('select-execution', item.id)"
             >
-              <td class="td font-mono text-xs text-slate-500">{{ item.id }}</td>
+              <td class="td font-mono text-xs text-slate-500">#{{ item.id }}</td>
               <td class="td">
                 <p class="font-mono text-xs text-slate-200">{{ item.case_code || `用例 #${item.case_id ?? '—'}` }}</p>
                 <p class="mt-0.5 max-w-[240px] truncate text-[11px] text-slate-500">
@@ -216,8 +246,14 @@ const stats = computed(() => [
               <td class="td"><StatusPill :status="item.status" size="sm" /></td>
               <td class="td tabular-nums">{{ formatScore(item.total_score) }}</td>
               <td class="td tabular-nums">{{ item.turns_used }}</td>
+              <td class="td tabular-nums">{{ item.attempt_count ?? 1 }}</td>
               <td class="td tabular-nums">{{ formatMs(item.latency_ms) }}</td>
               <td class="td text-xs text-slate-500">{{ formatDateTime(item.started_at) }}</td>
+              <td class="td text-right">
+                <button class="btn-ghost btn-xs" @click.stop="emit('select-execution', item.id)">
+                  查看结果
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -225,8 +261,28 @@ const stats = computed(() => [
           v-if="executions.length === 0"
           compact
           title="暂无执行记录"
-          description="任务启动后，执行结果会实时出现在这里。"
+          description="任务启动后，每条用例的结果会实时出现在这里。"
         />
+        <div
+          v-if="executionTotal > executionPageSize"
+          class="flex items-center justify-between border-t border-slate-800 px-5 py-3"
+        >
+          <span class="text-[11px] text-slate-500">
+            第 {{ executionPage }} / {{ executionPageCount }} 页
+          </span>
+          <div class="flex gap-1">
+            <button class="btn-ghost btn-xs" :disabled="executionPage <= 1" @click="previousPage">
+              上一页
+            </button>
+            <button
+              class="btn-ghost btn-xs"
+              :disabled="executionPage >= executionPageCount"
+              @click="nextPage"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
       </div>
     </template>
   </section>

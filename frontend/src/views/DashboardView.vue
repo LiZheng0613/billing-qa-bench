@@ -31,6 +31,9 @@ const selectedTaskId = ref<number | null>(null)
 const task = ref<BatchTask | null>(null)
 const metrics = ref<TaskMetrics | null>(null)
 const executions = ref<CaseExecutionItem[]>([])
+const executionTotal = ref(0)
+const executionPage = ref(1)
+const executionPageSize = 30
 const live = ref(false)
 const loadingBase = ref(true)
 
@@ -134,17 +137,23 @@ async function selectTask(taskId: number): Promise<void> {
   if (selectedTaskId.value !== taskId) {
     disconnectSocket()
     stopPolling()
+    executionPage.value = 1
   }
   selectedTaskId.value = taskId
   try {
-    const [detail, taskMetrics, executionPage] = await Promise.all([
+    const [detail, taskMetrics, executionPageData] = await Promise.all([
       api.tasks.get(taskId),
       api.tasks.metrics(taskId),
-      api.tasks.executions(taskId, { page_size: 50 }),
+      api.tasks.executions(taskId, {
+        page: executionPage.value,
+        page_size: executionPageSize,
+        latest_per_case: true,
+      }),
     ])
     task.value = detail
     metrics.value = taskMetrics
-    executions.value = executionPage.items
+    executions.value = executionPageData.items
+    executionTotal.value = executionPageData.total
     patchTaskInList(detail)
     if (['RUNNING', 'PAUSED', 'PENDING'].includes(detail.status)) {
       connectSocket(taskId)
@@ -156,6 +165,26 @@ async function selectTask(taskId: number): Promise<void> {
   } catch (exc) {
     reportError(exc)
   }
+}
+
+async function loadExecutions(taskId: number): Promise<void> {
+  try {
+    const pageData = await api.tasks.executions(taskId, {
+      page: executionPage.value,
+      page_size: executionPageSize,
+      latest_per_case: true,
+    })
+    executions.value = pageData.items
+    executionTotal.value = pageData.total
+  } catch (exc) {
+    reportError(exc)
+  }
+}
+
+function changeExecutionPage(next: number): void {
+  if (!selectedTaskId.value) return
+  executionPage.value = next
+  void loadExecutions(selectedTaskId.value)
 }
 
 function patchTaskInList(next: BatchTask): void {
@@ -179,10 +208,19 @@ function applyEvent(event: TaskProgressEvent): void {
     patchTaskInList({ ...task.value })
   }
   if (event.execution) {
-    const index = executions.value.findIndex((item) => item.id === event.execution?.id)
-    if (index >= 0) executions.value.splice(index, 1, event.execution)
-    else executions.value.unshift(event.execution)
-    executions.value = executions.value.slice(0, 60)
+    const next = event.execution
+    const index = executions.value.findIndex((item) => item.case_id === next.case_id)
+    if (index >= 0) {
+      const current = executions.value[index]
+      executions.value.splice(index, 1, {
+        ...next,
+        attempt_count: Math.max(current.attempt_count ?? 1, next.attempt_no),
+      })
+    } else {
+      executions.value.unshift({ ...next, attempt_count: Math.max(1, next.attempt_no) })
+      executionTotal.value += 1
+    }
+    executions.value = executions.value.slice(0, executionPageSize)
   }
   if (event.status && ['COMPLETED', 'ABORTED', 'FAILED'].includes(event.status)) {
     disconnectSocket()
@@ -242,8 +280,13 @@ function startPolling(taskId: number): void {
         const detail = await api.tasks.get(taskId)
         task.value = detail
         patchTaskInList(detail)
-        const page = await api.tasks.executions(taskId, { page_size: 50 })
+        const page = await api.tasks.executions(taskId, {
+          page: executionPage.value,
+          page_size: executionPageSize,
+          latest_per_case: true,
+        })
         executions.value = page.items
+        executionTotal.value = page.total
         if (!['RUNNING', 'PAUSED', 'PENDING'].includes(detail.status)) {
           stopPolling()
           disconnectSocket()
@@ -409,9 +452,9 @@ onBeforeUnmount(() => {
   <div class="space-y-5">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h2 class="text-lg font-semibold text-slate-100">实时测试大盘</h2>
+        <h2 class="text-lg font-semibold text-slate-100">测试大盘</h2>
         <p class="mt-1 text-xs text-slate-500">
-          批量执行进度、通过率与指标体系；WebSocket 推送，断线时自动降级轮询。
+          批量任务概览与单次运行详情；选中任务后查看通过分布与用例级结果，点击用例行进入单笔执行结果页。
         </p>
       </div>
       <div class="flex items-center gap-2">
@@ -444,6 +487,9 @@ onBeforeUnmount(() => {
           :metrics="metrics"
           :executions="executions"
           :live="live"
+          :execution-total="executionTotal"
+          :execution-page="executionPage"
+          :execution-page-size="executionPageSize"
           @refresh="refreshCurrent"
           @pause="pauseTask"
           @resume="resumeTask"
@@ -451,12 +497,16 @@ onBeforeUnmount(() => {
           @retry="retryFailed"
           @select-execution="openExecution"
           @view-task-trace="openTaskTrace"
+          @page-change="changeExecutionPage"
         />
       </div>
 
       <section class="card flex flex-col overflow-hidden">
         <header class="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-          <h2 class="panel-title">最近任务</h2>
+          <div>
+            <h2 class="panel-title">批量任务</h2>
+            <p class="mt-0.5 text-[10px] text-slate-600">点击任务查看批量详情</p>
+          </div>
           <button class="text-[11px] text-slate-500 transition hover:text-slate-200" @click="refreshTasks">
             刷新
           </button>

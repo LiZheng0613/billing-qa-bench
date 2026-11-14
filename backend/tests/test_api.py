@@ -236,6 +236,13 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     assert len(executions["items"]) == 1
     assert executions["items"][0]["attempt_no"] == 1
     assert executions["items"][0]["error_kind"] is None
+    latest = (
+        await client.get(
+            f"/tasks/{task_id}/executions", params={"latest_per_case": "true"}
+        )
+    ).json()
+    assert latest["total"] == 1
+    assert latest["items"][0]["attempt_count"] == 1
     detail = (await client.get(f"/executions/{executions['items'][0]['id']}")).json()
     assert detail["turns"] and detail["case_snapshot"]
     assert detail["case_version"] == target["current_version"]

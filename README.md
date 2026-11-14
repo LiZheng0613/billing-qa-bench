@@ -149,9 +149,9 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 1. **环境与模型**：确认 `QA-MOCK` 环境探活成功；确认 `MOCK-SIM`（模拟器）与 `MOCK-JUDGE` / `MOCK-JUDGE-2`（裁判）连通性测试通过。
 2. **Prompt 资产**：查看内置模板 `SIM_DEFAULT_BILLING_USER` 与 `JUDGE_DEFAULT_ZERO_TOLERANCE`，可在沙盒中试跑。
-3. **用例资产**：浏览 5 条演示用例；勾选行（或「全选筛选结果」）后点右上角「批量执行（N）」，可直接建任务并跳转大盘；打开「版本 / 趋势 / 对比」体验 Diff 与历史分析。
-4. **测试大盘**：也可在「新建批量任务」中勾选用例（支持全选筛选结果，覆盖上百条用例）、设置并发数与 QPS，执行后 WebSocket 实时刷新进度，点击执行明细行跳转 Trace。
-5. **执行追踪**：查看对话轮次、裁判明细、规则校验、用例快照与原始报文；对失败任务可断点重跑。
+3. **用例资产**：浏览 5 条演示用例；勾选行（或「全选筛选结果」）后点右上角「批量执行（N）」，可直接建任务并跳转大盘；行内「历史」查看该用例全部执行记录，打开「趋势 / 对比 / 版本」体验 Diff 与历史分析。
+4. **测试大盘**：也可在「新建批量任务」中勾选用例（支持全选筛选结果，覆盖上百条用例）、设置并发数与 QPS，执行后 WebSocket 实时刷新进度；选中任务即为「批量任务详情」，点击用例行进入单笔执行结果。
+5. **执行记录**：列表查看全部批量 / 调试 / 重跑记录，点击任意记录进入单笔结果页（对话轮次、裁判明细、规则校验、用例快照与原始报文）；对失败任务可断点重跑。
 
 ### 批量执行与并发控制
 
@@ -162,6 +162,12 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 - 执行范围支持两种模式（两个入口均可用）：
   - `SELECTED`：执行当前勾选的用例，支持本页全选与「全选筛选结果（跨页）」。
   - `ALL_ACTIVE`：由后端一次性解析用例库中全部启用用例（跨分页、不受当前筛选影响），前端只传 `case_scope=ALL_ACTIVE`，避免上百条用例逐页勾选或请求体过大。
+
+### 批量任务详情与单笔执行结果
+
+- **批量任务详情**（测试大盘选中任务）：展示该任务的通过分布（通过 / 失败 / 异常 / 轮次超限 / 复读熔断 / 执行中 / 等待中）、进度、TTFT/P95/Token 等指标，以及按用例汇总的最新一次执行结果（含尝试次数），支持分页，覆盖上百条用例。
+- **单笔执行结果**（`/trace?execution=<id>`）：聚焦一次执行，展示对话轮次、裁判明细、规则校验、用例快照与原始报文；可返回所属批量任务详情，或跳转该用例全部历史。批量详情点击用例行、用例调试完成、趋势面板「查看 Trace」均复用此页面。
+- **用例历史**（`/trace?case=<id>`，或用例资产行内「历史」）：列出该用例全部批量 / 调试 / 重跑记录并分页；批量任务的「全部执行记录（含重试）」按任务列出每次尝试。用例级汇总统一取最新一次尝试，避免重试重复计数。
 
 ### 环境类失败自动重试
 
@@ -275,7 +281,7 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 | 模型 | `GET/POST /models`、`PUT/DELETE /models/{id}`、`POST /models/{id}/test` |
 | Prompt | `GET/POST /prompts`、`GET/PUT/DELETE /prompts/{id}`、`POST /prompts/{id}/versions`、`GET /prompts/{id}/versions/{version}`、`GET /prompts/{id}/usage`、`POST /prompts/{id}/sandbox` |
 | 用例 | `GET/POST /cases`、`GET/PUT/DELETE /cases/{id}`、`POST /cases/{id}/debug`、`GET /cases/{id}/revisions`、`GET /cases/{id}/revisions/diff`、`POST /cases/{id}/rollback`、`GET /cases/{id}/trend`、`GET /cases/{id}/executions`、`GET /cases/compare/runs`、`POST /cases/import`、`GET /cases/export` |
-| 任务 | `GET/POST /tasks`、`GET /tasks/{id}`、`POST /tasks/{id}/start`、`POST /tasks/{id}/pause|resume|abort|retry-failed`、`GET /tasks/{id}/metrics`、`GET /tasks/{id}/executions` |
+| 任务 | `GET/POST /tasks`、`GET /tasks/{id}`、`POST /tasks/{id}/start`、`POST /tasks/{id}/pause|resume|abort|retry-failed`、`GET /tasks/{id}/metrics`、`GET /tasks/{id}/executions`（`latest_per_case=true` 按用例取最新一次并返回尝试次数） |
 | 执行 | `GET /executions`、`GET /executions/{id}`、`GET /executions/{id}/raw` |
 | 实时 | `WS /ws/tasks/{task_id}?token=<jwt>` |
 

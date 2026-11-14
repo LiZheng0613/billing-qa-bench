@@ -221,6 +221,16 @@ function openTrace(executionId: number): void {
   void router.push({ name: 'trace', query: { execution: String(executionId) } })
 }
 
+function openCaseHistory(item: TestCase): void {
+  void router.push({ name: 'trace', query: { case: String(item.id) } })
+}
+
+function openTrendHistory(): void {
+  if (!trendCase.value) return
+  trendOpen.value = false
+  openCaseHistory(trendCase.value)
+}
+
 async function onRevisionUpdated(): Promise<void> {
   await loadCases()
 }
@@ -547,6 +557,7 @@ onMounted(() => {
                   </button>
                   <button class="btn-ghost btn-xs" @click="openRevisions(item)">版本</button>
                   <button class="btn-ghost btn-xs" @click="openTrend(item)">趋势</button>
+                  <button class="btn-ghost btn-xs" @click="openCaseHistory(item)">历史</button>
                   <button class="btn-ghost btn-xs" @click="openCompare(item)">对比</button>
                   <button class="btn-danger btn-xs" @click="removeCase(item)">删除</button>
                 </div>
@@ -735,6 +746,7 @@ onMounted(() => {
       v-model="trendOpen"
       :case-data="trendCase"
       @select-execution="openTrace"
+      @view-all="openTrendHistory"
     />
 
     <RunComparePanel v-model="compareOpen" :case-data="compareCase" />

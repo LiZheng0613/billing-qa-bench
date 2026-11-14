@@ -187,7 +187,7 @@ export const api = {
     metrics: (id: number) => http.get<TaskMetrics>(`/tasks/${id}/metrics`),
     executions: (
       id: number,
-      query?: { status?: string; page?: number; page_size?: number },
+      query?: { status?: string; latest_per_case?: boolean; page?: number; page_size?: number },
     ) => http.get<Page<CaseExecutionItem>>(`/tasks/${id}/executions`, query),
   },
 
