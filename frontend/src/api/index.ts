@@ -19,6 +19,8 @@ import type {
   ModelConfig,
   ModelPayload,
   ModelTestResult,
+  OpenCodeCatalog,
+  OpenCodeCatalogPayload,
   Page,
   PromptListItem,
   PromptTemplate,
@@ -76,6 +78,8 @@ export const api = {
       http.put<ModelConfig>(`/models/${id}`, payload),
     remove: (id: number) => http.delete<MessageResponse>(`/models/${id}`),
     test: (id: number) => http.post<ModelTestResult>(`/models/${id}/test`),
+    opencodeCatalog: (payload: OpenCodeCatalogPayload) =>
+      http.post<OpenCodeCatalog>('/models/opencode/catalog', payload),
   },
 
   // ---------------------------------------------------------------- Prompt 资产

@@ -14,6 +14,8 @@ import type {
   ModelPayload,
   ModelRole,
   ModelTestResult,
+  OpenCodeCatalogAgent,
+  OpenCodeCatalogModel,
   PreHookConfig,
 } from '../types'
 import { errorMessage } from '../utils/errors'
@@ -350,6 +352,99 @@ const modelForm = reactive({
 
 const isOpencodeModel = computed(() => modelForm.connection_type === 'OPENCODE_SERVE')
 
+// OpenCode 可用模型/Agent：由 serve 的 /api/model、/api/agent 拉取，避免手填 provider/model 出错。
+const catalogModels = ref<OpenCodeCatalogModel[]>([])
+const catalogAgents = ref<OpenCodeCatalogAgent[]>([])
+const catalogLoading = ref(false)
+const catalogLoaded = ref(false)
+const catalogError = ref('')
+let catalogRequestSeq = 0
+
+const catalogModelGroups = computed(() => {
+  const groups: Array<{ provider: string; models: OpenCodeCatalogModel[] }> = []
+  for (const model of catalogModels.value) {
+    let group = groups.find((item) => item.provider === model.provider_id)
+    if (!group) {
+      group = { provider: model.provider_id, models: [] }
+      groups.push(group)
+    }
+    group.models.push(model)
+  }
+  return groups
+})
+
+const currentCatalogModel = computed(
+  () =>
+    catalogModels.value.find((item) => item.value === modelForm.opencode_model.trim()) ?? null,
+)
+
+const catalogAgentOptions = computed(() => {
+  const options = catalogAgents.value.filter((agent) => !agent.hidden)
+  const current = modelForm.opencode_agent.trim()
+  if (current && !options.some((agent) => agent.id === current)) {
+    options.unshift({ id: current, name: current, mode: null, hidden: false })
+  }
+  return options
+})
+
+function invalidateCatalog(): void {
+  catalogRequestSeq += 1
+  catalogModels.value = []
+  catalogAgents.value = []
+  catalogLoaded.value = false
+  catalogError.value = ''
+  catalogLoading.value = false
+}
+
+async function loadCatalog(options: { silent?: boolean } = {}): Promise<void> {
+  if (!isOpencodeModel.value) return
+  const serveUrl = modelForm.serve_url.trim()
+  if (!/^https?:\/\//.test(serveUrl)) {
+    if (!options.silent) toast.error('请先填写正确的 OpenCode Serve 地址')
+    return
+  }
+  const port = Number(modelForm.serve_port)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    if (!options.silent) toast.error('Serve 端口需为 1~65535 的整数')
+    return
+  }
+
+  const seq = ++catalogRequestSeq
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    const result = await api.models.opencodeCatalog({
+      serve_url: serveUrl,
+      serve_port: port,
+      serve_username: modelForm.serve_username.trim() || null,
+      serve_password: modelForm.serve_password.trim() || null,
+      opencode_directory: modelForm.opencode_directory.trim() || null,
+      model_id: editingModel.value?.id ?? null,
+    })
+    if (seq !== catalogRequestSeq) return
+    catalogModels.value = result.models
+    catalogAgents.value = result.agents
+    catalogLoaded.value = true
+    if (!options.silent) {
+      toast.success(`已拉取 ${result.models.length} 个可用模型、${result.agents.length} 个 Agent`)
+    }
+  } catch (exc) {
+    if (seq !== catalogRequestSeq) return
+    catalogLoaded.value = false
+    catalogError.value = errorMessage(exc)
+    if (!options.silent) toast.error(catalogError.value)
+  } finally {
+    if (seq === catalogRequestSeq) catalogLoading.value = false
+  }
+}
+
+function selectConnectionType(type: ModelConnectionType): void {
+  if (modelForm.connection_type === type) return
+  modelForm.connection_type = type
+  invalidateCatalog()
+}
+
+
 const modelTitle = computed(() =>
   editingModel.value ? `编辑模型 · ${editingModel.value.code}` : '注册新模型',
 )
@@ -399,13 +494,19 @@ function resetModelForm(): void {
 function openCreateModel(): void {
   editingModel.value = null
   resetModelForm()
+  invalidateCatalog()
   modelModalOpen.value = true
 }
 
 function openEditModel(item: ModelConfig): void {
   editingModel.value = item
   resetModelForm()
+  invalidateCatalog()
   modelModalOpen.value = true
+  // 编辑 OpenCode 模型时自动拉一次目录，让选择框直接可用（密码由后端复用已保存值）。
+  if (item.connection_type === 'OPENCODE_SERVE') {
+    void loadCatalog({ silent: true })
+  }
 }
 
 function optionalNumber(text: string): number | null {
@@ -413,6 +514,12 @@ function optionalNumber(text: string): number | null {
   if (!trimmed) return null
   const parsed = Number(trimmed)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function formatContextLimit(value: number | null): string {
+  if (!value) return ''
+  if (value >= 1000) return `${Math.round(value / 1000)}k`
+  return String(value)
 }
 
 async function submitModel(): Promise<void> {
@@ -971,7 +1078,7 @@ onMounted(() => {
                   ? 'border-indigo-400 bg-indigo-50/70 ring-1 ring-indigo-200'
                   : 'border-line-soft bg-white hover:border-slate-300'
               "
-              @click="modelForm.connection_type = 'OPENAI_COMPATIBLE'"
+              @click="selectConnectionType('OPENAI_COMPATIBLE')"
             >
               <span class="block text-xs font-medium text-slate-900">OpenAI 兼容直连</span>
               <span class="mt-0.5 block text-[11px] text-slate-500">
@@ -986,7 +1093,7 @@ onMounted(() => {
                   ? 'border-sky-400 bg-sky-50/70 ring-1 ring-sky-200'
                   : 'border-line-soft bg-white hover:border-slate-300'
               "
-              @click="modelForm.connection_type = 'OPENCODE_SERVE'"
+              @click="selectConnectionType('OPENCODE_SERVE')"
             >
               <span class="block text-xs font-medium text-slate-900">OpenCode Serve + SSE</span>
               <span class="mt-0.5 block text-[11px] text-slate-500">
@@ -1040,41 +1147,147 @@ onMounted(() => {
             <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px]">
               <div>
                 <label class="label">Serve 地址</label>
-                <input v-model="modelForm.serve_url" class="input font-mono" placeholder="http://127.0.0.1" />
+                <input
+                  v-model="modelForm.serve_url"
+                  class="input font-mono"
+                  placeholder="http://127.0.0.1"
+                  @input="invalidateCatalog()"
+                />
               </div>
               <div>
                 <label class="label">端口</label>
-                <input v-model.number="modelForm.serve_port" class="input font-mono" type="number" min="1" max="65535" />
+                <input
+                  v-model.number="modelForm.serve_port"
+                  class="input font-mono"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  @input="invalidateCatalog()"
+                />
               </div>
+            </div>
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <button type="button" class="btn-ghost" :disabled="catalogLoading" @click="loadCatalog()">
+                <svg
+                  v-if="catalogLoading"
+                  class="h-4 w-4 animate-spin"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path stroke-linecap="round" d="M12 3a9 9 0 1 0 9 9" />
+                </svg>
+                <svg
+                  v-else
+                  class="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6" />
+                  <path stroke-linecap="round" d="M20 9A8 8 0 0 0 6 5.5M4 15a8 8 0 0 0 14 3.5" />
+                </svg>
+                {{ catalogLoading ? '拉取中…' : catalogLoaded ? '重新拉取' : '拉取可用模型' }}
+              </button>
+              <span v-if="catalogError" class="text-[11px] text-rose-600">{{ catalogError }}</span>
+              <span v-else-if="catalogLoaded" class="text-[11px] text-emerald-600">
+                已获取 {{ catalogModels.length }} 个模型 · {{ catalogAgents.length }} 个 Agent
+              </span>
+              <span v-else class="text-[11px] text-slate-500">
+                从 Serve 的 /api/model 读取模型清单，避免手填 provider/model 出错
+              </span>
             </div>
             <div class="mt-3 grid gap-3 sm:grid-cols-2">
               <div>
-                <label class="label">Agent（可选）</label>
-                <input v-model="modelForm.opencode_agent" class="input font-mono" placeholder="build / plan（留空用默认）" />
+                <label class="label">模型</label>
+                <select v-model="modelForm.opencode_model" class="input font-mono">
+                  <option value="">跟随 Serve 默认模型</option>
+                  <optgroup
+                    v-for="group in catalogModelGroups"
+                    :key="group.provider"
+                    :label="group.provider"
+                  >
+                    <option
+                      v-for="model in group.models"
+                      :key="model.value"
+                      :value="model.value"
+                      :disabled="!model.enabled"
+                    >
+                      {{ model.name }} · {{ model.model_id }}{{ model.enabled ? '' : '（未启用）' }}
+                    </option>
+                  </optgroup>
+                  <option
+                    v-if="modelForm.opencode_model && !currentCatalogModel"
+                    :value="modelForm.opencode_model"
+                  >
+                    {{ modelForm.opencode_model }}（当前配置）
+                  </option>
+                </select>
+                <p class="mt-1 text-[11px] leading-relaxed text-slate-500">
+                  <template v-if="currentCatalogModel">
+                    {{ currentCatalogModel.provider_id }} ·
+                    <template v-if="currentCatalogModel.context_limit">
+                      上下文 {{ formatContextLimit(currentCatalogModel.context_limit) }} tokens ·
+                    </template>
+                    {{ currentCatalogModel.status || 'active' }}
+                  </template>
+                  <template v-else-if="catalogLoaded">未指定时由 Serve 使用默认模型</template>
+                  <template v-else>点击「拉取可用模型」后从列表中选择</template>
+                </p>
               </div>
               <div>
-                <label class="label">模型（可选，provider/model）</label>
-                <input v-model="modelForm.opencode_model" class="input font-mono" placeholder="anthropic/claude-sonnet-4" />
+                <label class="label">Agent</label>
+                <select v-model="modelForm.opencode_agent" class="input font-mono">
+                  <option value="">跟随 Serve 默认 Agent</option>
+                  <option v-for="agent in catalogAgentOptions" :key="agent.id" :value="agent.id">
+                    {{ agent.name }}（{{ agent.id }}）
+                  </option>
+                </select>
+                <p class="mt-1 text-[11px] leading-relaxed text-slate-500">
+                  可选；留空时由 Serve 使用默认 agent。
+                </p>
               </div>
             </div>
             <div class="mt-3 grid gap-3 sm:grid-cols-2">
               <div>
                 <label class="label">工作目录（可选）</label>
-                <input v-model="modelForm.opencode_directory" class="input font-mono" placeholder="D:/workspace/qa" />
+                <input
+                  v-model="modelForm.opencode_directory"
+                  class="input font-mono"
+                  placeholder="D:/workspace/qa"
+                  @input="invalidateCatalog()"
+                />
               </div>
               <div>
                 <label class="label">显示标识（可选）</label>
-                <input v-model="modelForm.model_name" class="input font-mono" placeholder="留空自动生成" />
+                <input
+                  v-model="modelForm.model_name"
+                  class="input font-mono"
+                  placeholder="留空自动生成"
+                />
               </div>
             </div>
             <div class="mt-3 grid gap-3 sm:grid-cols-2">
               <div>
                 <label class="label">Basic Auth 用户名</label>
-                <input v-model="modelForm.serve_username" class="input font-mono" placeholder="opencode" />
+                <input
+                  v-model="modelForm.serve_username"
+                  class="input font-mono"
+                  placeholder="opencode"
+                  @input="invalidateCatalog()"
+                />
               </div>
               <div>
                 <label class="label">Basic Auth 密码{{ editingModel ? '（留空不修改）' : '' }}</label>
-                <input v-model="modelForm.serve_password" class="input font-mono" type="password" placeholder="可选" />
+                <input
+                  v-model="modelForm.serve_password"
+                  class="input font-mono"
+                  type="password"
+                  placeholder="可选"
+                  @input="invalidateCatalog()"
+                />
               </div>
             </div>
             <p class="mt-3 text-[11px] leading-relaxed text-slate-500">

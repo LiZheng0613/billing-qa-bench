@@ -220,6 +220,40 @@ export interface ModelTestResult {
   message: string
 }
 
+export interface OpenCodeCatalogModel {
+  value: string
+  provider_id: string
+  model_id: string
+  name: string
+  status: string | null
+  enabled: boolean
+  context_limit: number | null
+  output_limit: number | null
+}
+
+export interface OpenCodeCatalogAgent {
+  id: string
+  name: string
+  mode: string | null
+  hidden: boolean
+}
+
+export interface OpenCodeCatalog {
+  serve_url: string
+  models: OpenCodeCatalogModel[]
+  agents: OpenCodeCatalogAgent[]
+}
+
+export interface OpenCodeCatalogPayload {
+  serve_url?: string | null
+  serve_port?: number | null
+  serve_username?: string | null
+  serve_password?: string | null
+  opencode_directory?: string | null
+  model_id?: number | null
+  timeout_seconds?: number
+}
+
 // ------------------------------------------------------------------ Prompt 资产
 export interface PromptVersion {
   id: number
