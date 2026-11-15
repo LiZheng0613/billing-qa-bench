@@ -32,6 +32,13 @@ class ModelRole(StrEnum):
     JUDGE = "JUDGE"
 
 
+class ModelConnectionType(StrEnum):
+    """模型接入方式。"""
+
+    OPENAI_COMPATIBLE = "OPENAI_COMPATIBLE"
+    OPENCODE_SERVE = "OPENCODE_SERVE"
+
+
 class JudgeStrategy(StrEnum):
     AVG = "AVG"
     VETO = "VETO"

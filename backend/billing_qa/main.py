@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -66,6 +67,22 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     )
 
 
+def _json_safe(value: Any) -> Any:
+    """把校验错误里的异常对象转成字符串，避免 JSONResponse 序列化失败。
+
+    pydantic v2 的 ``ctx`` 会携带原始 ``ValueError`` 实例，直接放进响应会触发
+    ``TypeError: Object of type ValueError is not JSON serializable``，最终被
+    兜底处理器改写成 500，掩盖真正的 422 语义。
+    """
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(
     request: Request, exc: RequestValidationError
@@ -75,7 +92,7 @@ async def validation_error_handler(
         content={
             "code": "VALIDATION_ERROR",
             "message": "参数校验失败",
-            "detail": exc.errors(),
+            "detail": _json_safe(exc.errors()),
             "path": request.url.path,
         },
     )

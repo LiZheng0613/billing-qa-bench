@@ -44,6 +44,8 @@ def model_to_out(model: ModelConfig) -> ModelConfigOut:
     data = ModelConfigOut.model_validate(model)
     raw_key = decrypt_value(model.api_key_encrypted)
     data.api_key_masked = mask_value(raw_key) if raw_key else ""
+    raw_serve_password = decrypt_value(model.serve_password_encrypted)
+    data.serve_password_masked = mask_value(raw_serve_password) if raw_serve_password else ""
     return data
 
 
