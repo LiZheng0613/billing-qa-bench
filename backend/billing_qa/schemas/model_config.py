@@ -141,3 +141,49 @@ class ModelTestResult(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     message: str
+
+
+class OpenCodeCatalogRequest(BaseModel):
+    """拉取 OpenCode 可用模型/Agent 的入参。
+
+    ``model_id`` 用于编辑已有模型时复用已保存的密码：前端留空密码也能刷新列表。
+    """
+
+    serve_url: str | None = Field(default=None, max_length=512)
+    # None 表示沿用模型已保存的端口；独立调用时 endpoint 回退到 4096。
+    serve_port: int | None = Field(default=None, ge=1, le=65535)
+    serve_username: str | None = Field(default=None, max_length=128)
+    serve_password: str | None = None
+    opencode_directory: str | None = Field(default=None, max_length=512)
+    model_id: int | None = None
+    timeout_seconds: float = Field(default=15.0, gt=0, le=60)
+
+    @field_validator("serve_url")
+    @classmethod
+    def _check_url(cls, value: str | None) -> str | None:
+        return normalize_http_url(value)
+
+
+class OpenCodeCatalogModelOut(BaseModel):
+    value: str
+    provider_id: str
+    model_id: str
+    name: str
+    status: str | None = None
+    enabled: bool = True
+    context_limit: int | None = None
+    output_limit: int | None = None
+
+
+class OpenCodeCatalogAgentOut(BaseModel):
+    id: str
+    name: str
+    mode: str | None = None
+    hidden: bool = False
+
+
+class OpenCodeCatalogOut(BaseModel):
+    serve_url: str
+    models: list[OpenCodeCatalogModelOut]
+    agents: list[OpenCodeCatalogAgentOut]
+

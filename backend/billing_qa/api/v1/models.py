@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import model_to_out
-from billing_qa.core.crypto import encrypt_value
+from billing_qa.core.crypto import decrypt_value, encrypt_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.security import get_current_operator
 from billing_qa.db.session import get_db
@@ -22,8 +22,13 @@ from billing_qa.schemas.model_config import (
     ModelConfigOut,
     ModelConfigUpdate,
     ModelTestResult,
+    OpenCodeCatalogAgentOut,
+    OpenCodeCatalogModelOut,
+    OpenCodeCatalogOut,
+    OpenCodeCatalogRequest,
 )
 from billing_qa.services.llm.client import LLMClient, ModelContext
+from billing_qa.services.llm.opencode_catalog import fetch_opencode_catalog
 
 router = APIRouter(
     prefix="/models", tags=["模型注册"], dependencies=[Depends(get_current_operator)]
@@ -123,6 +128,69 @@ async def create_model(
     await db.commit()
     await db.refresh(model)
     return model_to_out(model)
+
+
+@router.post(
+    "/opencode/catalog",
+    response_model=OpenCodeCatalogOut,
+    summary="拉取 OpenCode 可用模型与 Agent",
+)
+async def opencode_catalog(
+    payload: OpenCodeCatalogRequest, db: AsyncSession = Depends(get_db)
+) -> OpenCodeCatalogOut:
+    serve_url = payload.serve_url
+    serve_port = payload.serve_port
+    username = payload.serve_username
+    password = payload.serve_password
+    directory = payload.opencode_directory
+
+    # 编辑既有模型时允许留空密码，复用库中已加密的凭据。
+    if payload.model_id is not None:
+        stored = await db.get(ModelConfig, payload.model_id)
+        if stored is not None and stored.connection_type == ModelConnectionType.OPENCODE_SERVE.value:
+            serve_url = serve_url or stored.serve_url
+            serve_port = serve_port or stored.serve_port
+            username = username or stored.serve_username
+            directory = directory or stored.opencode_directory
+            if not password:
+                password = decrypt_value(stored.serve_password_encrypted)
+
+    if not serve_url:
+        raise ValidationError("请先填写 OpenCode Serve 地址")
+
+    base_url = _compose_serve_base(serve_url, serve_port or 4096)
+    catalog = await fetch_opencode_catalog(
+        base_url,
+        username=username,
+        password=password,
+        directory=directory,
+        timeout_seconds=payload.timeout_seconds,
+    )
+    return OpenCodeCatalogOut(
+        serve_url=catalog.serve_url,
+        models=[
+            OpenCodeCatalogModelOut(
+                value=item.value,
+                provider_id=item.provider_id,
+                model_id=item.model_id,
+                name=item.name,
+                status=item.status,
+                enabled=item.enabled,
+                context_limit=item.context_limit,
+                output_limit=item.output_limit,
+            )
+            for item in catalog.models
+        ],
+        agents=[
+            OpenCodeCatalogAgentOut(
+                id=item.id,
+                name=item.name,
+                mode=item.mode,
+                hidden=item.hidden,
+            )
+            for item in catalog.agents
+        ],
+    )
 
 
 @router.get("/{model_id}", response_model=ModelConfigOut, summary="模型详情")
