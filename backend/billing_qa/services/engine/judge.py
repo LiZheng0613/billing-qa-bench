@@ -11,7 +11,7 @@ from billing_qa.core.config import settings
 from billing_qa.core.logging import get_logger
 from billing_qa.services.adapter.renderer import format_history, render_prompt
 from billing_qa.services.llm.client import LLMClient, LLMError, ModelContext
-from billing_qa.services.llm.json_parser import parse_structured
+from billing_qa.services.llm.json_parser import parse_json_object
 
 logger = get_logger(__name__)
 
@@ -213,9 +213,14 @@ async def _judge_one(
             json_mode=True,
             temperature=temperature if temperature is not None else 0.0,
         )
-    data = parse_structured(
-        result.content, ["pass", "total_score", "dimension_scores", "error_tags", "reason"]
-    )
+    data = parse_json_object(result.content)
+    # OpenCode 走提示约束而非 OpenAI 的 response_format，模型可能省略部分键；
+    # coerce_judgement 已支持按总分折算维度，这里只要求出现评分相关键即可。
+    if not any(key in data for key in ("total_score", "dimension_scores", "pass")):
+        raise LLMError(
+            "裁判输出缺少评分字段（total_score / dimension_scores / pass）："
+            f"{result.content[:200]}"
+        )
     passed, total, dimensions, tags, reason, notes = coerce_judgement(
         data, termination_status=termination_status, threshold=threshold
     )

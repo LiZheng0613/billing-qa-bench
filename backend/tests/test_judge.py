@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Self
+
+import pytest
 
 from billing_qa.services.engine.judge import (
     DIMENSION_MAX,
     JudgeOutcome,
+    _judge_one,
     coerce_judgement,
     run_judges,
 )
+from billing_qa.services.llm.client import LLMError
 
 
 def _data(**overrides: Any) -> dict[str, Any]:
@@ -147,6 +151,74 @@ def _outcome(score: float, passed: bool, data_accuracy: float = 40) -> JudgeOutc
         raw_response={},
         judge_prompt="p",
     )
+
+
+def test_judge_one_tolerates_partial_json(monkeypatch: Any) -> None:
+    """OpenCode 裁判只返回 pass/total_score 时按总分折算，不应整单报错。"""
+
+    class FakeClient:
+        def __init__(self, model: Any) -> None:
+            self.model = model
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def chat(self, *args: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(
+                content='{"pass": true, "total_score": 91, "reason": "取数一致"}',
+                prompt_tokens=123,
+                completion_tokens=45,
+            )
+
+    monkeypatch.setattr("billing_qa.services.engine.judge.LLMClient", FakeClient)
+    model = SimpleNamespace(id=7, name="OpenCode 裁判", model_name="mock/judge-a")
+    outcome = asyncio.run(
+        _judge_one(
+            model,  # type: ignore[arg-type]
+            "评分",
+            termination_status="COMPLETED",
+            threshold=60,
+            temperature=None,
+        )
+    )
+    assert outcome.pass_flag is True
+    assert outcome.total_score == 91
+    assert outcome.dimension_scores["data_accuracy"] > 0
+    assert outcome.prompt_tokens == 123
+    assert outcome.completion_tokens == 45
+
+
+def test_judge_one_rejects_non_scoring_json(monkeypatch: Any) -> None:
+    class FakeClient:
+        def __init__(self, model: Any) -> None:
+            self.model = model
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def chat(self, *args: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(
+                content='{"note": "看不懂"}', prompt_tokens=1, completion_tokens=1
+            )
+
+    monkeypatch.setattr("billing_qa.services.engine.judge.LLMClient", FakeClient)
+    model = SimpleNamespace(id=8, name="坏裁判", model_name="bad")
+    with pytest.raises(LLMError):
+        asyncio.run(
+            _judge_one(
+                model,  # type: ignore[arg-type]
+                "评分",
+                termination_status="COMPLETED",
+                threshold=60,
+                temperature=None,
+            )
+        )
 
 
 def test_run_judges_avg_strategy(monkeypatch: Any) -> None:
