@@ -150,14 +150,24 @@ export interface EnvironmentUsage {
 }
 
 // ------------------------------------------------------------------ 模型
+export type ModelConnectionType = 'OPENAI_COMPATIBLE' | 'OPENCODE_SERVE'
+
 export interface ModelConfig {
   id: number
   code: string
   name: string
   role: string
+  connection_type: ModelConnectionType
   provider: string
   base_url: string
   model_name: string
+  serve_url: string | null
+  serve_port: number | null
+  serve_username: string | null
+  serve_password_masked: string
+  opencode_agent: string | null
+  opencode_model: string | null
+  opencode_directory: string | null
   api_key_masked: string
   temperature: number | null
   effective_temperature: number
@@ -177,9 +187,17 @@ export interface ModelPayload {
   code: string
   name: string
   role: ModelRole
+  connection_type?: ModelConnectionType
   provider?: string
-  base_url: string
-  model_name: string
+  base_url?: string | null
+  serve_url?: string | null
+  serve_port?: number | null
+  serve_username?: string | null
+  serve_password?: string | null
+  opencode_agent?: string | null
+  opencode_model?: string | null
+  opencode_directory?: string | null
+  model_name?: string
   api_key?: string | null
   temperature?: number | null
   top_p?: number | null
@@ -194,6 +212,7 @@ export interface ModelPayload {
 
 export interface ModelTestResult {
   ok: boolean
+  connection_type?: string | null
   latency_ms: number | null
   content: string | null
   prompt_tokens: number

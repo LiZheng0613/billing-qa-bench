@@ -10,6 +10,7 @@ import type {
   EnvironmentPayload,
   EnvVariableInput,
   ModelConfig,
+  ModelConnectionType,
   ModelPayload,
   ModelRole,
   ModelTestResult,
@@ -324,8 +325,16 @@ const modelForm = reactive({
   code: '',
   name: '',
   role: 'SIMULATOR' as ModelRole,
+  connection_type: 'OPENAI_COMPATIBLE' as ModelConnectionType,
   provider: 'openai-compatible',
   base_url: 'http://127.0.0.1:8001/v1',
+  serve_url: 'http://127.0.0.1',
+  serve_port: 4096,
+  serve_username: '',
+  serve_password: '',
+  opencode_agent: '',
+  opencode_model: '',
+  opencode_directory: '',
   model_name: '',
   api_key: '',
   temperatureText: '',
@@ -338,6 +347,8 @@ const modelForm = reactive({
   is_active: true,
   extraText: '',
 })
+
+const isOpencodeModel = computed(() => modelForm.connection_type === 'OPENCODE_SERVE')
 
 const modelTitle = computed(() =>
   editingModel.value ? `编辑模型 · ${editingModel.value.code}` : '注册新模型',
@@ -360,8 +371,17 @@ function resetModelForm(): void {
   modelForm.code = source?.code ?? ''
   modelForm.name = source?.name ?? ''
   modelForm.role = (source?.role as ModelRole) ?? 'SIMULATOR'
+  modelForm.connection_type =
+    (source?.connection_type as ModelConnectionType) ?? 'OPENAI_COMPATIBLE'
   modelForm.provider = source?.provider ?? 'openai-compatible'
   modelForm.base_url = source?.base_url ?? 'http://127.0.0.1:8001/v1'
+  modelForm.serve_url = source?.serve_url ?? 'http://127.0.0.1'
+  modelForm.serve_port = source?.serve_port ?? 4096
+  modelForm.serve_username = source?.serve_username ?? ''
+  modelForm.serve_password = ''
+  modelForm.opencode_agent = source?.opencode_agent ?? ''
+  modelForm.opencode_model = source?.opencode_model ?? ''
+  modelForm.opencode_directory = source?.opencode_directory ?? ''
   modelForm.model_name = source?.model_name ?? ''
   modelForm.api_key = ''
   modelForm.temperatureText =
@@ -404,14 +424,37 @@ async function submitModel(): Promise<void> {
     toast.error('请填写模型名称')
     return
   }
-  if (!modelForm.model_name.trim()) {
-    toast.error('请填写模型标识（model_name）')
-    return
+  if (isOpencodeModel.value) {
+    if (!/^https?:\/\//.test(modelForm.serve_url.trim())) {
+      toast.error('OpenCode Serve 地址需以 http:// 或 https:// 开头')
+      return
+    }
+    const port = Number(modelForm.serve_port)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      toast.error('Serve 端口需为 1~65535 的整数')
+      return
+    }
+    if (modelForm.opencode_model.trim() && !modelForm.opencode_model.includes('/')) {
+      toast.error('OpenCode 模型需为 provider/model 格式')
+      return
+    }
+  } else {
+    if (!modelForm.model_name.trim()) {
+      toast.error('请填写模型标识（model_name）')
+      return
+    }
+    if (!/^https?:\/\//.test(modelForm.base_url.trim())) {
+      toast.error('Base URL 需以 http:// 或 https:// 开头')
+      return
+    }
   }
-  if (!/^https?:\/\//.test(modelForm.base_url.trim())) {
-    toast.error('Base URL 需以 http:// 或 https:// 开头')
-    return
-  }
+
+  const modelName = isOpencodeModel.value
+    ? modelForm.model_name.trim() ||
+      modelForm.opencode_model.trim() ||
+      modelForm.opencode_agent.trim() ||
+      'opencode-default'
+    : modelForm.model_name.trim()
 
   const temperature = optionalNumber(modelForm.temperatureText)
   if (modelForm.temperatureText.trim() && temperature === null) {
@@ -449,9 +492,12 @@ async function submitModel(): Promise<void> {
     code: modelForm.code.trim(),
     name: modelForm.name.trim(),
     role: modelForm.role,
-    provider: modelForm.provider.trim() || 'openai-compatible',
-    base_url: modelForm.base_url.trim(),
-    model_name: modelForm.model_name.trim(),
+    connection_type: modelForm.connection_type,
+    provider:
+      modelForm.provider.trim() ||
+      (isOpencodeModel.value ? 'opencode-serve' : 'openai-compatible'),
+    base_url: isOpencodeModel.value ? null : modelForm.base_url.trim(),
+    model_name: modelName,
     api_key: modelForm.api_key.trim() || null,
     temperature,
     top_p: topP,
@@ -462,6 +508,15 @@ async function submitModel(): Promise<void> {
     response_format_json: modelForm.response_format_json,
     extra_params: extraParams,
     is_active: modelForm.is_active,
+  }
+  if (isOpencodeModel.value) {
+    payload.serve_url = modelForm.serve_url.trim()
+    payload.serve_port = Number(modelForm.serve_port)
+    payload.serve_username = modelForm.serve_username.trim() || null
+    payload.serve_password = modelForm.serve_password.trim() || null
+    payload.opencode_agent = modelForm.opencode_agent.trim() || null
+    payload.opencode_model = modelForm.opencode_model.trim() || null
+    payload.opencode_directory = modelForm.opencode_directory.trim() || null
   }
 
   modelSaving.value = true
@@ -673,6 +728,16 @@ onMounted(() => {
                 <p class="text-sm font-medium text-slate-900">{{ item.name }}</p>
                 <p class="mt-0.5 font-mono text-[11px] text-indigo-600">{{ item.code }}</p>
                 <p class="mt-0.5 truncate text-[11px] text-slate-500">{{ item.provider }}</p>
+                <span
+                  class="mt-1 inline-flex rounded-md px-1.5 py-0.5 text-[10px]"
+                  :class="
+                    item.connection_type === 'OPENCODE_SERVE'
+                      ? 'bg-sky-50 text-sky-700'
+                      : 'bg-slate-100 text-slate-600'
+                  "
+                >
+                  {{ item.connection_type === 'OPENCODE_SERVE' ? 'OpenCode Serve' : 'OpenAI 兼容' }}
+                </span>
               </td>
               <td class="td">
                 <span
@@ -687,9 +752,23 @@ onMounted(() => {
                 </span>
               </td>
               <td class="td max-w-[260px] text-[11px] text-slate-600">
-                <p class="truncate font-mono">{{ item.base_url }}</p>
-                <p class="mt-0.5 truncate font-mono text-slate-500">{{ item.model_name }}</p>
-                <p class="mt-0.5 font-mono text-slate-500">Key {{ item.api_key_masked || '未设置' }}</p>
+                <template v-if="item.connection_type === 'OPENCODE_SERVE'">
+                  <p class="truncate font-mono">{{ item.serve_url }}:{{ item.serve_port }}</p>
+                  <p class="mt-0.5 truncate font-mono text-slate-500">
+                    Agent {{ item.opencode_agent || '默认' }} · Model {{ item.opencode_model || '默认' }}
+                  </p>
+                  <p class="mt-0.5 truncate font-mono text-slate-500">
+                    Auth {{ item.serve_username || '无' }} / {{ item.serve_password_masked || '未设置' }}
+                  </p>
+                  <p class="mt-0.5 truncate font-mono text-slate-500">
+                    SSE · {{ item.model_name }}
+                  </p>
+                </template>
+                <template v-else>
+                  <p class="truncate font-mono">{{ item.base_url }}</p>
+                  <p class="mt-0.5 truncate font-mono text-slate-500">{{ item.model_name }}</p>
+                  <p class="mt-0.5 font-mono text-slate-500">Key {{ item.api_key_masked || '未设置' }}</p>
+                </template>
               </td>
               <td class="td text-[11px] text-slate-600">
                 <p>温度 {{ item.effective_temperature }} · top_p {{ item.top_p ?? '默认' }}</p>
@@ -879,8 +958,43 @@ onMounted(() => {
     </BaseModal>
 
     <!-- ---------------------------------------------------------- 模型表单 -->
-    <BaseModal v-model="modelModalOpen" :title="modelTitle" width="xl" subtitle="OpenAI 兼容协议，模拟器用于生成用户提问，裁判用于结构化评分">
+    <BaseModal v-model="modelModalOpen" :title="modelTitle" width="xl" subtitle="OpenAI 兼容直连或 OpenCode Serve + SSE 双接入，模拟器用于生成用户提问，裁判用于结构化评分">
       <div class="space-y-4">
+        <div>
+          <label class="label">接入方式</label>
+          <div class="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              class="rounded-xl border px-3 py-2.5 text-left transition"
+              :class="
+                modelForm.connection_type === 'OPENAI_COMPATIBLE'
+                  ? 'border-indigo-400 bg-indigo-50/70 ring-1 ring-indigo-200'
+                  : 'border-line-soft bg-white hover:border-slate-300'
+              "
+              @click="modelForm.connection_type = 'OPENAI_COMPATIBLE'"
+            >
+              <span class="block text-xs font-medium text-slate-900">OpenAI 兼容直连</span>
+              <span class="mt-0.5 block text-[11px] text-slate-500">
+                base_url + api_key，直接调用 chat/completions
+              </span>
+            </button>
+            <button
+              type="button"
+              class="rounded-xl border px-3 py-2.5 text-left transition"
+              :class="
+                modelForm.connection_type === 'OPENCODE_SERVE'
+                  ? 'border-sky-400 bg-sky-50/70 ring-1 ring-sky-200'
+                  : 'border-line-soft bg-white hover:border-slate-300'
+              "
+              @click="modelForm.connection_type = 'OPENCODE_SERVE'"
+            >
+              <span class="block text-xs font-medium text-slate-900">OpenCode Serve + SSE</span>
+              <span class="mt-0.5 block text-[11px] text-slate-500">
+                serve 地址 + 端口，订阅 /api/event 事件流
+              </span>
+            </button>
+          </div>
+        </div>
         <div class="grid gap-3 sm:grid-cols-3">
           <div>
             <label class="label">模型编码</label>
@@ -898,26 +1012,77 @@ onMounted(() => {
             </select>
           </div>
         </div>
-        <div class="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
-          <div>
-            <label class="label">Provider</label>
-            <input v-model="modelForm.provider" class="input font-mono" placeholder="openai-compatible" />
+        <template v-if="!isOpencodeModel">
+          <div class="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
+            <div>
+              <label class="label">Provider</label>
+              <input v-model="modelForm.provider" class="input font-mono" placeholder="openai-compatible" />
+            </div>
+            <div>
+              <label class="label">Base URL</label>
+              <input v-model="modelForm.base_url" class="input font-mono" placeholder="http://127.0.0.1:8001/v1" />
+            </div>
           </div>
-          <div>
-            <label class="label">Base URL</label>
-            <input v-model="modelForm.base_url" class="input font-mono" placeholder="http://127.0.0.1:8001/v1" />
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="label">模型标识（model_name）</label>
+              <input v-model="modelForm.model_name" class="input font-mono" placeholder="gpt-4o-mini / mock-judge" />
+            </div>
+            <div>
+              <label class="label">API Key{{ editingModel ? '（留空不修改）' : '' }}</label>
+              <input v-model="modelForm.api_key" class="input font-mono" type="password" placeholder="sk-..." />
+            </div>
           </div>
-        </div>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label class="label">模型标识（model_name）</label>
-            <input v-model="modelForm.model_name" class="input font-mono" placeholder="gpt-4o-mini / mock-judge" />
+        </template>
+
+        <template v-else>
+          <div class="rounded-xl border border-line-soft bg-canvas/70 p-3">
+            <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px]">
+              <div>
+                <label class="label">Serve 地址</label>
+                <input v-model="modelForm.serve_url" class="input font-mono" placeholder="http://127.0.0.1" />
+              </div>
+              <div>
+                <label class="label">端口</label>
+                <input v-model.number="modelForm.serve_port" class="input font-mono" type="number" min="1" max="65535" />
+              </div>
+            </div>
+            <div class="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label class="label">Agent（可选）</label>
+                <input v-model="modelForm.opencode_agent" class="input font-mono" placeholder="build / plan（留空用默认）" />
+              </div>
+              <div>
+                <label class="label">模型（可选，provider/model）</label>
+                <input v-model="modelForm.opencode_model" class="input font-mono" placeholder="anthropic/claude-sonnet-4" />
+              </div>
+            </div>
+            <div class="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label class="label">工作目录（可选）</label>
+                <input v-model="modelForm.opencode_directory" class="input font-mono" placeholder="D:/workspace/qa" />
+              </div>
+              <div>
+                <label class="label">显示标识（可选）</label>
+                <input v-model="modelForm.model_name" class="input font-mono" placeholder="留空自动生成" />
+              </div>
+            </div>
+            <div class="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label class="label">Basic Auth 用户名</label>
+                <input v-model="modelForm.serve_username" class="input font-mono" placeholder="opencode" />
+              </div>
+              <div>
+                <label class="label">Basic Auth 密码{{ editingModel ? '（留空不修改）' : '' }}</label>
+                <input v-model="modelForm.serve_password" class="input font-mono" type="password" placeholder="可选" />
+              </div>
+            </div>
+            <p class="mt-3 text-[11px] leading-relaxed text-slate-500">
+              运行时先创建 session，再订阅 GET /api/event SSE，发送 prompt 后按 session.text.delta /
+              session.text.ended 汇总文本，并从 session.usage.* 读取 token 用量。
+            </p>
           </div>
-          <div>
-            <label class="label">API Key{{ editingModel ? '（留空不修改）' : '' }}</label>
-            <input v-model="modelForm.api_key" class="input font-mono" type="password" placeholder="sk-..." />
-          </div>
-        </div>
+        </template>
 
         <div class="grid gap-3 sm:grid-cols-4">
           <div>
@@ -960,7 +1125,7 @@ onMounted(() => {
           </label>
         </div>
 
-        <div>
+        <div v-if="!isOpencodeModel">
           <label class="label">扩展参数（JSON，可选）</label>
           <textarea v-model="modelForm.extraText" class="input font-mono text-xs" rows="4" placeholder='{"frequency_penalty":0}' />
         </div>
