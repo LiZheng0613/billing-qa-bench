@@ -122,6 +122,14 @@ def parse_json(content: bytes) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             raise ValidationError(f"第 {index} 条记录不是对象")
         record = dict(item)
+        # 导出文件里 tags 是逗号分隔字符串（Excel 与 JSON 共用同一份扁平结构），
+        # 直接回灌时需要还原成数组，否则 CaseUpdate 校验会失败
+        if not isinstance(record.get("tags"), (list, type(None))):
+            record["tags"] = [
+                part.strip()
+                for part in str(record["tags"]).replace("，", ",").split(",")
+                if part.strip()
+            ]
         record.setdefault("__row__", index)
         records.append(record)
     return records
