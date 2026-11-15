@@ -18,7 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from billing_qa.db.base import MYSQL_TABLE_OPTS, Base, TimestampMixin
+from billing_qa.db.base import Base, TimestampMixin
 
 
 class Environment(Base, TimestampMixin):
@@ -27,7 +27,6 @@ class Environment(Base, TimestampMixin):
     __tablename__ = "environment"
     __table_args__ = (
         Index("ix_environment_code", "code", unique=True),
-        MYSQL_TABLE_OPTS,  # type: ignore[arg-type]
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -65,7 +64,6 @@ class EnvironmentVariable(Base, TimestampMixin):
     __tablename__ = "environment_variable"
     __table_args__ = (
         UniqueConstraint("environment_id", "key", name="uq_env_variable_key"),
-        MYSQL_TABLE_OPTS,  # type: ignore[arg-type]
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

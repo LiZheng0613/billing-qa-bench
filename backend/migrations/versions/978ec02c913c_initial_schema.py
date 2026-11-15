@@ -1,4 +1,4 @@
-"""initial schema
+"""initial schema (PostgreSQL)
 
 Revision ID: 978ec02c913c
 Revises: 
@@ -45,9 +45,6 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False, comment='创建时间'),
     sa.Column('updated_at', sa.DateTime(), nullable=False, comment='更新时间'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_environment')),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index('ix_environment_code', 'environment', ['code'], unique=True)
     op.create_table('model_config',
@@ -71,9 +68,6 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False, comment='创建时间'),
     sa.Column('updated_at', sa.DateTime(), nullable=False, comment='更新时间'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_model_config')),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index('ix_model_config_code', 'model_config', ['code'], unique=True)
     op.create_index('ix_model_config_role', 'model_config', ['role'], unique=False)
@@ -92,9 +86,6 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False, comment='创建时间'),
     sa.Column('updated_at', sa.DateTime(), nullable=False, comment='更新时间'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_prompt_template')),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index('ix_prompt_template_code', 'prompt_template', ['code'], unique=True)
     op.create_index('ix_prompt_template_type', 'prompt_template', ['template_type'], unique=False)
@@ -124,9 +115,6 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False, comment='更新时间'),
     sa.ForeignKeyConstraint(['environment_id'], ['environment.id'], name=op.f('fk_batch_task_environment_id_environment'), ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_batch_task')),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index('ix_batch_task_created', 'batch_task', ['created_at'], unique=False)
     op.create_index('ix_batch_task_status', 'batch_task', ['status'], unique=False)
@@ -142,9 +130,6 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['environment_id'], ['environment.id'], name=op.f('fk_environment_variable_environment_id_environment'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_environment_variable')),
     sa.UniqueConstraint('environment_id', 'key', name='uq_env_variable_key'),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index(op.f('ix_environment_variable_environment_id'), 'environment_variable', ['environment_id'], unique=False)
     op.create_table('prompt_template_version',
@@ -159,9 +144,6 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['template_id'], ['prompt_template.id'], name=op.f('fk_prompt_template_version_template_id_prompt_template'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_prompt_template_version')),
     sa.UniqueConstraint('template_id', 'version', name='uq_prompt_template_version'),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index(op.f('ix_prompt_template_version_template_id'), 'prompt_template_version', ['template_id'], unique=False)
     op.create_table('test_case',
@@ -208,9 +190,6 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['simulator_model_id'], ['model_config.id'], name=op.f('fk_test_case_simulator_model_id_model_config'), ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['simulator_template_id'], ['prompt_template.id'], name=op.f('fk_test_case_simulator_template_id_prompt_template'), ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_test_case')),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index('ix_test_case_code', 'test_case', ['code'], unique=True)
     op.create_index('ix_test_case_env', 'test_case', ['environment_id'], unique=False)
@@ -245,9 +224,6 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['environment_id'], ['environment.id'], name=op.f('fk_execution_record_environment_id_environment'), ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['task_id'], ['batch_task.id'], name=op.f('fk_execution_record_task_id_batch_task'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_execution_record')),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index('ix_execution_case_started', 'execution_record', ['case_id', 'started_at'], unique=False)
     op.create_index('ix_execution_task_status', 'execution_record', ['task_id', 'status'], unique=False)
@@ -264,9 +240,6 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['case_id'], ['test_case.id'], name=op.f('fk_test_case_revision_case_id_test_case'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_test_case_revision')),
     sa.UniqueConstraint('case_id', 'version', name='uq_test_case_revision_version'),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index('ix_revision_case_created', 'test_case_revision', ['case_id', 'created_at'], unique=False)
     op.create_table('judge_result',
@@ -287,9 +260,6 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['execution_id'], ['execution_record.id'], name=op.f('fk_judge_result_execution_id_execution_record'), ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['model_config_id'], ['model_config.id'], name=op.f('fk_judge_result_model_config_id_model_config'), ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_judge_result')),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index('ix_judge_result_execution', 'judge_result', ['execution_id'], unique=False)
     op.create_table('turn_trace',
@@ -318,9 +288,6 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.ForeignKeyConstraint(['execution_id'], ['execution_record.id'], name=op.f('fk_turn_trace_execution_id_execution_record'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_turn_trace')),
-    mysql_charset='utf8mb4',
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_engine='InnoDB'
     )
     op.create_index('ix_turn_trace_exec_turn', 'turn_trace', ['execution_id', 'turn_index'], unique=False)
     # ### end Alembic commands ###

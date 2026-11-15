@@ -61,7 +61,7 @@ async def list_tasks(
         conditions.append(BatchTask.status == status)
     if keyword:
         like = f"%{keyword}%"
-        conditions.append(BatchTask.name.like(like) | BatchTask.code.like(like))
+        conditions.append(BatchTask.name.ilike(like) | BatchTask.code.ilike(like))
     total = (
         await db.execute(select(func.count()).select_from(BatchTask).where(*conditions))
     ).scalar_one()

@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import JSON, Boolean, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from billing_qa.db.base import MYSQL_TABLE_OPTS, Base, TimestampMixin
+from billing_qa.db.base import Base, TimestampMixin
 
 
 class ModelConfig(Base, TimestampMixin):
@@ -15,7 +15,6 @@ class ModelConfig(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_model_config_code", "code", unique=True),
         Index("ix_model_config_role", "role"),
-        MYSQL_TABLE_OPTS,  # type: ignore[arg-type]
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

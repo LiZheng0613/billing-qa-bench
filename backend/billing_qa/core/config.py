@@ -8,6 +8,20 @@ from urllib.parse import quote_plus
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _with_driver(url: str, driver: str) -> str:
+    """把 PostgreSQL 连接串统一成指定驱动的形式。"""
+    target = f"postgresql+{driver}://"
+    if url.startswith(target):
+        return url
+    if url.startswith("postgresql://"):
+        return target + url[len("postgresql://") :]
+    for current in ("asyncpg", "psycopg", "psycopg2"):
+        prefix = f"postgresql+{current}://"
+        if url.startswith(prefix):
+            return target + url[len(prefix) :]
+    return url
+
+
 class Settings(BaseSettings):
     """应用配置。所有字段均可通过同名（大小写不敏感）环境变量覆盖。"""
 
@@ -27,14 +41,15 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    # ---------- MySQL ----------
-    mysql_host: str = "127.0.0.1"
-    mysql_port: int = 3306
-    mysql_user: str = "root"
-    mysql_password: str = "root"
-    mysql_db: str = "batch_test"
-    mysql_pool_size: int = 10
-    mysql_pool_recycle: int = 1800
+    # ---------- PostgreSQL ----------
+    postgres_host: str = "127.0.0.1"
+    postgres_port: int = 5432
+    postgres_user: str = "postgres"
+    postgres_password: str = "postgres"
+    postgres_db: str = "batch_test"
+    postgres_maintenance_db: str = "postgres"
+    postgres_pool_size: int = 10
+    postgres_pool_recycle: int = 1800
     database_url: str | None = None
 
     # ---------- Redis ----------
@@ -68,32 +83,27 @@ class Settings(BaseSettings):
 
     @property
     def async_database_url(self) -> str:
+        """应用运行时使用的异步 URL（asyncpg）。"""
         if self.database_url:
-            return self.database_url
-        password = quote_plus(self.mysql_password)
-        user = quote_plus(self.mysql_user)
+            return _with_driver(self.database_url, "asyncpg")
+        password = quote_plus(self.postgres_password)
+        user = quote_plus(self.postgres_user)
         return (
-            f"mysql+aiomysql://{user}:{password}@{self.mysql_host}:{self.mysql_port}"
-            f"/{self.mysql_db}?charset=utf8mb4"
+            f"postgresql+asyncpg://{user}:{password}@{self.postgres_host}:{self.postgres_port}"
+            f"/{self.postgres_db}"
         )
 
     @property
     def sync_database_url(self) -> str:
-        """Alembic / 建库脚本使用的同步 URL。"""
+        """Alembic / 建库脚本使用的同步 URL（psycopg 3）。"""
         if self.database_url:
-            return self.database_url.replace("+aiomysql", "+pymysql")
-        password = quote_plus(self.mysql_password)
-        user = quote_plus(self.mysql_user)
+            return _with_driver(self.database_url, "psycopg")
+        password = quote_plus(self.postgres_password)
+        user = quote_plus(self.postgres_user)
         return (
-            f"mysql+pymysql://{user}:{password}@{self.mysql_host}:{self.mysql_port}"
-            f"/{self.mysql_db}?charset=utf8mb4"
+            f"postgresql+psycopg://{user}:{password}@{self.postgres_host}:{self.postgres_port}"
+            f"/{self.postgres_db}"
         )
-
-    @property
-    def server_database_url(self) -> str:
-        """不带库名的同步 URL，用于 CREATE DATABASE。"""
-        return self.sync_database_url.rsplit("/", 1)[0] + "/"
-
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

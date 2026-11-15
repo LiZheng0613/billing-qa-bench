@@ -10,7 +10,7 @@ Browser ──HTTPS──> Nginx ──┬── /                     -> fronte
                            └── /health               -> 127.0.0.1:8000
                                    │
                                FastAPI（uvicorn）
-                                   ├── MySQL 8（utf8mb4）
+                                   ├── PostgreSQL 15+
                                    └── Redis（控制面 / 进度事件）
 ```
 
@@ -24,7 +24,7 @@ Browser ──HTTPS──> Nginx ──┬── /                     -> fronte
 | --- | --- |
 | Python | 3.11+ |
 | Node.js | 18+（仅构建阶段需要） |
-| MySQL | 8.0+，`utf8mb4` / `utf8mb4_0900_ai_ci` |
+| PostgreSQL | 15+，UTF-8 编码 |
 | Redis | 6.0+ |
 | 系统 | Linux（systemd），2 vCPU / 4 GB 起；按并发与用例规模上调 |
 | 网络 | 后端需可访问被测系统与 LLM 服务；浏览器需可访问 Nginx |
@@ -66,23 +66,49 @@ PY
 ### 3.3 初始化与迁移
 
 ```bash
-# 首次：建库建表 + 内置模板（生产不建议带 --demo）
+# 首次：创建数据库 + 升级表结构 + 内置模板（生产不建议带 --demo）
 sudo -u billingqa .venv/bin/python -m billing_qa.db.init_db
 
 # 结构有变更时（开发阶段生成，部署时升级）
 sudo -u billingqa .venv/bin/alembic upgrade head
 ```
 
-> `init_db` 会执行 `alembic stamp head`；已在生产运行且执行过该命令的库，后续只需 `alembic upgrade head`。
+> 表结构只有一条链路：`init_db` 负责建库后调用 `alembic upgrade head`（实现见 `billing_qa/db/migrations.py`），空库会按 `migrations/versions` 从零建表，不再使用 `create_all` 或 `alembic stamp`。已在生产运行且执行过初始化或升级的库，后续只需 `alembic upgrade head`。建库账号需具备 `CREATEDB` 权限；若使用受限账号，请先由 DBA 创建 `batch_test` 库（UTF-8）再执行初始化。
 
-### 3.4 systemd 服务
+### 3.4 从 MySQL 迁移已有数据（可选）
+
+仅切换数据库、无需保留旧数据时可跳过本节。需要保留 MySQL 中的环境、模型、用例与执行记录时：
+
+> 切换代码前，请先在旧版本代码上对 MySQL 执行 `alembic upgrade head`，确保源库表结构与当前 ORM 完全一致；否则迁移脚本可能因缺列失败。
+
+```bash
+# 1) 创建空的 PostgreSQL 目标库（也可先执行 init_db，它会建库并升级表结构）
+createdb -U postgres batch_test
+
+# 2) 建表结构（不会写入种子数据）
+cd /opt/billing-qa/app/backend
+sudo -u billingqa .venv/bin/alembic upgrade head
+
+# 3) 安装旧库驱动
+sudo -u billingqa .venv/bin/pip install -e ".[mysql-import]"
+
+# 4) 导入数据：按外键顺序复制、保留主键、重置自增序列
+sudo -u billingqa env MYSQL_SOURCE_URL='mysql+pymysql://root:root@127.0.0.1:3306/batch_test?charset=utf8mb4' \
+  .venv/bin/python scripts/migrate_mysql_to_postgres.py --truncate
+```
+
+迁移完成后建议抽查用例数量、版本快照与执行记录，并执行一次 `python scripts/api_smoke.py` 验证读写。迁移期间请停止旧服务写入；`SECRET_KEY` 必须与旧环境一致，否则已加密的环境变量与模型 Key 无法解密。
+
+> PostgreSQL 默认大小写敏感：各表 `code` 唯一约束按原值比较；列表关键字搜索已使用 `ILIKE` 保持不区分大小写的体验。JSON 列在 PostgreSQL 中使用 `JSON` 类型，如需更高效的 JSON 查询可后续迁移到 `JSONB`。
+
+### 3.5 systemd 服务
 
 `/etc/systemd/system/billing-qa.service`：
 
 ```ini
 [Unit]
 Description=Billing QA Platform API
-After=network.target mysql.service redis.service
+After=network.target postgresql.service redis.service
 
 [Service]
 Type=simple
@@ -175,7 +201,7 @@ sudo nginx -t && sudo systemctl reload nginx
 ## 5. 安全加固清单
 
 - [ ] 替换 `SECRET_KEY`、`ADMIN_PASSWORD`，关闭 `DEBUG`，设置 `APP_ENV=prod`
-- [ ] MySQL 使用独立账号并最小权限（仅 `batch_test` 库的 DML/DDL）
+- [ ] PostgreSQL 使用独立账号并最小权限（仅 `batch_test` 库的 DML/DDL）
 - [ ] Redis 设置密码/ACL，禁止公网暴露
 - [ ] 全站 HTTPS，`CORS_ORIGINS` 仅保留正式域名
 - [ ] Nginx 增加请求体大小、超时与限流配置
@@ -184,15 +210,21 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ## 6. 备份与恢复
 
-需要备份的只有 MySQL；Redis 仅存任务控制标志与进度事件，丢失后任务需重跑。
+需要备份的只有 PostgreSQL；Redis 仅存任务控制标志与进度事件，丢失后任务需重跑。
 
 ```bash
-# 备份
-mysqldump -uroot -p --single-transaction --routines --triggers batch_test \
-  | gzip > /backup/batch_test_$(date +%F).sql.gz
+# 备份（自定义格式，适合大库与并行恢复）
+pg_dump -U postgres -Fc batch_test > /backup/batch_test_$(date +%F).dump
 
 # 恢复
-gunzip -c /backup/batch_test_2026-01-01.sql.gz | mysql -uroot -p batch_test
+pg_restore -U postgres -d batch_test --clean --if-exists /backup/batch_test_2026-01-01.dump
+```
+
+也可使用纯 SQL 备份：
+
+```bash
+pg_dump -U postgres -Fp batch_test | gzip > /backup/batch_test_$(date +%F).sql.gz
+gunzip -c /backup/batch_test_2026-01-01.sql.gz | psql -U postgres -d batch_test
 ```
 
 建议保留 7~30 天，并定期演练恢复。
@@ -205,7 +237,7 @@ gunzip -c /backup/batch_test_2026-01-01.sql.gz | mysql -uroot -p batch_test
 | 接口文档 | `/api/v1/docs`（生产可限制访问） |
 | 任务健康 | 大盘「运行中」数量、失败率、P95 时延；异常时查看 Trace |
 | 日志 | `journalctl -u billing-qa`（WARNING 及以上重点关注执行取消、熔断、外部接口超时） |
-| 磁盘 | MySQL 数据目录、备份目录、Nginx 日志 |
+| 磁盘 | PostgreSQL 数据目录、备份目录、Nginx 日志 |
 
 ## 8. 升级与回滚
 

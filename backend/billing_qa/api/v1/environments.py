@@ -58,7 +58,7 @@ async def list_environments(
     conditions = []
     if keyword:
         like = f"%{keyword}%"
-        conditions.append(Environment.name.like(like) | Environment.code.like(like))
+        conditions.append(Environment.name.ilike(like) | Environment.code.ilike(like))
     if is_active is not None:
         conditions.append(Environment.is_active.is_(is_active))
     total = (

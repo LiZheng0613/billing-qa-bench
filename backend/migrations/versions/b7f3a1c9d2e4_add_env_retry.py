@@ -1,4 +1,4 @@
-"""add task env retry config and execution attempt tracking
+"""add task env retry config and execution attempt tracking (PostgreSQL)
 
 Revision ID: b7f3a1c9d2e4
 Revises: 978ec02c913c
@@ -25,7 +25,7 @@ def upgrade() -> None:
             "retry_on_env_error",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.text("1"),
+            server_default=sa.text("true"),
             comment="环境类失败是否自动重试",
         ),
     )

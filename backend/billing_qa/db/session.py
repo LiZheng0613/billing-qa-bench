@@ -12,9 +12,9 @@ engine = create_async_engine(
     settings.async_database_url,
     echo=False,
     pool_pre_ping=True,
-    pool_size=settings.mysql_pool_size,
-    max_overflow=settings.mysql_pool_size * 2,
-    pool_recycle=settings.mysql_pool_recycle,
+    pool_size=settings.postgres_pool_size,
+    max_overflow=settings.postgres_pool_size * 2,
+    pool_recycle=settings.postgres_pool_recycle,
     future=True,
 )
 

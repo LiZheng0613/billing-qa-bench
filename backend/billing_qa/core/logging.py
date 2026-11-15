@@ -26,7 +26,8 @@ def setup_logging() -> None:
     root.setLevel(logging.DEBUG if settings.debug else logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("aiomysql").setLevel(logging.WARNING)
+    logging.getLogger("asyncpg").setLevel(logging.WARNING)
+    logging.getLogger("psycopg").setLevel(logging.WARNING)
     _CONFIGURED = True
 
 

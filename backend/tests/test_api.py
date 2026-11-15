@@ -1,4 +1,4 @@
-"""REST API 集成测试（依赖本机 MySQL / Redis 与内置 Mock 服务）。
+"""REST API 集成测试（依赖本机 PostgreSQL / Redis 与内置 Mock 服务）。
 
 若依赖不可用则自动跳过，保证在纯离线环境也能跑单元测试。
 """
@@ -42,7 +42,7 @@ async def _mock_target_ready() -> bool:
 @pytest.fixture(scope="module")
 async def client() -> AsyncIterator[httpx.AsyncClient]:
     if not await _db_ready():
-        pytest.skip("MySQL 不可用，跳过 API 集成测试")
+        pytest.skip("PostgreSQL 不可用，跳过 API 集成测试")
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
@@ -75,7 +75,7 @@ async def test_login_and_profile(client: httpx.AsyncClient) -> None:
 
 async def test_auth_requires_token() -> None:
     if not await _db_ready():
-        pytest.skip("MySQL 不可用")
+        pytest.skip("PostgreSQL 不可用")
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test/api/v1"
     ) as http:

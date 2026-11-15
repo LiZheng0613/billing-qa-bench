@@ -17,7 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from billing_qa.db.base import MYSQL_TABLE_OPTS, Base, now
+from billing_qa.db.base import Base, now
 
 
 class ExecutionRecord(Base):
@@ -28,7 +28,6 @@ class ExecutionRecord(Base):
         Index("ix_execution_case_started", "case_id", "started_at"),
         Index("ix_execution_task_status", "task_id", "status"),
         Index("ix_execution_trace_uid", "trace_uid", unique=True),
-        MYSQL_TABLE_OPTS,  # type: ignore[arg-type]
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -88,7 +87,6 @@ class TurnTrace(Base):
     __tablename__ = "turn_trace"
     __table_args__ = (
         Index("ix_turn_trace_exec_turn", "execution_id", "turn_index"),
-        MYSQL_TABLE_OPTS,  # type: ignore[arg-type]
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -134,7 +132,6 @@ class JudgeResult(Base):
     __tablename__ = "judge_result"
     __table_args__ = (
         Index("ix_judge_result_execution", "execution_id"),
-        MYSQL_TABLE_OPTS,  # type: ignore[arg-type]
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

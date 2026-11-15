@@ -18,7 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from billing_qa.db.base import MYSQL_TABLE_OPTS, Base, TimestampMixin, now
+from billing_qa.db.base import Base, TimestampMixin, now
 
 
 class TestCase(Base, TimestampMixin):
@@ -29,7 +29,6 @@ class TestCase(Base, TimestampMixin):
         Index("ix_test_case_code", "code", unique=True),
         Index("ix_test_case_type_status", "case_type", "status"),
         Index("ix_test_case_env", "environment_id"),
-        MYSQL_TABLE_OPTS,  # type: ignore[arg-type]
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -106,7 +105,6 @@ class TestCaseRevision(Base):
     __table_args__ = (
         UniqueConstraint("case_id", "version", name="uq_test_case_revision_version"),
         Index("ix_revision_case_created", "case_id", "created_at"),
-        MYSQL_TABLE_OPTS,  # type: ignore[arg-type]
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

@@ -17,7 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from billing_qa.db.base import MYSQL_TABLE_OPTS, Base, TimestampMixin, now
+from billing_qa.db.base import Base, TimestampMixin, now
 
 
 class PromptTemplate(Base, TimestampMixin):
@@ -27,7 +27,6 @@ class PromptTemplate(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_prompt_template_code", "code", unique=True),
         Index("ix_prompt_template_type", "template_type"),
-        MYSQL_TABLE_OPTS,  # type: ignore[arg-type]
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -58,7 +57,6 @@ class PromptTemplateVersion(Base):
     __tablename__ = "prompt_template_version"
     __table_args__ = (
         UniqueConstraint("template_id", "version", name="uq_prompt_template_version"),
-        MYSQL_TABLE_OPTS,  # type: ignore[arg-type]
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

@@ -2,7 +2,7 @@
 
 面向「问账智能客服」场景的自动化回归与质量评估平台：以版本快照为核心，覆盖单轮问答、静态多轮、动态多轮三类用例，内置三重熔断、多裁判混合裁决、全链路 Trace、历史趋势与 Run 对比，并提供 WebSocket 实时大盘与 Prompt 沙盒。
 
-- 后端：Python 3.11+ / FastAPI / SQLAlchemy 2.0 Async / Alembic / MySQL 8 / Redis
+- 后端：Python 3.11+ / FastAPI / SQLAlchemy 2.0 Async / Alembic / PostgreSQL 15+ / Redis
 - 前端：Vue 3 `<script setup>` + TypeScript / Vite / Tailwind CSS / Pinia / ECharts
 - 交付形态：单仓库（`backend` + `frontend`），本机即可完成全链路自测，无需外部大模型
 
@@ -46,8 +46,8 @@ batch_test/
 │   │       └── io/            # Excel / JSON 导入导出
 │   ├── migrations/            # Alembic 迁移脚本
 │   ├── mock_servers/          # 内置 Mock：LLM(8001) 与被测客服系统(8002)
-│   ├── scripts/               # api_smoke.py / e2e_smoke.py
-│   ├── tests/                 # 57 项 pytest
+│   ├── scripts/               # api_smoke.py / e2e_smoke.py / migrate_mysql_to_postgres.py
+│   ├── tests/                 # 63 项 pytest
 │   ├── alembic.ini
 │   ├── pyproject.toml
 │   └── .env.example
@@ -72,16 +72,16 @@ batch_test/
 | --- | --- |
 | Python | 3.11+（开发与验证使用 3.14） |
 | Node.js | 18+（验证使用 22） |
-| MySQL | 8.0+（`utf8mb4`） |
+| PostgreSQL | 15+（UTF-8 编码） |
 | Redis | 6.0+ |
 
-本机默认连接：MySQL `127.0.0.1:3306`（root/root，库名 `batch_test`）、Redis `redis://127.0.0.1:6379/1`。可通过环境变量覆盖。
+本机默认连接：PostgreSQL `127.0.0.1:5432`（postgres/postgres，库名 `batch_test`）、Redis `redis://127.0.0.1:6379/1`。可通过环境变量覆盖。
 
 ### 3.2 启动依赖
 
 ```powershell
-# MySQL（示例，按本机实际情况调整）
-net start MySQL80
+# PostgreSQL（示例，按本机实际情况调整）
+net start postgresql-x64-16
 
 # Redis（示例）
 redis-server
@@ -100,7 +100,7 @@ pip install -e ".[dev]"
 # 2) 生成配置
 Copy-Item .env.example .env
 
-# 3) 建库建表 + 内置 Prompt 模板 + 演示数据
+# 3) 建库 + 升级表结构 + 内置 Prompt 模板 + 演示数据
 python -m billing_qa.db.init_db --demo
 
 # 4) 启动 API（默认 8000）
@@ -110,7 +110,7 @@ python -m uvicorn billing_qa.main:app --host 127.0.0.1 --port 8000
 - Swagger：<http://127.0.0.1:8000/api/v1/docs>
 - 健康检查：<http://127.0.0.1:8000/health>
 
-> 初始化脚本会调用 `Base.metadata.create_all` 建表，并执行 `alembic stamp head` 保持迁移状态一致；后续结构变更使用 `alembic revision --autogenerate` + `alembic upgrade head`。
+> 表结构只有一条链路：`init_db` 内部调用 `billing_qa.db.migrations.upgrade_schema()`，即 `alembic upgrade head`（空库会按迁移脚本从零建表），不再使用 `create_all` 或 `alembic stamp`。后续结构变更仍是 `alembic revision --autogenerate` + `alembic upgrade head`。
 
 ### 3.4 内置 Mock 服务（离线自测必需）
 
@@ -219,11 +219,12 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | 监听地址与端口 |
 | `API_PREFIX` | `/api/v1` | 路由前缀 |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 允许的跨域来源（逗号分隔） |
-| `MYSQL_HOST` / `MYSQL_PORT` | `127.0.0.1` / `3306` | MySQL 连接 |
-| `MYSQL_USER` / `MYSQL_PASSWORD` | `root` / `root` | MySQL 账号 |
-| `MYSQL_DB` | `batch_test` | 库名（初始化脚本会自动创建） |
-| `MYSQL_POOL_SIZE` / `MYSQL_POOL_RECYCLE` | `10` / `1800` | 连接池 |
-| `DATABASE_URL` | 空 | 可选，整体覆盖异步连接串 |
+| `POSTGRES_HOST` / `POSTGRES_PORT` | `127.0.0.1` / `5432` | PostgreSQL 连接 |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` | `postgres` / `postgres` | PostgreSQL 账号 |
+| `POSTGRES_DB` | `batch_test` | 库名（初始化脚本会自动创建） |
+| `POSTGRES_MAINTENANCE_DB` | `postgres` | 建库时连接的维护库 |
+| `POSTGRES_POOL_SIZE` / `POSTGRES_POOL_RECYCLE` | `10` / `1800` | 连接池 |
+| `DATABASE_URL` | 空 | 可选，整体覆盖异步连接串（需使用 `postgresql+asyncpg://`） |
 | `REDIS_URL` | `redis://127.0.0.1:6379/1` | 控制面与状态存储 |
 | `REDIS_KEY_PREFIX` | `batchtest:` | Redis key 前缀 |
 | `SECRET_KEY` | 示例值 | JWT 与 Fernet 加密密钥，**生产必须替换** |
@@ -293,7 +294,7 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 
 ```powershell
 cd backend
-python -m pytest -q          # 57 passed（依赖不可用时自动 skip）
+python -m pytest -q          # 63 passed（依赖不可用时自动 skip）
 python -m ruff check billing_qa scripts tests
 ```
 
@@ -346,7 +347,7 @@ npm run build       # 产物在 dist/
 
 | 现象 | 处理 |
 | --- | --- |
-| 后端启动报数据库连接失败 | 确认 MySQL 已启动、`.env` 中账号密码与库名正确；库不存在时先执行 `python -m billing_qa.db.init_db --demo` |
+| 后端启动报数据库连接失败 | 确认 PostgreSQL 已启动、`.env` 中账号密码与库名正确；库不存在时先执行 `python -m billing_qa.db.init_db --demo` |
 | `/health` 中 `redis: down` | 确认 Redis 已启动；平台会自动降级为进程内状态，但多进程部署需恢复 Redis |
 | 任务一直排队 | 检查任务并发/QPS 配置与 Mock 服务是否可达；查看后端日志与 `/tasks/{id}` 状态 |
 | 前端 401 自动退出 | JWT 过期（默认 12 小时），重新登录即可 |

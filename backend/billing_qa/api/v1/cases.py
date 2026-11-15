@@ -6,7 +6,8 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import cast, func, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import build_execution_detail, case_to_out
@@ -188,10 +189,14 @@ async def list_cases(
     if keyword:
         like = f"%{keyword}%"
         conditions.append(
-            TestCase.name.like(like) | TestCase.code.like(like) | TestCase.description.like(like)
+            TestCase.name.ilike(like)
+            | TestCase.code.ilike(like)
+            | TestCase.description.ilike(like)
         )
     if tag:
-        conditions.append(cast(TestCase.tags, String).like(f'%"{tag}"%'))
+        # tags 为 JSON 数组：PostgreSQL 下用 JSONB 包含判断，
+        # 避免依赖 json::text 的转义形式（中文在库里存为 \uXXXX，文本 LIKE 匹配不到）
+        conditions.append(cast(TestCase.tags, JSONB).contains([tag]))
     total = (
         await db.execute(select(func.count()).select_from(TestCase).where(*conditions))
     ).scalar_one()
@@ -757,7 +762,7 @@ async def debug_case(
     if payload.case_snapshot_override:
         snapshot = {**snapshot, **payload.case_snapshot_override}
     executor = CaseExecutor()
-    # 先结束当前事务，避免 MySQL REPEATABLE READ 快照看不到执行器新写入的记录
+    # 先结束当前事务，避免旧快照看不到执行器新写入的记录
     await db.commit()
     execution_id = await executor.execute(
         case_id=case.id,

@@ -122,7 +122,7 @@ async function submit(): Promise<void> {
 
         <p class="mt-5 rounded-xl border border-line-soft bg-canvas px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">
           演示账号：<span class="font-medium text-ink-soft">admin / admin123</span><br />
-          默认连接本机 MySQL 与 Redis，Mock 服务端口 8001 / 8002。
+          默认连接本机 PostgreSQL 与 Redis，Mock 服务端口 8001 / 8002。
         </p>
       </div>
     </div>

@@ -97,7 +97,9 @@ async def list_templates(
         conditions.append(PromptTemplate.template_type == template_type)
     if keyword:
         like = f"%{keyword}%"
-        conditions.append(PromptTemplate.name.like(like) | PromptTemplate.code.like(like))
+        conditions.append(
+            PromptTemplate.name.ilike(like) | PromptTemplate.code.ilike(like)
+        )
     if is_active is not None:
         conditions.append(PromptTemplate.is_active.is_(is_active))
     total = (

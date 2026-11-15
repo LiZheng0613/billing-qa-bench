@@ -1,4 +1,4 @@
-"""执行引擎端到端测试（依赖本机 MySQL 与内置 Mock 服务）。"""
+"""执行引擎端到端测试（依赖本机 PostgreSQL 与内置 Mock 服务）。"""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ async def _load_demo_case(code: str) -> tuple[int, int, dict] | None:
 )
 async def test_demo_case_execution(case_code: str, expected_status: str) -> None:
     if not await _dependencies_ready():
-        pytest.skip("MySQL 或 Mock 服务不可用，跳过引擎端到端测试")
+        pytest.skip("PostgreSQL 或 Mock 服务不可用，跳过引擎端到端测试")
     loaded = await _load_demo_case(case_code)
     if loaded is None:
         pytest.skip(f"演示用例 {case_code} 未初始化，请先执行 init_db --demo")
@@ -128,7 +128,7 @@ async def test_demo_case_execution(case_code: str, expected_status: str) -> None
 
 async def test_dynamic_hidden_context_release() -> None:
     if not await _dependencies_ready():
-        pytest.skip("MySQL 或 Mock 服务不可用")
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
     loaded = await _load_demo_case("DEMO-DYNAMIC-001")
     if loaded is None:
         pytest.skip("演示用例缺失")
@@ -238,7 +238,7 @@ async def _cleanup(
 
 async def test_executor_marks_env_error() -> None:
     if not await _dependencies_ready():
-        pytest.skip("MySQL 或 Mock 服务不可用")
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
     loaded = await _load_demo_case("DEMO-SINGLE-001")
     if loaded is None:
         pytest.skip("演示用例缺失")
@@ -275,7 +275,7 @@ async def test_executor_marks_env_error() -> None:
 
 async def test_scheduler_auto_retries_env_errors() -> None:
     if not await _dependencies_ready():
-        pytest.skip("MySQL 或 Mock 服务不可用")
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
     env_id = await _create_bad_environment()
     case_id = await _create_bad_case(env_id)
     task_id: int | None = None
@@ -329,7 +329,7 @@ async def test_scheduler_auto_retries_env_errors() -> None:
 
 async def test_scheduler_does_not_retry_business_failure() -> None:
     if not await _dependencies_ready():
-        pytest.skip("MySQL 或 Mock 服务不可用")
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
     loaded = await _load_demo_case("DEMO-SINGLE-FAIL")
     if loaded is None:
         pytest.skip("演示用例缺失")

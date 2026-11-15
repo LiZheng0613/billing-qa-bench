@@ -52,7 +52,7 @@ async def list_models(
         conditions.append(ModelConfig.is_active.is_(is_active))
     if keyword:
         like = f"%{keyword}%"
-        conditions.append(ModelConfig.name.like(like) | ModelConfig.code.like(like))
+        conditions.append(ModelConfig.name.ilike(like) | ModelConfig.code.ilike(like))
     total = (
         await db.execute(select(func.count()).select_from(ModelConfig).where(*conditions))
     ).scalar_one()

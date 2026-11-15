@@ -17,7 +17,7 @@ NAMING_CONVENTION = {
 
 
 def now() -> datetime:
-    """统一时间源（本地时区，MySQL DATETIME 存储）。"""
+    """统一时间源（本地时区，PostgreSQL TIMESTAMP 存储）。"""
     return datetime.now()
 
 
@@ -32,11 +32,3 @@ class TimestampMixin:
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=now, onupdate=now, nullable=False, comment="更新时间"
     )
-
-
-# 所有业务表统一 utf8mb4（MySQL 8.0 默认排序规则）
-MYSQL_TABLE_OPTS: dict[str, str] = {
-    "mysql_charset": "utf8mb4",
-    "mysql_collate": "utf8mb4_0900_ai_ci",
-    "mysql_engine": "InnoDB",
-}
