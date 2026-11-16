@@ -16,10 +16,10 @@
 | 版本 Diff / 回滚 | 字段级 Diff（含嵌套 JSON 路径）、历史修改记录、一键回滚并自动生成新版本 |
 | 三类用例 | 单轮问答、静态多轮脚本、动态多轮（目标驱动 + 隐藏信息挤牙膏式释放） |
 | 动态多轮状态机 | 模拟器按 `CONTINUE / GOAL_ACHIEVED / GIVE_UP` 驱动，轮次上限与硬上限双重保护 |
-| 三重熔断 | 最大轮次 `MAX_TURNS_EXCEEDED`、复读检测 `REPETITION_DETECTED`、模拟器放弃 `SIMULATOR_GAVE_UP`；熔断一律判不通过 |
+| 三重熔断 | 最大轮次 `MAX_TURNS_EXCEEDED`、复读检测 `REPETITION_ABORT`、模拟器放弃 `GIVE_UP`；熔断一律判不通过 |
 | 混合裁决 | 规则硬校验（金额/笔数/日期/必须包含/禁止包含） + LLM 裁判；支持 `AVG` 平均分与 `VETO` 一票否决，多裁判可并行 |
 | Prompt 资产 | 模板版本管理、`LATEST / PINNED` 引用策略、单用例覆盖、引用影响面分析、在线试跑沙盒 |
-| 执行与观测 | 批量任务并发 / QPS 限流、环境类失败自动重试、暂停 / 恢复 / 终止、失败断点重跑、全链路 Trace、原始报文留存 |
+| 执行与观测 | 批量任务并发 / QPS 限流、环境类失败自动重试、任务终止、失败断点重跑、全链路 Trace、原始报文留存 |
 | 指标大盘 | 通过率、平均 TTFT、P95 时延、Token 消耗、吞吐与预计剩余时间；WebSocket 推送，断线自动降级轮询 |
 | 视觉分析 | 单用例历史趋势（得分 / 时延 / 稳定性）、两次执行 Run 对比 |
 | 安全 | JWT 单管理员登录、环境变量与模型 Key 使用 Fernet 加密落库、敏感值掩码展示 |
@@ -224,7 +224,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | `ENV` | 连接失败、连接/读取超时、HTTP 429/5xx、SSE 无数据帧、网关 HTML 错误页、鉴权服务不可达 | 是 |
 | `BUSINESS` | 规则硬校验不通过、裁判低分、轮次超限、复读熔断、模板变量缺失、用例配置非法、4xx 参数错误 | 否 |
 
-- 重试同样占用并发信号量与 QPS 配额，不会突破任务限制；暂停期间退避计时暂停，终止会立即中断重试等待。
+- 重试同样占用并发信号量与 QPS 配额，不会突破任务限制；终止任务会立即中断重试等待。
 - 每次尝试生成独立执行记录（`source=RETRY`、`attempt_no` 递增），`error_kind` 记录分类，Trace 可逐次回看。
 - 任务指标中的 `env_retry_count` 表示触发过自动重试的用例数。
 
@@ -325,6 +325,7 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 | `JWT_ALGORITHM` / `JWT_EXPIRE_MINUTES` | `HS256` / `720` | JWT 配置 |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | 单管理员账号 |
 | `DEFAULT_CONCURRENCY` / `DEFAULT_QPS_LIMIT` | `3` / `5` | 任务默认并发与 QPS |
+| `SCHEDULE_POLL_INTERVAL_SECONDS` | `15` | 定时计划轮询间隔（秒） |
 | `PASS_THRESHOLD` | `60` | 默认通过分数线 |
 | `HTTP_TIMEOUT_SECONDS` | `60` | 被测接口默认超时 |
 | `MAX_TURNS_HARD_LIMIT` | `20` | 轮次硬上限（超过即熔断） |
@@ -388,7 +389,7 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 | 业务口径 | `GET/POST /calibers`、`GET/PUT/DELETE /calibers/{id}` |
 | 判分器自检 | `GET /grader/mutants`、`POST /grader/evals/run`、`GET /grader/evals` |
 | 统计 | `GET /stats/overview`、`GET /stats/facts`、`GET /stats/datasets` |
-| 任务 | `GET/POST /tasks`、`GET /tasks/{id}`、`POST /tasks/{id}/start`、`POST /tasks/{id}/pause|resume|abort|retry-failed`、`GET /tasks/{id}/metrics`、`GET /tasks/{id}/executions`（`latest_per_case=true` 按用例取最新一次并返回尝试次数） |
+| 任务 | `GET/POST /tasks`、`GET /tasks/{id}`、`POST /tasks/{id}/start`、`POST /tasks/{id}/abort`、`POST /tasks/{id}/retry-failed`、`POST /tasks/{id}/run-now`（立即执行一次定时计划）、`PUT /tasks/{id}/schedule`（编辑定时计划）、`GET /tasks/{id}/runs`（计划执行历史）、`GET /tasks/{id}/metrics`、`GET /tasks/{id}/executions`（`latest_per_case=true` 按用例取最新一次并返回尝试次数） |
 | 执行 | `GET /executions`、`GET /executions/{id}`、`GET /executions/{id}/raw` |
 | 实时 | `WS /ws/tasks/{task_id}?token=<jwt>` |
 
@@ -411,7 +412,7 @@ cd backend
 python scripts/api_smoke.py  # 43 项全部通过
 ```
 
-覆盖：登录、环境变量掩码与探活、模型连通性、模板种子/版本/引用影响、模板发布与版本历史即时刷新、用例 CRUD、版本 Diff 与回滚、单条调试、沙盒、任务全生命周期（暂停/恢复/终止/断点重跑）、指标聚合、Trace 与原始报文、趋势聚合。
+覆盖：登录、环境变量掩码与探活、模型连通性、模板种子/版本/引用影响、模板发布与版本历史即时刷新、用例 CRUD、版本 Diff 与回滚、单条调试、沙盒、任务全生命周期（启动/终止/断点重跑/定时计划）、指标聚合、Trace 与原始报文、趋势聚合。
 
 > 冒烟脚本使用独立临时模板验证发布流程并在结束时删除，不会污染内置模板内容。
 
