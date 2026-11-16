@@ -8,13 +8,15 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
 
 import httpx
 import pytest
-from sqlalchemy import text
+from sqlalchemy import delete, text
 
 from billing_qa.db.session import SessionLocal
 from billing_qa.main import app
+from billing_qa.models.task import BatchTask
 
 pytestmark = pytest.mark.asyncio
 
@@ -279,6 +281,59 @@ async def test_task_create_with_all_active_scope(client: httpx.AsyncClient) -> N
     assert body["status"] == "PENDING"
     assert body["total_cases"] == len(expected)
     assert sorted(body["case_ids"]) == expected
+
+
+async def test_task_list_keyword_and_schedule_filters(client: httpx.AsyncClient) -> None:
+    """任务管理页依赖关键词、状态与执行方式组合筛选。"""
+    cases = (await client.get("/cases", params={"page_size": 200})).json()
+    target = next(item for item in cases["items"] if item["code"] == "DEMO-SINGLE-001")
+    keyword = f"搜索验证 {uuid.uuid4().hex[:6]}"
+    moment = (datetime.now() + timedelta(hours=2)).replace(microsecond=0)
+    created = await client.post(
+        "/tasks",
+        json={
+            "name": keyword,
+            "case_ids": [target["id"]],
+            "schedule_type": "SCHEDULED",
+            "scheduled_at": moment.isoformat(),
+            "auto_start": False,
+            "concurrency": 1,
+            "qps_limit": 2,
+        },
+    )
+    assert created.status_code == 200, created.text
+    task_id = created.json()["id"]
+    assert created.json()["status"] == "SCHEDULED"
+    assert created.json()["next_run_at"] is not None
+    try:
+        page = (await client.get("/tasks", params={"keyword": keyword})).json()
+        assert page["total"] == 1
+        assert page["items"][0]["id"] == task_id
+
+        filtered = (
+            await client.get(
+                "/tasks",
+                params={
+                    "keyword": keyword,
+                    "status": "SCHEDULED",
+                    "schedule_type": "SCHEDULED",
+                },
+            )
+        ).json()
+        assert filtered["total"] == 1
+
+        mismatch = (
+            await client.get("/tasks", params={"keyword": keyword, "schedule_type": "WEEKLY"})
+        ).json()
+        assert mismatch["total"] == 0
+
+        code_hit = (await client.get("/tasks", params={"keyword": created.json()["code"]})).json()
+        assert code_hit["total"] == 1
+        assert code_hit["items"][0]["id"] == task_id
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(delete(BatchTask).where(BatchTask.id == task_id))
+            await db.commit()
 
 
 async def test_task_create_requires_case_selection(client: httpx.AsyncClient) -> None:
