@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from copy import deepcopy
+from datetime import datetime
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy import cast, func, select
@@ -12,10 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import build_execution_detail, case_to_out
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
+from billing_qa.core.logging import get_logger
 from billing_qa.core.security import get_current_operator
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import (
     CaseType,
+    GradingMode,
     ModelRole,
     RevisionChangeType,
     TemplateStrategy,
@@ -31,10 +35,15 @@ from billing_qa.schemas.case import (
     CaseCreate,
     CaseDebugRequest,
     CaseExecutionItem,
+    CaseFreezeRequest,
     CaseOut,
+    CaseReviewRequest,
     CaseTrend,
     CaseUpdate,
     DiffChange,
+    FactAtomView,
+    FactVerifyRequest,
+    ImportItemResult,
     ImportResult,
     ImportRowError,
     RevisionDiff,
@@ -44,15 +53,24 @@ from billing_qa.schemas.case import (
     RunCompareSide,
     TrendPoint,
 )
+from billing_qa.schemas.case_ai import CaseAIDraftRequest, CaseAIDraftResponse
 from billing_qa.schemas.common import MessageResponse, Page
 from billing_qa.schemas.task import ExecutionDetail
+from billing_qa.services.author import generate_case_drafts
 from billing_qa.services.engine.executor import CaseExecutor
-from billing_qa.services.io.excel import (
-    EXCEL_COLUMNS,
-    export_cases_xlsx,
-    parse_excel,
-    parse_json,
+from billing_qa.services.facts import (
+    VERIFIED_STATUSES,
+    ensure_review_gate,
+    find_fact,
+    iter_envelope_facts,
 )
+from billing_qa.services.io.case_json import (
+    build_export_payload,
+    normalize_record,
+    parse_case_file,
+    resolve_references,
+)
+from billing_qa.services.io.excel import EXCEL_COLUMNS, export_cases_xlsx, parse_excel
 from billing_qa.services.revision.refs import refresh_template_refs
 from billing_qa.services.revision.snapshot import (
     SNAPSHOT_FIELDS,
@@ -64,6 +82,26 @@ from billing_qa.services.revision.snapshot import (
 router = APIRouter(
     prefix="/cases", tags=["测试用例"], dependencies=[Depends(get_current_operator)]
 )
+
+logger = get_logger(__name__)
+
+# 已评审通过后修改这些字段会让旧评审结论失效，需要自动退回待评审
+_AUTO_RETURN_FIELDS = {
+    "grading_mode",
+    "input_type",
+    "as_of",
+    "query",
+    "expected_answer",
+    "expected_rules",
+    "turns",
+    "session_expected",
+    "user_goal",
+    "initial_query",
+    "max_turns",
+    "answer_envelope",
+    "response_contract",
+    "plan_spec",
+}
 
 
 # ---------------------------------------------------------------------- #
@@ -132,6 +170,19 @@ async def _add_revision(
     return revision
 
 
+async def _commit_case_change(
+    db: AsyncSession, case: TestCase, operator: str, summary: str
+) -> CaseOut:
+    """保存一次可审计的用例变更（事实取证 / 评审 / 冻结）。"""
+    case.updated_by = operator
+    case.current_version += 1
+    await db.flush()
+    await _add_revision(db, case, RevisionChangeType.UPDATE, operator, summary)
+    await db.commit()
+    enriched = await _enrich_cases(db, [case])
+    return enriched[0]
+
+
 async def _enrich_cases(db: AsyncSession, cases: list[TestCase]) -> list[CaseOut]:
     env_ids = {case.environment_id for case in cases if case.environment_id}
     template_ids: set[int] = set()
@@ -174,6 +225,8 @@ async def list_cases(
     status: str | None = None,
     tag: str | None = None,
     environment_id: int | None = None,
+    grading_mode: GradingMode | None = None,
+    review_status: str | None = None,
     keyword: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
@@ -186,6 +239,10 @@ async def list_cases(
         conditions.append(TestCase.status == status)
     if environment_id:
         conditions.append(TestCase.environment_id == environment_id)
+    if grading_mode:
+        conditions.append(TestCase.grading_mode == grading_mode)
+    if review_status:
+        conditions.append(TestCase.review_status == review_status)
     if keyword:
         like = f"%{keyword}%"
         conditions.append(
@@ -231,6 +288,7 @@ async def create_case(
     data = payload.model_dump()
     await _validate_references(db, data)
     _validate_strategy(data)
+    ensure_review_gate(data)
     case = TestCase(**data)
     case.current_version = 1
     case.created_by = operator
@@ -244,14 +302,37 @@ async def create_case(
     return enriched[0]
 
 
-@router.get("/export", summary="导出用例（JSON / Excel）")
+def _build_legacy_rows(
+    cases: list[TestCase],
+    env_map: dict[int, str],
+    template_map: dict[int, str],
+) -> list[dict[str, Any]]:
+    """Excel 兼容行：只保留扁平列，字段集合与旧版导出保持一致。"""
+    rows: list[dict[str, Any]] = []
+    for case in cases:
+        item: dict[str, Any] = {
+            key: getattr(case, key, None)
+            for key, _ in EXCEL_COLUMNS
+            if key in TestCase.__table__.columns
+        }
+        item["environment_code"] = env_map.get(case.environment_id or 0)
+        item["simulator_template_code"] = template_map.get(case.simulator_template_id or 0)
+        item["judge_template_code"] = template_map.get(case.judge_template_id or 0)
+        item["tags"] = ",".join(case.tags or [])
+        rows.append(item)
+    return rows
+
+
+@router.get("/export", summary="导出用例（JSON 版本化信封）")
 async def export_cases(
     format: str = Query(default="json", pattern="^(json|xlsx)$"),
     case_type: CaseType | None = None,
     ids: str | None = Query(default=None, description="逗号分隔的用例 id"),
     db: AsyncSession = Depends(get_db),
+    operator: str = Depends(get_current_operator),
 ) -> Response:
     conditions = [TestCase.deleted_at.is_(None)]
+    id_list: list[int] = []
     if case_type:
         conditions.append(TestCase.case_type == case_type)
     if ids:
@@ -262,53 +343,69 @@ async def export_cases(
         await db.execute(select(TestCase).where(*conditions).order_by(TestCase.id.asc()))
     ).scalars().all()
 
-    env_map: dict[int, str] = {}
-    env_rows = (await db.execute(select(Environment.id, Environment.code))).all()
-    env_map = {row[0]: row[1] for row in env_rows}
-    template_map: dict[int, str] = {}
-    template_rows = (await db.execute(select(PromptTemplate.id, PromptTemplate.code))).all()
-    template_map = {row[0]: row[1] for row in template_rows}
-
-    rows: list[dict[str, Any]] = []
-    for case in cases:
-        item: dict[str, Any] = {
-            key: getattr(case, key, None) for key, _ in EXCEL_COLUMNS if key in TestCase.__table__.columns
-        }
-        item["environment_code"] = env_map.get(case.environment_id or 0)
-        item["simulator_template_code"] = template_map.get(case.simulator_template_id or 0)
-        item["judge_template_code"] = template_map.get(case.judge_template_id or 0)
-        item["tags"] = ",".join(case.tags or [])
-        rows.append(item)
+    env_map: dict[int, str] = {
+        row[0]: row[1]
+        for row in (await db.execute(select(Environment.id, Environment.code))).all()
+    }
+    template_map: dict[int, str] = {
+        row[0]: row[1]
+        for row in (await db.execute(select(PromptTemplate.id, PromptTemplate.code))).all()
+    }
 
     if format == "xlsx":
-        content = export_cases_xlsx(rows)
+        # 兼容保留：不作为主推格式，字段覆盖以 JSON 为准。
+        content = export_cases_xlsx(_build_legacy_rows(cases, env_map, template_map))
         return Response(
             content=content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": 'attachment; filename="test_cases.xlsx"'},
         )
-    body = json.dumps(rows, ensure_ascii=False, indent=2, default=str)
+
+    model_map: dict[int, str] = {
+        row[0]: row[1]
+        for row in (await db.execute(select(ModelConfig.id, ModelConfig.code))).all()
+    }
+    now = datetime.now()
+    payload = build_export_payload(
+        cases,
+        env_map=env_map,
+        template_map=template_map,
+        model_map=model_map,
+        exported_by=operator,
+        exported_at=now.isoformat(timespec="seconds"),
+        filters={"case_type": case_type.value if case_type else None, "ids": id_list or None},
+    )
+    body = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    filename = f"test_cases_{now.strftime('%Y%m%d_%H%M')}.json"
     return Response(
         content=body,
         media_type="application/json",
-        headers={"Content-Disposition": 'attachment; filename="test_cases.json"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
-@router.post("/import", response_model=ImportResult, summary="批量导入用例")
+@router.post("/import", response_model=ImportResult, summary="批量导入用例（JSON）")
 async def import_cases(
     file: UploadFile = File(...),
+    dry_run: bool = Query(default=False, description="只校验并预览，不写入数据库"),
+    on_conflict: Literal["upsert", "skip", "error"] = Query(
+        default="upsert", description="code 已存在时的处理策略"
+    ),
     db: AsyncSession = Depends(get_db),
     operator: str = Depends(get_current_operator),
 ) -> ImportResult:
     raw = await file.read()
     filename = (file.filename or "").lower()
+    warnings: list[str] = []
     if filename.endswith((".xlsx", ".xlsm")):
         records = parse_excel(raw)
+        warnings.append("已按 Excel 兼容模式导入；推荐使用 JSON 格式以保留模型绑定等字段")
     elif filename.endswith(".json"):
-        records = parse_json(raw)
+        parsed = parse_case_file(raw)
+        records = parsed.records
+        warnings.extend(parsed.warnings)
     else:
-        raise ValidationError("仅支持 .xlsx / .json 文件")
+        raise ValidationError("仅支持 .json 文件（.xlsx 仅作兼容）")
 
     env_map = {
         code: env_id
@@ -320,47 +417,60 @@ async def import_cases(
             await db.execute(select(PromptTemplate.id, PromptTemplate.code))
         ).all()
     }
+    model_map = {
+        code: model_id
+        for model_id, code in (await db.execute(select(ModelConfig.id, ModelConfig.code))).all()
+    }
 
     created = 0
     updated = 0
+    skipped = 0
     errors: list[ImportRowError] = []
+    items: list[ImportItemResult] = []
     imported_ids: list[int] = []
+    seen_codes: set[str] = set()
 
     for record in records:
-        row_no = int(record.pop("__row__", 0) or 0)
+        row_no = int(record.get("__row__") or 0)
+        cleaned, row_warnings = normalize_record(record)
+        warnings.extend(row_warnings)
+        code = str(cleaned.get("code") or "").strip() or None
+
+        if code and code in seen_codes:
+            message = f"文件内用例编号重复: {code}"
+            errors.append(ImportRowError(row=row_no, message=message))
+            items.append(
+                ImportItemResult(row=row_no, code=code, action="failed", message=message)
+            )
+            continue
+        if code:
+            seen_codes.add(code)
+
         savepoint = await db.begin_nested()
         try:
-            record.pop("id", None)
-            if record.get("environment_code"):
-                env_code = str(record.pop("environment_code"))
-                env_id = env_map.get(env_code)
-                if env_id is None:
-                    raise ValidationError(f"环境编码不存在: {env_code}")
-                record["environment_id"] = env_id
-            if record.get("simulator_template_code"):
-                record["simulator_template_id"] = template_map.get(
-                    str(record.pop("simulator_template_code"))
-                )
-            if record.get("judge_template_code"):
-                record["judge_template_id"] = template_map.get(
-                    str(record.pop("judge_template_code"))
-                )
-            record.setdefault("status", "ACTIVE")
-            record.setdefault("priority", "P1")
-            existing = None
-            if record.get("code"):
-                existing = (
-                    await db.execute(
-                        select(TestCase).where(
-                            TestCase.code == record["code"], TestCase.deleted_at.is_(None)
-                        )
+            if not code:
+                raise ValidationError("缺少用例编号 code")
+            cleaned = resolve_references(
+                cleaned,
+                env_map=env_map,
+                template_map=template_map,
+                model_map=model_map,
+            )
+            cleaned.setdefault("status", "ACTIVE")
+            cleaned.setdefault("priority", "P1")
+            existing = (
+                await db.execute(
+                    select(TestCase).where(
+                        TestCase.code == code, TestCase.deleted_at.is_(None)
                     )
-                ).scalar_one_or_none()
+                )
+            ).scalar_one_or_none()
+
             if existing is None:
-                case_payload = CaseCreate(**record)
-                data = case_payload.model_dump()
+                data = CaseCreate(**cleaned).model_dump()
                 await _validate_references(db, data)
                 _validate_strategy(data)
+                ensure_review_gate(data)
                 case = TestCase(**data)
                 case.current_version = 1
                 case.created_by = operator
@@ -373,12 +483,44 @@ async def import_cases(
                 await db.flush()
                 imported_ids.append(int(case.id))
                 created += 1
+                items.append(ImportItemResult(row=row_no, code=code, action="created"))
+            elif on_conflict == "skip":
+                skipped += 1
+                items.append(
+                    ImportItemResult(
+                        row=row_no, code=code, action="skipped", message="已存在，按策略跳过"
+                    )
+                )
+            elif on_conflict == "error":
+                raise ConflictError(f"用例编号 {code} 已存在")
             else:
-                update_payload = CaseUpdate(**{k: v for k, v in record.items() if k != "code"})
-                updates = update_payload.model_dump(exclude_unset=True)
+                updates = (
+                    CaseUpdate(**{key: value for key, value in cleaned.items() if key != "code"})
+                    .model_dump(exclude_unset=True)
+                )
                 updates.pop("change_summary", None)
+                if not updates:
+                    skipped += 1
+                    items.append(
+                        ImportItemResult(
+                            row=row_no, code=code, action="skipped", message="没有可更新的字段"
+                        )
+                    )
+                    await savepoint.rollback()
+                    continue
                 await _validate_references(db, updates)
-                _validate_strategy(updates)
+                merged = {field: getattr(existing, field) for field in SNAPSHOT_FIELDS}
+                merged.update(updates)
+                _validate_strategy(merged)
+                if (
+                    "review_status" not in updates
+                    and str(existing.review_status).upper() == "APPROVED"
+                    and (_AUTO_RETURN_FIELDS & set(updates))
+                ):
+                    updates["review_status"] = "PENDING"
+                    updates["reviewed_by"] = None
+                    merged["review_status"] = "PENDING"
+                ensure_review_gate(merged)
                 for key, value in updates.items():
                     setattr(existing, key, value)
                 existing.updated_by = operator
@@ -390,20 +532,62 @@ async def import_cases(
                 await db.flush()
                 imported_ids.append(int(existing.id))
                 updated += 1
+                items.append(ImportItemResult(row=row_no, code=code, action="updated"))
             await savepoint.commit()
         except Exception as exc:
             await savepoint.rollback()
-            errors.append(ImportRowError(row=row_no, message=f"{type(exc).__name__}: {exc}"))
-    await refresh_template_refs(db)
-    await db.commit()
+            message = (
+                str(exc)
+                if isinstance(exc, (ValidationError, ConflictError))
+                else f"{type(exc).__name__}: {exc}"
+            )
+            errors.append(ImportRowError(row=row_no, message=message))
+            items.append(
+                ImportItemResult(row=row_no, code=code, action="failed", message=message)
+            )
+
+    if dry_run:
+        # 预览模式：所有保存点已提交到外层事务，这里整体回滚，保证零副作用。
+        await db.rollback()
+    else:
+        await refresh_template_refs(db)
+        await db.commit()
+
     return ImportResult(
         total=len(records),
         created=created,
         updated=updated,
+        skipped=skipped,
         failed=len(errors),
+        dry_run=dry_run,
+        on_conflict=on_conflict,
         errors=errors,
-        case_ids=imported_ids,
+        items=items,
+        warnings=warnings,
+        case_ids=[] if dry_run else imported_ids,
     )
+
+
+@router.post(
+    "/ai-draft",
+    response_model=CaseAIDraftResponse,
+    summary="AI 生成用例草稿（不落库，需人工确认）",
+)
+async def ai_draft_case(
+    payload: CaseAIDraftRequest,
+    db: AsyncSession = Depends(get_db),
+    operator: str = Depends(get_current_operator),
+) -> CaseAIDraftResponse:
+    if payload.mode == "EDIT" and not payload.base_case_id:
+        raise ValidationError("EDIT 模式必须提供 base_case_id")
+    logger.info(
+        "AI 用例草稿生成：operator=%s mode=%s count=%s base_case_id=%s",
+        operator,
+        payload.mode,
+        payload.count,
+        payload.base_case_id,
+    )
+    return await generate_case_drafts(db, payload)
 
 
 @router.get("/{case_id}", response_model=CaseOut, summary="用例详情")
@@ -411,6 +595,130 @@ async def get_case(case_id: int, db: AsyncSession = Depends(get_db)) -> CaseOut:
     case = await _get_case(db, case_id)
     enriched = await _enrich_cases(db, [case])
     return enriched[0]
+
+
+# ---------------------------------------------------------------------- #
+# 事实取证、评审与冻结
+# ---------------------------------------------------------------------- #
+@router.get(
+    "/{case_id}/facts",
+    response_model=list[FactAtomView],
+    summary="用例事实与取证状态",
+)
+async def list_case_facts(
+    case_id: int, db: AsyncSession = Depends(get_db)
+) -> list[FactAtomView]:
+    case = await _get_case(db, case_id, include_deleted=True)
+    items: list[FactAtomView] = []
+    for section, fact in iter_envelope_facts(case.answer_envelope):
+        try:
+            items.append(FactAtomView(section=section, **fact))
+        except Exception:
+            continue
+    return items
+
+
+@router.post(
+    "/{case_id}/facts/{fact_id}/verify",
+    response_model=CaseOut,
+    summary="登记单条事实的取证结论",
+)
+async def verify_case_fact(
+    case_id: int,
+    fact_id: str,
+    payload: FactVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+    operator: str = Depends(get_current_operator),
+) -> CaseOut:
+    case = await _get_case(db, case_id)
+    if not case.answer_envelope:
+        raise ValidationError("该用例尚未配置答案包络，无法登记事实取证")
+    envelope = deepcopy(case.answer_envelope)
+    found = find_fact(envelope, fact_id)
+    if found is None:
+        raise NotFoundError(f"事实 {fact_id} 不存在")
+    _section, fact = found
+    fact["verification_status"] = payload.verification_status
+    if str(payload.verification_status).upper() == "PENDING":
+        # 退回待取证时清空旧结论，避免"待取证但仍显示已取证人与证据"。
+        fact["verified_by"] = None
+        fact["verified_at"] = None
+        fact["evidence_ref"] = None
+    else:
+        fact["verified_by"] = operator
+        fact["verified_at"] = datetime.now().isoformat(timespec="seconds")
+        if payload.evidence_ref is not None:
+            fact["evidence_ref"] = payload.evidence_ref
+    if payload.note is not None:
+        fact["verification_note"] = payload.note
+
+    case.answer_envelope = envelope
+    # 已评审通过的用例被撤销验证 / 标记冲突时，自动退回待评审，防止绕过闸门。
+    if (
+        str(case.review_status).upper() == "APPROVED"
+        and payload.verification_status not in VERIFIED_STATUSES
+    ):
+        case.review_status = "PENDING"
+        case.reviewed_by = None
+    return await _commit_case_change(
+        db,
+        case,
+        operator,
+        f"事实取证：{fact_id} → {payload.verification_status}",
+    )
+
+
+@router.post("/{case_id}/review", response_model=CaseOut, summary="评审用例")
+async def review_case(
+    case_id: int,
+    payload: CaseReviewRequest,
+    db: AsyncSession = Depends(get_db),
+    operator: str = Depends(get_current_operator),
+) -> CaseOut:
+    case = await _get_case(db, case_id)
+    review_status = str(payload.review_status).upper()
+    note = (payload.note or "").strip()
+    if review_status == "REJECTED" and not note:
+        raise ValidationError("驳回必须填写原因，便于用例负责人整改与追溯")
+    gate_data = {
+        "review_status": review_status,
+        "grading_mode": case.grading_mode,
+        "answer_envelope": case.answer_envelope,
+    }
+    # 只有「评审通过」需要过事实闸门；驳回 / 退回待评审不做取证校验。
+    ensure_review_gate(gate_data)
+    case.review_status = review_status
+    case.reviewed_by = operator if review_status == "APPROVED" else None
+    summary = f"评审状态 → {review_status}"
+    if note:
+        summary += f"：{note}"
+    return await _commit_case_change(db, case, operator, summary)
+
+
+@router.post("/{case_id}/freeze", response_model=CaseOut, summary="冻结用例进数据集")
+async def freeze_case(
+    case_id: int,
+    payload: CaseFreezeRequest,
+    db: AsyncSession = Depends(get_db),
+    operator: str = Depends(get_current_operator),
+) -> CaseOut:
+    case = await _get_case(db, case_id)
+    if str(case.review_status).upper() != "APPROVED":
+        raise ValidationError("冻结前必须先完成评审通过（APPROVED）")
+    ensure_review_gate(
+        {
+            "review_status": "APPROVED",
+            "grading_mode": case.grading_mode,
+            "answer_envelope": case.answer_envelope,
+        }
+    )
+    if payload.dataset_version:
+        case.dataset_version = payload.dataset_version
+    case.status = "ACTIVE"
+    summary = f"冻结进数据集 {case.dataset_version or 'v1'}"
+    if payload.note:
+        summary += f"：{payload.note}"
+    return await _commit_case_change(db, case, operator, summary)
 
 
 @router.put("/{case_id}", response_model=CaseOut, summary="编辑用例（自动生成版本快照）")
@@ -430,6 +738,20 @@ async def update_case(
     merged = {field: getattr(case, field) for field in SNAPSHOT_FIELDS}
     merged.update(updates)
     _validate_strategy(merged)
+
+    # 已评审通过后修改契约内容（事实值、响应契约、取数计划等）时，旧评审结论失效，
+    # 自动退回待评审，避免"旧审批背书新内容"；人工显式传 review_status 时以显式值为准。
+    content_fields = _AUTO_RETURN_FIELDS
+    if (
+        "review_status" not in updates
+        and str(case.review_status).upper() == "APPROVED"
+        and (content_fields & set(updates))
+    ):
+        case.review_status = "PENDING"
+        case.reviewed_by = None
+        merged["review_status"] = "PENDING"
+        summary = (summary + "；" if summary else "") + "内容变更，评审结论自动退回待评审"
+    ensure_review_gate(merged)
 
     old_snapshot = build_snapshot(case)
     for key, value in updates.items():
