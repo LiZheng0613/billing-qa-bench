@@ -2,10 +2,14 @@
 import { computed } from 'vue'
 import { statusLabel } from '../utils/format'
 
-const props = withDefaults(defineProps<{ status?: string | null; size?: 'sm' | 'md' }>(), {
-  status: null,
-  size: 'md',
-})
+const props = withDefaults(
+  defineProps<{ status?: string | null; size?: 'sm' | 'md'; label?: string | null }>(),
+  {
+    status: null,
+    size: 'md',
+    label: null,
+  },
+)
 
 const tone = computed(() => {
   const value = (props.status ?? '').toUpperCase()
@@ -46,6 +50,6 @@ const dotTone = computed(() => {
     :class="[tone, size === 'sm' ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-0.5 text-[11px]']"
   >
     <span class="h-1.5 w-1.5 rounded-full" :class="dotTone" aria-hidden="true" />
-    {{ statusLabel(status) }}
+    {{ label ?? statusLabel(status) }}
   </span>
 </template>

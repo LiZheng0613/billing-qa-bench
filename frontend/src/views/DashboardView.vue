@@ -48,6 +48,7 @@ const live = ref(false)
 const loadingBase = ref(true)
 
 const showCreate = ref(false)
+const taskSearch = ref('')
 const creating = ref(false)
 const caseKeyword = ref('')
 const form = reactive({
@@ -502,8 +503,19 @@ function openTaskTrace(taskId: number): void {
   void router.push({ name: 'trace', query: { task: String(taskId) } })
 }
 
+function searchAllTasks(): void {
+  const keyword = taskSearch.value.trim()
+  void router.push({ name: 'tasks', query: keyword ? { keyword } : {} })
+}
+
 onMounted(() => {
   void loadBase()
+  if (route.query.create === '1') {
+    openCreate()
+    const query = { ...route.query }
+    delete query.create
+    void router.replace({ query })
+  }
 })
 
 onBeforeUnmount(() => {
@@ -573,10 +585,37 @@ onBeforeUnmount(() => {
             <h2 class="panel-title">批量任务</h2>
             <p class="mt-0.5 text-[10px] text-slate-500">点击任务查看批量详情</p>
           </div>
-          <button class="text-[11px] text-slate-500 transition hover:text-slate-800" @click="refreshTasks">
-            刷新
-          </button>
+          <div class="flex items-center gap-2">
+            <button class="text-[11px] text-slate-500 transition hover:text-slate-800" @click="refreshTasks">
+              刷新
+            </button>
+            <button class="text-[11px] font-medium text-indigo-600 transition hover:text-indigo-700" @click="searchAllTasks">
+              全部任务
+            </button>
+          </div>
         </header>
+        <div class="border-b border-slate-200 px-4 py-2.5">
+          <div class="relative">
+            <svg
+              class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              aria-hidden="true"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path stroke-linecap="round" d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              v-model="taskSearch"
+              class="input !py-1.5 !pl-8 text-xs"
+              type="search"
+              placeholder="搜索全部任务名称 / 编号"
+              @keyup.enter="searchAllTasks"
+            />
+          </div>
+        </div>
         <div class="max-h-[560px] flex-1 overflow-y-auto">
           <button
             v-for="item in recentTasks"
@@ -587,7 +626,11 @@ onBeforeUnmount(() => {
           >
             <div class="flex items-center justify-between gap-2">
               <span class="truncate text-sm font-medium text-slate-800">{{ item.name }}</span>
-              <StatusPill :status="item.status" size="sm" />
+              <StatusPill
+                :status="item.status"
+                size="sm"
+                :label="item.schedule_type !== 'IMMEDIATE' && item.status === 'ABORTED' ? '已停止' : null"
+              />
             </div>
             <p class="mt-1 font-mono text-[10px] text-slate-600">{{ item.code }}</p>
             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">

@@ -168,8 +168,13 @@ export const api = {
 
   // ---------------------------------------------------------------- 批量任务
   tasks: {
-    list: (query?: { status?: string; keyword?: string; page?: number; page_size?: number }) =>
-      http.get<Page<BatchTask>>('/tasks', query),
+    list: (query?: {
+      status?: string
+      keyword?: string
+      schedule_type?: TaskScheduleType
+      page?: number
+      page_size?: number
+    }) => http.get<Page<BatchTask>>('/tasks', query),
     get: (id: number) => http.get<BatchTask>(`/tasks/${id}`),
     create: (payload: {
       name: string

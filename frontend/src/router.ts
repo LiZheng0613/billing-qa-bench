@@ -20,6 +20,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '测试大盘' },
       },
       {
+        path: 'tasks',
+        name: 'tasks',
+        component: () => import('./views/TasksView.vue'),
+        meta: { title: '批量任务' },
+      },
+      {
         path: 'cases',
         name: 'cases',
         component: () => import('./views/CasesView.vue'),

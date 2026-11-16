@@ -171,7 +171,11 @@ const stats = computed(() => [
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <StatusPill v-if="task" :status="task.status" />
+        <StatusPill
+          v-if="task"
+          :status="task.status"
+          :label="planWaiting && !planActive ? '已停止' : null"
+        />
         <button class="btn-ghost btn-xs" :disabled="!hasTask" @click="emit('refresh')">刷新</button>
         <button v-if="canRunNow" class="btn-primary btn-xs" @click="emit('run-now')">
           立即执行一次

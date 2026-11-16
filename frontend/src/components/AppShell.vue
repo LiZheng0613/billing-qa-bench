@@ -22,6 +22,12 @@ const navItems: NavItem[] = [
     icon: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
   },
   {
+    name: 'tasks',
+    label: '批量任务',
+    path: '/tasks',
+    icon: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  },
+  {
     name: 'cases',
     label: '用例资产',
     path: '/cases',
