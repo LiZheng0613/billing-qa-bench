@@ -116,6 +116,8 @@ class TaskOut(ORMModel):
     summary: dict | None
     error_message: str | None
     environment_name: str | None = None
+    # 周期计划已派生的执行次数（非计划任务恒为 0）
+    run_count: int = 0
 
 
 class StatusDistribution(BaseModel):
@@ -127,6 +129,29 @@ class StatusDistribution(BaseModel):
     ABORTED: int = 0
     RUNNING: int = 0
     PENDING: int = 0
+
+
+class TaskRunSummary(BaseModel):
+    """周期计划的历次执行聚合统计。"""
+
+    total_runs: int = 0
+    completed: int = 0
+    failed: int = 0
+    aborted: int = 0
+    running: int = 0
+    pending: int = 0
+    pass_count: int = 0
+    finished_cases: int = 0
+    total_cases: int = 0
+    pass_rate: float = 0.0
+
+
+class TaskRunsPage(BaseModel):
+    items: list[TaskOut]
+    total: int
+    page: int
+    page_size: int
+    summary: TaskRunSummary
 
 
 class TaskMetrics(BaseModel):
@@ -186,6 +211,8 @@ class TurnTraceOut(ORMModel):
     generated_sql: str | None
     api_params: dict | None
     raw_db_data: dict | None
+    tool_calls: list | None = None
+    evidence: list | None = None
     ttft_ms: float | None
     latency_ms: float | None
     rule_check: dict | None
@@ -231,6 +258,9 @@ class ExecutionListItem(BaseModel):
     ttft_ms: float | None
     simulator_tokens: int
     judge_tokens: int
+    grading_mode: str | None = None
+    lucky_pass: bool | None = None
+    root_cause: str | None = None
     started_at: datetime
     finished_at: datetime | None
 
@@ -247,4 +277,9 @@ class ExecutionDetail(ExecutionListItem):
     trace_uid: str
     turns: list[TurnTraceOut]
     judges: list[JudgeResultOut]
+    answer_grading: dict | None = None
+    fact_results: list | None = None
+    diagnostics: dict | None = None
+    grader_version: str | None = None
+    as_of: str | None = None
     raw_request_response: list[dict[str, Any]] = Field(default_factory=list)

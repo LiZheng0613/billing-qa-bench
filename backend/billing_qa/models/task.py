@@ -36,7 +36,7 @@ class BatchTask(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="PENDING")
     control_state: Mapped[str] = mapped_column(
-        String(16), default="RUNNING", comment="RUNNING/PAUSED/ABORTING"
+        String(16), default="RUNNING", comment="RUNNING/ABORTING/ABORTED"
     )
     environment_id: Mapped[int | None] = mapped_column(
         ForeignKey("environment.id", ondelete="SET NULL"), nullable=True

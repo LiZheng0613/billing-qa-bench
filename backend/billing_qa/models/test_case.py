@@ -29,6 +29,7 @@ class TestCase(Base, TimestampMixin):
         Index("ix_test_case_code", "code", unique=True),
         Index("ix_test_case_type_status", "case_type", "status"),
         Index("ix_test_case_env", "environment_id"),
+        Index("ix_test_case_grading", "grading_mode", "input_type", "review_status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -92,6 +93,33 @@ class TestCase(Base, TimestampMixin):
     created_by: Mapped[str | None] = mapped_column(String(64))
     updated_by: Mapped[str | None] = mapped_column(String(64))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    # ---- 答案契约判分（P0）----
+    grading_mode: Mapped[str] = mapped_column(
+        String(16), default="LEGACY", comment="LEGACY / ANSWER_CONTRACT"
+    )
+    input_type: Mapped[str] = mapped_column(
+        String(24), default="CLEAR", comment="输入形态，见 InputType"
+    )
+    as_of: Mapped[str | None] = mapped_column(
+        String(32), comment="冻结时间（账期/日期），保证时间相关问题可复现"
+    )
+    snapshot_id: Mapped[str | None] = mapped_column(String(64), comment="数据快照标识")
+    answer_envelope: Mapped[dict | None] = mapped_column(
+        JSON, comment="Must / May / MustNot 答案接受包络"
+    )
+    response_contract: Mapped[dict | None] = mapped_column(
+        JSON, comment="非清晰输入的允许行为契约"
+    )
+    plan_spec: Mapped[dict | None] = mapped_column(JSON, comment="能力集合与预算（仅诊断）")
+    risk_level: Mapped[str] = mapped_column(String(8), default="LOW", comment="LOW / HIGH")
+    owner: Mapped[str | None] = mapped_column(String(64), comment="用例负责人")
+    review_status: Mapped[str] = mapped_column(
+        String(16), default="NOT_REQUIRED", comment="审核状态"
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(String(64))
+    dataset_version: Mapped[str | None] = mapped_column(String(32), default="v1")
+    dedupe_hash: Mapped[str | None] = mapped_column(String(64), comment="去重指纹")
 
     revisions: Mapped[list[TestCaseRevision]] = relationship(
         back_populates="case", cascade="all, delete-orphan", lazy="noload"

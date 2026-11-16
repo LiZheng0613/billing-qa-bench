@@ -68,6 +68,16 @@ class ExecutionRecord(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, default=now, nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
 
+    # ---- 答案契约判分结果（P0）----
+    grading_mode: Mapped[str | None] = mapped_column(String(16), comment="执行时的判分模式")
+    answer_grading: Mapped[dict | None] = mapped_column(JSON, comment="答案契约判分明细")
+    fact_results: Mapped[list | None] = mapped_column(JSON, comment="事实级结果冗余副本")
+    diagnostics: Mapped[dict | None] = mapped_column(JSON, comment="轨迹诊断（0 权重）")
+    lucky_pass: Mapped[bool | None] = mapped_column(Boolean, comment="答案对但路径无效")
+    root_cause: Mapped[str | None] = mapped_column(String(32), comment="失败根因（仅诊断）")
+    grader_version: Mapped[str | None] = mapped_column(String(32), comment="判分器版本")
+    as_of: Mapped[str | None] = mapped_column(String(32), comment="执行时冻结时间")
+
     turns: Mapped[list[TurnTrace]] = relationship(
         back_populates="execution",
         cascade="all, delete-orphan",
@@ -114,6 +124,12 @@ class TurnTrace(Base):
     generated_sql: Mapped[str | None] = mapped_column(Text, comment="生成 SQL")
     api_params: Mapped[dict | None] = mapped_column(JSON, comment="业务接口入参")
     raw_db_data: Mapped[dict | None] = mapped_column(JSON, comment="底层原始取数结果")
+    tool_calls: Mapped[list | None] = mapped_column(
+        JSON, comment="本轮全部工具调用（Cypher/SQL/API），仅诊断用途"
+    )
+    evidence: Mapped[list | None] = mapped_column(
+        JSON, comment="事实账本：fact → value → 调用引用"
+    )
 
     # ---- 性能与校验 ----
     ttft_ms: Mapped[float | None] = mapped_column(Float)

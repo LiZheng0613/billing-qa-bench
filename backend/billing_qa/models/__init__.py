@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from billing_qa.models.candidate import Caliber, CaseCandidate, GraderEval
+from billing_qa.models.capability import Capability, DataSource
 from billing_qa.models.environment import Environment, EnvironmentVariable
 from billing_qa.models.execution import ExecutionRecord, JudgeResult, TurnTrace
+from billing_qa.models.gold_query import FactResult, GoldQuery
 from billing_qa.models.model_config import ModelConfig
 from billing_qa.models.prompt_template import PromptTemplate, PromptTemplateVersion
 from billing_qa.models.task import BatchTask
@@ -11,9 +14,16 @@ from billing_qa.models.test_case import TestCase, TestCaseRevision
 
 __all__ = [
     "BatchTask",
+    "Caliber",
+    "Capability",
+    "CaseCandidate",
+    "DataSource",
     "Environment",
     "EnvironmentVariable",
     "ExecutionRecord",
+    "FactResult",
+    "GoldQuery",
+    "GraderEval",
     "JudgeResult",
     "ModelConfig",
     "PromptTemplate",

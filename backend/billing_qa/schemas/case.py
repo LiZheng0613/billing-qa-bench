@@ -2,19 +2,37 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from billing_qa.models.enums import CaseType, JudgeStrategy, TemplateStrategy
+from billing_qa.models.enums import (
+    CaseType,
+    FactKind,
+    GradingMode,
+    InputType,
+    JudgeStrategy,
+    TemplateStrategy,
+)
 from billing_qa.schemas.common import ORMModel
+
+
+def _fact_id() -> str:
+    return f"f{uuid.uuid4().hex[:10]}"
 
 
 class NumericExpectation(BaseModel):
     label: str = Field(default="数值")
     value: float
     tolerance: float = Field(default=0.0, ge=0)
+    aliases: list[str] = Field(
+        default_factory=list, description="业务名称别名，支持中英文（如 total_amount）"
+    )
+    require_name: bool = Field(
+        default=False, description="为 true 时，答案必须出现名称且与数值同句绑定"
+    )
 
 
 class RuleConfig(BaseModel):
@@ -37,6 +55,150 @@ class TurnItem(BaseModel):
     expected_answer: str | None = None
     expected_rules: RuleConfig | None = None
     notes: str | None = None
+
+
+# ---------------------------------------------------------------------- #
+# 答案契约判分（P0）
+# ---------------------------------------------------------------------- #
+FactVerificationStatus = Literal[
+    "PENDING", "VERIFIED", "CONFLICT", "NO_EVIDENCE", "WAIVED", "STALE"
+]
+
+
+class FactAtom(BaseModel):
+    """可机械判定的最小事实单元（业务语言表达）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=_fact_id, min_length=1, max_length=64)
+    kind: FactKind = FactKind.SCALAR
+    label: str | None = Field(default=None, max_length=200)
+    value: float | str | bool | None = None
+    values: list[str] = Field(default_factory=list)
+    unit: str | None = Field(default=None, max_length=16)
+    tolerance: float = Field(default=0.0, ge=0)
+    time_scope: str | None = None
+    matcher: str | None = None
+    evidence_required: bool = True
+    derived_from: list[str] = Field(default_factory=list)
+    formula: str | None = None
+    keywords: list[str] = Field(default_factory=list, description="boolean/text 类事实的语义线索")
+    aliases: list[str] = Field(
+        default_factory=list,
+        description="业务名称别名，支持中英文 key（如 total_amount / 账单合计）",
+    )
+    require_name: bool = Field(
+        default=False, description="为 true 时，答案必须出现名称且与数值同句绑定"
+    )
+
+    # ---- 取证与验证（存于 JSON，不单独建表）----
+    verification_status: FactVerificationStatus = Field(
+        default="PENDING", description="PENDING/VERIFIED/CONFLICT/NO_EVIDENCE/WAIVED/STALE"
+    )
+    verified_by: str | None = Field(default=None, max_length=64)
+    verified_at: str | None = Field(default=None, max_length=40)
+    verification_note: str | None = Field(default=None, max_length=512)
+    evidence_ref: str | None = Field(default=None, max_length=256)
+
+    @model_validator(mode="after")
+    def _validate_value(self) -> FactAtom:
+        if self.kind in {FactKind.SET, FactKind.TOPK} and not self.values:
+            raise ValueError(f"集合类事实 {self.id} 必须提供 values")
+        if self.kind in {FactKind.SCALAR, FactKind.DATE} and self.value in (None, ""):
+            raise ValueError(f"事实 {self.id} 必须提供 value")
+        if self.kind == FactKind.SCALAR and isinstance(self.value, str):
+            raise ValueError(f"标量事实 {self.id} 的 value 必须是数值")
+        return self
+
+
+class AnswerEnvelope(BaseModel):
+    """答案接受包络：Must 必答 / May 允许扩展 / MustNot 禁止出现。"""
+
+    must: list[FactAtom] = Field(default_factory=list)
+    may: list[FactAtom] = Field(default_factory=list)
+    must_not: list[FactAtom] = Field(default_factory=list)
+    forbidden_phrases: list[str] = Field(default_factory=list)
+    aliases: dict[str, list[str]] = Field(default_factory=dict)
+    tolerances: dict[str, float] = Field(
+        default_factory=lambda: {"money": 0.01, "percent": 0.1}
+    )
+    extras_policy: Literal["strict", "lenient"] = "lenient"
+    clarity_rules: dict[str, Any] = Field(
+        default_factory=lambda: {"conclusion_first": True, "max_ratio": 3.0}
+    )
+
+    @model_validator(mode="after")
+    def _no_conflict(self) -> AnswerEnvelope:
+        must_ids = {item.id for item in self.must}
+        may_ids = {item.id for item in self.may}
+        banned = {item.id for item in self.must_not}
+        overlap = (must_ids | may_ids) & banned
+        if overlap:
+            raise ValueError(f"事实不能同时出现在 Must/May 与 MustNot: {sorted(overlap)}")
+        return self
+
+
+class PlanSpec(BaseModel):
+    """取数计划：只做诊断能力覆盖，不参与正确性判定。"""
+
+    required_capabilities: list[str] = Field(default_factory=list)
+    alternatives: dict[str, list[str]] = Field(default_factory=dict)
+    max_tool_calls: int | None = Field(default=None, ge=1)
+    allow_parallel: bool = True
+
+
+class ClarifySpec(BaseModel):
+    must_ask_slot: list[str] = Field(default_factory=list)
+    must_not_assert: list[str] = Field(default_factory=list)
+
+
+class AssumptionScenario(BaseModel):
+    assumption: str = Field(min_length=1)
+    must: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _must_required(self) -> AssumptionScenario:
+        if not self.must:
+            raise ValueError("每个假设场景必须给出对应的 Must 事实")
+        return self
+
+
+class AssumptionSpec(BaseModel):
+    must_state_assumption: bool = True
+    scenarios: list[AssumptionScenario] = Field(default_factory=list)
+
+
+class PartialSpec(BaseModel):
+    must_disclose: bool = True
+    required_facts: list[str] = Field(default_factory=list)
+
+
+class RefuseSpec(BaseModel):
+    must_reason: bool = True
+
+
+class ResponseContract(BaseModel):
+    """输入不清晰时的「正确行为」契约。"""
+
+    allowed: list[Literal["clarify", "answer_with_assumption", "partial", "refuse"]] = (
+        Field(default_factory=list)
+    )
+    clarify: ClarifySpec | None = None
+    answer_with_assumption: AssumptionSpec | None = None
+    partial: PartialSpec | None = None
+    refuse: RefuseSpec | None = None
+
+    @model_validator(mode="after")
+    def _at_least_two(self) -> ResponseContract:
+        if len(self.allowed) < 2:
+            raise ValueError("歧义/非清晰用例至少需要两种可接受行为")
+        for name in self.allowed:
+            if getattr(self, name) is None:
+                raise ValueError(f"允许行为 {name} 缺少对应配置")
+        assumption = self.answer_with_assumption
+        if assumption is not None and not assumption.scenarios:
+            raise ValueError("answer_with_assumption 至少需要一个假设场景")
+        return self
 
 
 class HiddenContextItem(BaseModel):
@@ -83,6 +245,20 @@ class CaseBase(BaseModel):
     judge_strategy: JudgeStrategy = JudgeStrategy.AVG
     pass_threshold: float | None = Field(default=None, ge=0, le=100)
 
+    # ---- 答案契约判分 ----
+    grading_mode: GradingMode = GradingMode.LEGACY
+    input_type: InputType = InputType.CLEAR
+    as_of: str | None = None
+    snapshot_id: str | None = None
+    answer_envelope: AnswerEnvelope | None = None
+    response_contract: ResponseContract | None = None
+    plan_spec: PlanSpec | None = None
+    risk_level: Literal["LOW", "HIGH"] = "LOW"
+    owner: str | None = None
+    review_status: str = "NOT_REQUIRED"
+    dataset_version: str | None = "v1"
+    dedupe_hash: str | None = None
+
     @model_validator(mode="after")
     def _validate_by_type(self) -> CaseBase:
         if self.case_type == CaseType.SINGLE:
@@ -104,7 +280,23 @@ class CaseBase(BaseModel):
         ):
             if strategy == TemplateStrategy.PINNED and not version:
                 raise ValueError(f"{label}选择 PINNED 策略时必须指定版本号")
+        self._validate_answer_contract()
         return self
+
+    def _validate_answer_contract(self) -> None:
+        if self.grading_mode != GradingMode.ANSWER_CONTRACT:
+            return
+        if self.answer_envelope is None or not self.answer_envelope.must:
+            raise ValueError("契约模式必须至少填写一条 Must 事实")
+        if not self.as_of:
+            raise ValueError("契约模式必须冻结 as_of（账期/日期）")
+        if self.input_type != InputType.CLEAR:
+            if self.response_contract is None:
+                raise ValueError("非清晰输入必须提供响应契约")
+            if self.risk_level == "HIGH" and self.review_status == "NOT_REQUIRED":
+                self.review_status = "PENDING"
+        if self.risk_level == "HIGH" and self.review_status == "NOT_REQUIRED":
+            self.review_status = "PENDING"
 
 
 class CaseCreate(CaseBase):
@@ -141,7 +333,41 @@ class CaseUpdate(BaseModel):
     judge_model_ids: list[int] | None = None
     judge_strategy: JudgeStrategy | None = None
     pass_threshold: float | None = Field(default=None, ge=0, le=100)
+    grading_mode: GradingMode | None = None
+    input_type: InputType | None = None
+    as_of: str | None = None
+    snapshot_id: str | None = None
+    answer_envelope: AnswerEnvelope | None = None
+    response_contract: ResponseContract | None = None
+    plan_spec: PlanSpec | None = None
+    risk_level: Literal["LOW", "HIGH"] | None = None
+    owner: str | None = None
+    review_status: str | None = None
+    dataset_version: str | None = None
+    dedupe_hash: str | None = None
     change_summary: str | None = Field(default=None, max_length=512)
+
+
+class FactVerifyRequest(BaseModel):
+    """单条事实的取证结论。"""
+
+    verification_status: FactVerificationStatus = "VERIFIED"
+    note: str | None = Field(default=None, max_length=512)
+    evidence_ref: str | None = Field(default=None, max_length=256)
+
+
+class CaseReviewRequest(BaseModel):
+    review_status: Literal["PENDING", "APPROVED", "REJECTED"]
+    note: str | None = Field(default=None, max_length=512)
+
+
+class CaseFreezeRequest(BaseModel):
+    dataset_version: str | None = Field(default=None, max_length=32)
+    note: str | None = Field(default=None, max_length=512)
+
+
+class FactAtomView(FactAtom):
+    section: Literal["must", "may", "must_not"]
 
 
 class CaseOut(ORMModel):
@@ -182,6 +408,19 @@ class CaseOut(ORMModel):
     updated_by: str | None
     created_at: datetime
     updated_at: datetime
+    grading_mode: str | None = None
+    input_type: str | None = None
+    as_of: str | None = None
+    snapshot_id: str | None = None
+    answer_envelope: dict | None = None
+    response_contract: dict | None = None
+    plan_spec: dict | None = None
+    risk_level: str | None = None
+    owner: str | None = None
+    review_status: str | None = None
+    reviewed_by: str | None = None
+    dataset_version: str | None = None
+    dedupe_hash: str | None = None
     simulator_template_code: str | None = None
     judge_template_code: str | None = None
     environment_name: str | None = None
@@ -224,12 +463,26 @@ class ImportRowError(BaseModel):
     message: str
 
 
+class ImportItemResult(BaseModel):
+    """逐条导入结果，便于前端展示与人工核对。"""
+
+    row: int
+    code: str | None = None
+    action: Literal["created", "updated", "skipped", "failed"]
+    message: str | None = None
+
+
 class ImportResult(BaseModel):
     total: int
     created: int
     updated: int
+    skipped: int = 0
     failed: int
+    dry_run: bool = False
+    on_conflict: Literal["upsert", "skip", "error"] = "upsert"
     errors: list[ImportRowError]
+    items: list[ImportItemResult] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     case_ids: list[int]
 
 

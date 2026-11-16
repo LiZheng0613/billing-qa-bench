@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from billing_qa.models.test_case import TestCase
+from billing_qa.services.facts import build_verified_ledger
 
 # 参与快照与 Diff 的字段（顺序即展示顺序）
 SNAPSHOT_FIELDS: tuple[str, ...] = (
@@ -39,6 +40,18 @@ SNAPSHOT_FIELDS: tuple[str, ...] = (
     "judge_model_ids",
     "judge_strategy",
     "pass_threshold",
+    "grading_mode",
+    "input_type",
+    "as_of",
+    "snapshot_id",
+    "answer_envelope",
+    "response_contract",
+    "plan_spec",
+    "risk_level",
+    "owner",
+    "review_status",
+    "dataset_version",
+    "dedupe_hash",
 )
 
 FIELD_LABELS: dict[str, str] = {
@@ -73,6 +86,18 @@ FIELD_LABELS: dict[str, str] = {
     "judge_model_ids": "裁判模型",
     "judge_strategy": "多裁判策略",
     "pass_threshold": "通过分数线",
+    "grading_mode": "判分模式",
+    "input_type": "输入形态",
+    "as_of": "冻结时间",
+    "snapshot_id": "数据快照",
+    "answer_envelope": "期望事实（Must/May/MustNot）",
+    "response_contract": "响应契约",
+    "plan_spec": "取数计划（诊断）",
+    "risk_level": "风险等级",
+    "owner": "用例负责人",
+    "review_status": "审核状态",
+    "dataset_version": "数据集版本",
+    "dedupe_hash": "去重指纹",
 }
 
 
@@ -84,6 +109,8 @@ def build_snapshot(case: TestCase) -> dict[str, Any]:
         snapshot[field] = value if value is not None else None
     snapshot["id"] = case.id
     snapshot["name"] = case.name
+    # 事实账本：已取证事实随执行快照冻结，便于判分上下文与审计回放。
+    snapshot["verified_facts"] = build_verified_ledger(snapshot.get("answer_envelope"))
     return snapshot
 
 
