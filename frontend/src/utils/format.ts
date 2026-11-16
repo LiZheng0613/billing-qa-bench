@@ -84,7 +84,6 @@ const STATUS_LABELS: Record<string, string> = {
   ABORTED: '已终止',
   RUNNING: '执行中',
   PENDING: '等待中',
-  PAUSED: '已暂停',
   COMPLETED: '已完成',
   FAILED: '执行失败',
   SCHEDULED: '计划中',
@@ -115,11 +114,13 @@ const STATUS_LABELS: Record<string, string> = {
   PINNED: '锁定版本',
   USER_SIMULATOR: '用户模拟器',
   LLM_JUDGE: 'LLM 裁判',
+  CASE_AUTHOR: 'AI 用例编写',
   SINGLE: '单轮',
   STATIC_MULTI: '静态多轮',
   DYNAMIC_MULTI: '动态多轮',
   SIMULATOR_ROLE: '模拟器模型',
   JUDGE_ROLE: '裁判模型',
+  CASE_AUTHOR_ROLE: '用例编写模型',
 }
 
 export function statusLabel(status?: string | null): string {
@@ -138,6 +139,7 @@ export function templateTypeLabel(type?: string | null): string {
 export function roleLabel(role?: string | null): string {
   if (role === 'SIMULATOR') return '模拟器模型'
   if (role === 'JUDGE') return '裁判模型'
+  if (role === 'CASE_AUTHOR') return '用例编写模型'
   return statusLabel(role)
 }
 

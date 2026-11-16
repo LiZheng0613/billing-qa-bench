@@ -110,6 +110,7 @@ watch([runA, runB], () => {
         <div>
           <label class="label">基线执行 A</label>
           <select v-model="runA" class="input">
+            <button><selectedcontent></selectedcontent></button>
             <option v-for="item in executions" :key="item.id" :value="item.id">
               {{ executionLabel(item) }}
             </option>
@@ -118,6 +119,7 @@ watch([runA, runB], () => {
         <div>
           <label class="label">对比执行 B</label>
           <select v-model="runB" class="input">
+            <button><selectedcontent></selectedcontent></button>
             <option v-for="item in executions" :key="item.id" :value="item.id">
               {{ executionLabel(item) }}
             </option>

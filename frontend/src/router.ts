@@ -26,10 +26,30 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '批量任务' },
       },
       {
+        path: 'tasks/:id',
+        name: 'task-detail',
+        component: () => import('./views/TaskDetailView.vue'),
+        meta: {
+          title: '任务详情',
+          nav: 'tasks',
+          breadcrumb: [{ label: '批量任务', to: '/tasks' }],
+        },
+      },
+      {
         path: 'cases',
         name: 'cases',
         component: () => import('./views/CasesView.vue'),
         meta: { title: '用例资产' },
+      },
+      {
+        path: 'cases/:id',
+        name: 'case-detail',
+        component: () => import('./views/CaseDetailView.vue'),
+        meta: {
+          title: '用例详情',
+          nav: 'cases',
+          breadcrumb: [{ label: '用例资产', to: '/cases' }],
+        },
       },
       {
         path: 'prompts',
@@ -41,13 +61,19 @@ const routes: RouteRecordRaw[] = [
         path: 'trace',
         name: 'trace',
         component: () => import('./views/TraceView.vue'),
-        meta: { title: '执行记录' },
+        meta: { title: '单笔执行结果' },
       },
       {
         path: 'settings',
         name: 'settings',
         component: () => import('./views/SettingsView.vue'),
         meta: { title: '环境与模型' },
+      },
+      {
+        path: 'ops',
+        name: 'ops',
+        component: () => import('./views/OpsView.vue'),
+        meta: { title: '运营后台' },
       },
     ],
   },

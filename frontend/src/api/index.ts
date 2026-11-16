@@ -1,10 +1,24 @@
 import { downloadFile, http } from './client'
 import type {
   BatchTask,
+  Caliber,
+  CandidatePromoteResult,
+  CandidateSource,
+  CandidateStatus,
+  Capability,
+  CapabilityExecuteResult,
+  CaseCandidate,
   CaseExecutionItem,
+  CaseFreezePayload,
+  CaseAIDraftRequest,
+  CaseAIDraftResponse,
   CasePayload,
+  CaseReviewPayload,
   CaseRevision,
   CaseTrend,
+  DataSource,
+  DataSourceKind,
+  DatasetStatItem,
   Environment,
   EnvironmentPayload,
   EnvironmentUsage,
@@ -12,6 +26,12 @@ import type {
   EnvVariableInput,
   ExecutionDetail,
   ExecutionListItem,
+  FactAtomView,
+  FactStatItem,
+  FactStatsOverview,
+  FactVerifyPayload,
+  GoldQuery,
+  GraderEval,
   HealthCheckResult,
   JudgeStrategy,
   LoginResponse,
@@ -22,6 +42,7 @@ import type {
   OpenCodeCatalog,
   OpenCodeCatalogPayload,
   Page,
+  ProbeResult,
   PromptListItem,
   PromptTemplate,
   PromptUsage,
@@ -32,14 +53,40 @@ import type {
   SandboxRequest,
   SandboxResponse,
   TaskMetrics,
+  TaskRunsPage,
   TaskScheduleType,
   TemplateStrategy,
+  TemplateType,
   TestCase,
   UserInfo,
 } from '../types'
 
 type EnvUpdate = Partial<Omit<EnvironmentPayload, 'code' | 'variables'>>
 type ModelUpdate = Partial<Omit<ModelPayload, 'code'>>
+
+export type CaseImportAction = 'created' | 'updated' | 'skipped' | 'failed'
+export type CaseImportConflict = 'upsert' | 'skip' | 'error'
+
+export interface CaseImportItem {
+  row: number
+  code: string | null
+  action: CaseImportAction
+  message: string | null
+}
+
+export interface CaseImportResult {
+  total: number
+  created: number
+  updated: number
+  skipped: number
+  failed: number
+  dry_run: boolean
+  on_conflict: CaseImportConflict
+  errors: Array<{ row: number; message: string }>
+  items: CaseImportItem[]
+  warnings: string[]
+  case_ids: number[]
+}
 
 export const api = {
   // ---------------------------------------------------------------- 认证
@@ -86,7 +133,7 @@ export const api = {
   // ---------------------------------------------------------------- Prompt 资产
   prompts: {
     list: (query?: {
-      template_type?: 'USER_SIMULATOR' | 'LLM_JUDGE'
+      template_type?: TemplateType
       keyword?: string
       is_active?: boolean
       page?: number
@@ -96,7 +143,7 @@ export const api = {
     create: (payload: {
       code: string
       name: string
-      template_type: 'USER_SIMULATOR' | 'LLM_JUDGE'
+      template_type: TemplateType
       description?: string | null
       content: string
       changelog?: string | null
@@ -120,12 +167,16 @@ export const api = {
       status?: string
       tag?: string
       environment_id?: number
+      grading_mode?: string
+      review_status?: string
       keyword?: string
       page?: number
       page_size?: number
     }) => http.get<Page<TestCase>>('/cases', query),
     get: (id: number) => http.get<TestCase>(`/cases/${id}`),
     create: (payload: CasePayload) => http.post<TestCase>('/cases', payload),
+    aiDraft: (payload: CaseAIDraftRequest) =>
+      http.post<CaseAIDraftResponse>('/cases/ai-draft', payload),
     update: (id: number, payload: Partial<CasePayload>) =>
       http.put<TestCase>(`/cases/${id}`, payload),
     remove: (id: number) => http.delete<MessageResponse>(`/cases/${id}`),
@@ -147,22 +198,25 @@ export const api = {
       http.get<RunCompare>('/cases/compare/runs', { run_a: runA, run_b: runB }),
     debug: (id: number, payload?: { environment_id?: number | null }) =>
       http.post<ExecutionDetail>(`/cases/${id}/debug`, payload ?? {}),
+    facts: (id: number) => http.get<FactAtomView[]>(`/cases/${id}/facts`),
+    verifyFact: (id: number, factId: string, payload: FactVerifyPayload) =>
+      http.post<TestCase>(`/cases/${id}/facts/${encodeURIComponent(factId)}/verify`, payload),
+    review: (id: number, payload: CaseReviewPayload) =>
+      http.post<TestCase>(`/cases/${id}/review`, payload),
+    freeze: (id: number, payload: CaseFreezePayload) =>
+      http.post<TestCase>(`/cases/${id}/freeze`, payload),
     export: (format: 'json' | 'xlsx', ids?: number[]) =>
       downloadFile('/cases/export', `test_cases.${format}`, {
         format,
         ids: ids?.length ? ids.join(',') : undefined,
       }),
-    importFile: (file: File) => {
+    importFile: (file: File, options: { dryRun?: boolean; onConflict?: CaseImportConflict } = {}) => {
       const formData = new FormData()
       formData.append('file', file)
-      return http.upload<{
-        total: number
-        created: number
-        updated: number
-        failed: number
-        errors: Array<{ row: number; message: string }>
-        case_ids: number[]
-      }>('/cases/import', formData)
+      return http.upload<CaseImportResult>('/cases/import', formData, {
+        dry_run: options.dryRun ?? false,
+        on_conflict: options.onConflict ?? 'upsert',
+      })
     },
   },
 
@@ -172,6 +226,7 @@ export const api = {
       status?: string
       keyword?: string
       schedule_type?: TaskScheduleType
+      include_runs?: boolean
       page?: number
       page_size?: number
     }) => http.get<Page<BatchTask>>('/tasks', query),
@@ -205,11 +260,11 @@ export const api = {
         active?: boolean
       },
     ) => http.put<BatchTask>(`/tasks/${id}/schedule`, payload),
-    pause: (id: number) => http.post<MessageResponse>(`/tasks/${id}/pause`),
-    resume: (id: number) => http.post<MessageResponse>(`/tasks/${id}/resume`),
     abort: (id: number) => http.post<MessageResponse>(`/tasks/${id}/abort`),
     retryFailed: (id: number) => http.post<MessageResponse>(`/tasks/${id}/retry-failed`),
     metrics: (id: number) => http.get<TaskMetrics>(`/tasks/${id}/metrics`),
+    runs: (id: number, query?: { page?: number; page_size?: number }) =>
+      http.get<TaskRunsPage>(`/tasks/${id}/runs`, query),
     executions: (
       id: number,
       query?: { status?: string; latest_per_case?: boolean; page?: number; page_size?: number },
@@ -228,6 +283,183 @@ export const api = {
     }) => http.get<Page<ExecutionListItem>>('/executions', query),
     get: (id: number) => http.get<ExecutionDetail>(`/executions/${id}`),
     raw: (id: number) => http.get<RawExecution>(`/executions/${id}/raw`),
+  },
+
+  // ---------------------------------------------------------------- 运营：候选池
+  candidates: {
+    list: (query?: {
+      status?: CandidateStatus | string
+      source?: CandidateSource | string
+      keyword?: string
+      page?: number
+      page_size?: number
+    }) => http.get<Page<CaseCandidate>>('/candidates', query),
+    get: (id: number) => http.get<CaseCandidate>(`/candidates/${id}`),
+    create: (payload: {
+      source?: CandidateSource
+      raw_question: string
+      context?: Record<string, unknown> | null
+      trace_uid?: string | null
+      environment_id?: number | null
+      draft?: Record<string, unknown> | null
+      note?: string | null
+    }) => http.post<CaseCandidate>('/candidates', payload),
+    update: (
+      id: number,
+      payload: {
+        status?: CandidateStatus
+        note?: string | null
+        draft?: Record<string, unknown> | null
+      },
+    ) => http.patch<CaseCandidate>(`/candidates/${id}`, payload),
+    reject: (id: number, note?: string) =>
+      http.post<CaseCandidate>(`/candidates/${id}/reject`, undefined, { note }),
+    promote: (
+      id: number,
+      payload?: { code?: string | null; name?: string | null; case?: Record<string, unknown> | null },
+    ) => http.post<CandidatePromoteResult>(`/candidates/${id}/promote`, payload ?? {}),
+  },
+
+  // ---------------------------------------------------------------- 运营：判分器自检
+  grader: {
+    mutants: () => http.get<{ mutants: string[] }>('/grader/mutants'),
+    runEvals: (payload?: {
+      snapshot?: Record<string, unknown> | null
+      correct_answer?: string | null
+      dataset_version?: string | null
+    }) => http.post<GraderEval>('/grader/evals/run', payload ?? {}),
+    evals: (query?: { grader_version?: string; page?: number; page_size?: number }) =>
+      http.get<Page<GraderEval>>('/grader/evals', query),
+  },
+
+  // ---------------------------------------------------------------- 运营：业务口径
+  calibers: {
+    list: (query?: { keyword?: string; page?: number; page_size?: number }) =>
+      http.get<Page<Caliber>>('/calibers', query),
+    get: (id: number) => http.get<Caliber>(`/calibers/${id}`),
+    create: (payload: {
+      key: string
+      name: string
+      definition?: string | null
+      canonical_source?: string
+      owner?: string | null
+    }) => http.post<Caliber>('/calibers', payload),
+    update: (
+      id: number,
+      payload: {
+        name?: string
+        definition?: string | null
+        canonical_source?: string
+        owner?: string | null
+      },
+    ) => http.put<Caliber>(`/calibers/${id}`, payload),
+    remove: (id: number) => http.delete<MessageResponse>(`/calibers/${id}`),
+  },
+
+  // ---------------------------------------------------------------- 运营：数据源
+  dataSources: {
+    list: (query?: {
+      kind?: DataSourceKind | string
+      is_active?: boolean
+      page?: number
+      page_size?: number
+    }) => http.get<Page<DataSource>>('/data-sources', query),
+    get: (id: number) => http.get<DataSource>(`/data-sources/${id}`),
+    create: (payload: {
+      code: string
+      name: string
+      kind?: DataSourceKind
+      endpoint_url?: string | null
+      description?: string | null
+      auth_config?: Record<string, unknown> | null
+      timeout_seconds?: number
+      max_rows?: number
+      tool_version?: string | null
+      is_active?: boolean
+    }) => http.post<DataSource>('/data-sources', payload),
+    update: (
+      id: number,
+      payload: Partial<{
+        name: string
+        kind: DataSourceKind
+        endpoint_url: string | null
+        description: string | null
+        auth_config: Record<string, unknown> | null
+        timeout_seconds: number
+        max_rows: number
+        tool_version: string | null
+        is_active: boolean
+      }>,
+    ) => http.put<DataSource>(`/data-sources/${id}`, payload),
+    remove: (id: number) => http.delete<MessageResponse>(`/data-sources/${id}`),
+    probe: (id: number) => http.post<ProbeResult>(`/data-sources/${id}/probe`),
+  },
+
+  // ---------------------------------------------------------------- 运营：取数能力
+  capabilities: {
+    list: (query?: {
+      status?: string
+      is_active?: boolean
+      keyword?: string
+      page?: number
+      page_size?: number
+    }) => http.get<Page<Capability>>('/capabilities', query),
+    get: (id: number) => http.get<Capability>(`/capabilities/${id}`),
+    create: (payload: {
+      key: string
+      name: string
+      kind?: 'CYPHER' | 'SQL' | 'API'
+      description?: string | null
+      source_id?: number | null
+      query_text?: string | null
+      params_schema?: Array<Record<string, unknown>> | null
+      param_binding?: Record<string, string> | null
+      intent_patterns?: string[] | null
+      lookup_queries?: Record<string, string> | null
+    }) => http.post<Capability>('/capabilities', payload),
+    update: (
+      id: number,
+      payload: Partial<{
+        name: string
+        kind: 'CYPHER' | 'SQL' | 'API'
+        description: string | null
+        source_id: number | null
+        query_text: string | null
+        params_schema: Array<Record<string, unknown>> | null
+        param_binding: Record<string, string> | null
+        intent_patterns: string[] | null
+        lookup_queries: Record<string, string> | null
+        status: 'DRAFT' | 'CERTIFIED' | 'DEPRECATED'
+        is_active: boolean
+      }>,
+    ) => http.put<Capability>(`/capabilities/${id}`, payload),
+    remove: (id: number) => http.delete<MessageResponse>(`/capabilities/${id}`),
+    evidence: (
+      id: number,
+      payload: {
+        case_id: number
+        params?: Record<string, unknown>
+        context?: Record<string, unknown>
+        fact_ids?: string[]
+        session_id?: string | null
+        max_rows?: number | null
+        timeout_seconds?: number | null
+      },
+    ) => http.post<CapabilityExecuteResult>(`/capabilities/${id}/evidence`, payload),
+    goldQueries: (query?: {
+      case_id?: number
+      capability_id?: number
+      page?: number
+      page_size?: number
+    }) => http.get<Page<GoldQuery>>('/gold-queries', query),
+  },
+
+  // ---------------------------------------------------------------- 运营：统计
+  stats: {
+    overview: () => http.get<FactStatsOverview>('/stats/overview'),
+    facts: (query?: { case_id?: number; since?: string; until?: string }) =>
+      http.get<FactStatItem[]>('/stats/facts', query),
+    datasets: () => http.get<DatasetStatItem[]>('/stats/datasets'),
   },
 }
 

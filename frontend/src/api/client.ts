@@ -132,8 +132,10 @@ export const http = {
   post: <T>(path: string, body?: unknown, query?: Record<string, QueryValue>) =>
     request<T>('POST', path, { body, query }),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, { body }),
+  patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, { body }),
   delete: <T>(path: string) => request<T>('DELETE', path),
-  upload: <T>(path: string, formData: FormData) => request<T>('POST', path, { formData }),
+  upload: <T>(path: string, formData: FormData, query?: Record<string, QueryValue>) =>
+    request<T>('POST', path, { formData, query }),
 }
 
 /** 生成带 token 的 WebSocket 地址（开发环境走 Vite 代理）。 */

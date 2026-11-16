@@ -1,875 +1,608 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '../api'
-import { buildWebSocketUrl } from '../api/client'
-import BaseModal from '../components/BaseModal.vue'
+import EmptyState from '../components/EmptyState.vue'
 import MetricCard from '../components/MetricCard.vue'
 import PageHeader from '../components/PageHeader.vue'
-import ScheduleField from '../components/ScheduleField.vue'
 import StatusPill from '../components/StatusPill.vue'
-import EmptyState from '../components/EmptyState.vue'
-import BatchMonitor from './components/BatchMonitor.vue'
 import type {
   BatchTask,
-  CaseExecutionItem,
   Environment,
-  TaskMetrics,
-  TaskProgressEvent,
-  TestCase,
+  ExecutionListItem,
+  FactStatsOverview,
+  GraderEval,
+  TaskStatus,
 } from '../types'
 import { errorMessage } from '../utils/errors'
-import { caseTypeLabel, formatDateTime, formatPercent, statusLabel } from '../utils/format'
 import {
-  defaultSchedule,
-  isPlanTask,
-  normalizeSchedule,
-  schedulePayload,
-  scheduleSummary,
-  scheduleValidationError,
-} from '../utils/schedule'
+  formatDateTime,
+  formatMs,
+  formatPercent,
+  formatScore,
+  sourceLabel,
+} from '../utils/format'
 import { useToastStore } from '../stores/toast'
 
 const router = useRouter()
-const route = useRoute()
 const toast = useToastStore()
 
-const cases = ref<TestCase[]>([])
+const caseTotal = ref(0)
+const activeCaseTotal = ref(0)
+const promptTotal = ref(0)
+const modelTotal = ref(0)
 const tasks = ref<BatchTask[]>([])
-const environments = ref<Environment[]>([])
-const selectedTaskId = ref<number | null>(null)
-const task = ref<BatchTask | null>(null)
-const metrics = ref<TaskMetrics | null>(null)
-const executions = ref<CaseExecutionItem[]>([])
+const taskTotal = ref(0)
+const recentExecutions = ref<ExecutionListItem[]>([])
 const executionTotal = ref(0)
-const executionPage = ref(1)
-const executionPageSize = 30
-const live = ref(false)
-const loadingBase = ref(true)
+const environments = ref<Environment[]>([])
+const loading = ref(true)
+// 运营后台概览
+const opsOverview = ref<FactStatsOverview | null>(null)
+const candidateTotal = ref(0)
+const candidatePending = ref(0)
+const caliberTotal = ref(0)
+const sourceTotal = ref(0)
+const sourceActive = ref(0)
+const sourceProbeFailed = ref(0)
+const capabilityTotal = ref(0)
+const latestEval = ref<GraderEval | null>(null)
 
-const showCreate = ref(false)
-const taskSearch = ref('')
-const creating = ref(false)
-const caseKeyword = ref('')
-const form = reactive({
-  name: '',
-  description: '',
-  environment_id: null as number | null,
-  concurrency: 3,
-  qps_limit: 5,
-  retry_on_env_error: true,
-  max_env_retries: 2,
-  retry_backoff_seconds: 3,
-  case_scope: 'SELECTED' as 'SELECTED' | 'ALL_ACTIVE',
-  case_ids: [] as number[],
-  auto_start: true,
-  schedule: defaultSchedule(),
-})
+let refreshTimer: number | null = null
 
-const activeCaseCount = computed(
-  () => cases.value.filter((item) => item.status === 'ACTIVE').length,
-)
-
-const scopeCount = computed(() =>
-  form.case_scope === 'ALL_ACTIVE' ? activeCaseCount.value : form.case_ids.length,
-)
-
-let socket: WebSocket | null = null
-let pollTimer: number | null = null
-
-const activeTask = computed(() => tasks.value.find((item) => item.id === selectedTaskId.value) ?? task.value)
-
-const filteredCases = computed(() => {
-  const keyword = caseKeyword.value.trim().toLowerCase()
-  return cases.value.filter((item) => {
-    if (!keyword) return true
-    return (
-      item.code.toLowerCase().includes(keyword) ||
-      item.name.toLowerCase().includes(keyword) ||
-      (item.tags ?? []).some((tag) => tag.toLowerCase().includes(keyword))
-    )
-  })
-})
+const STATUS_ORDER: Array<{ key: TaskStatus | 'SCHEDULED'; label: string; color: string }> = [
+  { key: 'RUNNING', label: '执行中', color: 'bg-indigo-500' },
+  { key: 'PENDING', label: '等待中', color: 'bg-slate-500' },
+  { key: 'SCHEDULED', label: '计划中', color: 'bg-sky-500' },
+  { key: 'COMPLETED', label: '已完成', color: 'bg-emerald-500' },
+  { key: 'ABORTED', label: '已终止', color: 'bg-slate-400' },
+  { key: 'FAILED', label: '执行失败', color: 'bg-rose-500' },
+]
 
 const runningCount = computed(() => tasks.value.filter((item) => item.status === 'RUNNING').length)
+const activeTaskCount = computed(
+  () => tasks.value.filter((item) => ['RUNNING', 'PENDING'].includes(item.status)).length,
+)
 
-const recentTasks = computed(() => tasks.value.slice(0, 12))
+const taskStatusSegments = computed(() => {
+  const counts = new Map<string, number>()
+  tasks.value.forEach((task) => {
+    counts.set(task.status, (counts.get(task.status) ?? 0) + 1)
+  })
+  return STATUS_ORDER.map((item) => ({
+    ...item,
+    count: item.key === 'SCHEDULED'
+      ? tasks.value.filter((task) => task.status === 'SCHEDULED').length
+      : counts.get(item.key) ?? 0,
+  }))
+})
+
+const taskStatusTotal = computed(() =>
+  taskStatusSegments.value.reduce((sum, item) => sum + item.count, 0),
+)
+
+const recentPassRate = computed(() => {
+  const measured = recentExecutions.value.filter((item) => item.pass_flag !== null)
+  if (measured.length === 0) return null
+  return (measured.filter((item) => item.pass_flag).length / measured.length) * 100
+})
+
+const recentTaskList = computed(() => tasks.value.slice(0, 8))
+const recentRunList = computed(() => recentExecutions.value.slice(0, 8))
+
+const activeEnvironments = computed(() => environments.value.filter((item) => item.is_active))
+const healthyCount = computed(
+  () => activeEnvironments.value.filter((item) => item.last_health_status === 'UP').length,
+)
+const unhealthyCount = computed(
+  () =>
+    activeEnvironments.value.filter(
+      (item) => item.last_health_status && item.last_health_status !== 'UP',
+    ).length,
+)
+
+const envPreview = computed(() => activeEnvironments.value.slice(0, 6))
+
+const evalHealthy = computed(() => {
+  const latest = latestEval.value
+  return Boolean(latest && latest.false_kills === 0 && latest.detected === latest.total)
+})
 
 function reportError(exc: unknown): void {
   toast.error(errorMessage(exc))
 }
 
-async function loadAllCases(): Promise<TestCase[]> {
-  const pageSize = 200
-  const first = await api.cases.list({ page_size: pageSize, page: 1 })
-  const all = [...first.items]
-  const totalPages = Math.ceil(first.total / pageSize)
-  for (let page = 2; page <= totalPages; page += 1) {
-    const next = await api.cases.list({ page_size: pageSize, page })
-    all.push(...next.items)
-  }
-  return all
-}
-
-async function loadBase(): Promise<void> {
-  loadingBase.value = true
+async function load(silent = false): Promise<boolean> {
+  if (!silent) loading.value = true
   try {
-    const [allCases, taskPage, envPage] = await Promise.all([
-      loadAllCases(),
-      api.tasks.list({ page_size: 50 }),
+    const [
+      allCases,
+      activeCases,
+      taskPage,
+      execPage,
+      envPage,
+      promptPage,
+      modelPage,
+      statsOverview,
+      candidatesPage,
+      pendingCandidatesPage,
+      caliberPage,
+      sourcePage,
+      capabilityPage,
+      evalPage,
+    ] = await Promise.all([
+      api.cases.list({ page: 1, page_size: 1 }),
+      api.cases.list({ page: 1, page_size: 1, status: 'ACTIVE' }),
+      api.tasks.list({ page_size: 50, include_runs: true }),
+      api.executions.list({ page_size: 20 }),
       api.environments.list({ page_size: 100 }),
+      api.prompts.list({ page: 1, page_size: 1 }),
+      api.models.list({ page: 1, page_size: 1 }),
+      api.stats.overview(),
+      api.candidates.list({ page: 1, page_size: 1 }),
+      api.candidates.list({ status: 'NEW', page: 1, page_size: 1 }),
+      api.calibers.list({ page: 1, page_size: 1 }),
+      api.dataSources.list({ page: 1, page_size: 100 }),
+      api.capabilities.list({ page: 1, page_size: 100 }),
+      api.grader.evals({ page: 1, page_size: 1 }),
     ])
-    cases.value = allCases
+    caseTotal.value = allCases.total
+    activeCaseTotal.value = activeCases.total
     tasks.value = taskPage.items
+    taskTotal.value = taskPage.total
+    recentExecutions.value = execPage.items
+    executionTotal.value = execPage.total
     environments.value = envPage.items
-    const requestedId = Number(route.query.task)
-    const preferred =
-      (requestedId ? tasks.value.find((item) => item.id === requestedId) : undefined) ??
-      tasks.value.find((item) => item.status === 'RUNNING') ??
-      tasks.value.find((item) => item.status === 'PAUSED') ??
-      tasks.value[0]
-    if (preferred) await selectTask(preferred.id)
+    promptTotal.value = promptPage.total
+    modelTotal.value = modelPage.total
+
+    opsOverview.value = statsOverview
+    candidateTotal.value = candidatesPage.total
+    candidatePending.value = pendingCandidatesPage.total
+    caliberTotal.value = caliberPage.total
+    sourceTotal.value = sourcePage.total
+    sourceActive.value = sourcePage.items.filter((item) => item.is_active).length
+    sourceProbeFailed.value = sourcePage.items.filter(
+      (item) => item.is_active && item.last_probe_status && item.last_probe_status !== 'OK',
+    ).length
+    capabilityTotal.value = capabilityPage.total
+    latestEval.value = evalPage.items[0] ?? null
+    return true
   } catch (exc) {
-    reportError(exc)
+    if (!silent) reportError(exc)
+    return false
   } finally {
-    loadingBase.value = false
+    if (!silent) loading.value = false
   }
 }
 
-async function refreshTasks(): Promise<void> {
-  try {
-    const page = await api.tasks.list({ page_size: 50 })
-    tasks.value = page.items
-  } catch (exc) {
-    reportError(exc)
-  }
+async function refreshData(): Promise<void> {
+  if (await load()) toast.success('刷新成功')
 }
 
-async function selectTask(taskId: number): Promise<void> {
-  if (selectedTaskId.value !== taskId) {
-    disconnectSocket()
-    stopPolling()
-    executionPage.value = 1
-  }
-  selectedTaskId.value = taskId
-  try {
-    const [detail, taskMetrics, executionPageData] = await Promise.all([
-      api.tasks.get(taskId),
-      api.tasks.metrics(taskId),
-      api.tasks.executions(taskId, {
-        page: executionPage.value,
-        page_size: executionPageSize,
-        latest_per_case: true,
-      }),
-    ])
-    task.value = detail
-    metrics.value = taskMetrics
-    executions.value = executionPageData.items
-    executionTotal.value = executionPageData.total
-    patchTaskInList(detail)
-    if (['RUNNING', 'PAUSED', 'PENDING'].includes(detail.status)) {
-      connectSocket(taskId)
-      startPolling(taskId)
-    } else {
-      disconnectSocket()
-      stopPolling()
-    }
-  } catch (exc) {
-    reportError(exc)
-  }
-}
-
-async function loadExecutions(taskId: number): Promise<void> {
-  try {
-    const pageData = await api.tasks.executions(taskId, {
-      page: executionPage.value,
-      page_size: executionPageSize,
-      latest_per_case: true,
-    })
-    executions.value = pageData.items
-    executionTotal.value = pageData.total
-  } catch (exc) {
-    reportError(exc)
-  }
-}
-
-function changeExecutionPage(next: number): void {
-  if (!selectedTaskId.value) return
-  executionPage.value = next
-  void loadExecutions(selectedTaskId.value)
-}
-
-function patchTaskInList(next: BatchTask): void {
-  const index = tasks.value.findIndex((item) => item.id === next.id)
-  if (index >= 0) tasks.value.splice(index, 1, next)
-  else tasks.value.unshift(next)
-}
-
-function applyEvent(event: TaskProgressEvent): void {
-  if (event.type === 'ping') return
-  if (event.metrics) metrics.value = event.metrics
-  if (task.value && event.task_id === task.value.id) {
-    if (event.status) task.value.status = event.status
-    if (event.control_state) task.value.control_state = event.control_state
-    if (typeof event.finished_cases === 'number') task.value.finished_cases = event.finished_cases
-    if (typeof event.total_cases === 'number') task.value.total_cases = event.total_cases
-    if (typeof event.pass_count === 'number') task.value.pass_count = event.pass_count
-    if (typeof event.fail_count === 'number') task.value.fail_count = event.fail_count
-    if (typeof event.error_count === 'number') task.value.error_count = event.error_count
-    if (typeof event.max_turns_count === 'number') task.value.max_turns_count = event.max_turns_count
-    patchTaskInList({ ...task.value })
-  }
-  if (event.execution) {
-    const next = event.execution
-    const index = executions.value.findIndex((item) => item.case_id === next.case_id)
-    if (index >= 0) {
-      const current = executions.value[index]
-      executions.value.splice(index, 1, {
-        ...next,
-        attempt_count: Math.max(current.attempt_count ?? 1, next.attempt_no),
-      })
-    } else {
-      executions.value.unshift({ ...next, attempt_count: Math.max(1, next.attempt_no) })
-      executionTotal.value += 1
-    }
-    executions.value = executions.value.slice(0, executionPageSize)
-  }
-  if (event.status && ['COMPLETED', 'ABORTED', 'FAILED'].includes(event.status)) {
-    disconnectSocket()
-    stopPolling()
-    window.setTimeout(() => {
-      void refreshTasks()
-      if (selectedTaskId.value) void selectTask(selectedTaskId.value)
-    }, 500)
-  }
-}
-
-function connectSocket(taskId: number): void {
-  disconnectSocket()
-  try {
-    const ws = new WebSocket(buildWebSocketUrl(`/ws/tasks/${taskId}`))
-    socket = ws
-    ws.onopen = () => {
-      live.value = true
-    }
-    ws.onmessage = (message) => {
-      try {
-        applyEvent(JSON.parse(String(message.data)) as TaskProgressEvent)
-      } catch {
-        // 忽略非 JSON 帧
-      }
-    }
-    ws.onerror = () => {
-      live.value = false
-    }
-    ws.onclose = () => {
-      if (socket === ws) {
-        socket = null
-        live.value = false
-      }
-    }
-  } catch {
-    live.value = false
-  }
-}
-
-function disconnectSocket(): void {
-  if (socket) {
-    socket.onclose = null
-    socket.close()
-    socket = null
-  }
-  live.value = false
-}
-
-function startPolling(taskId: number): void {
-  stopPolling()
-  pollTimer = window.setInterval(async () => {
-    try {
-      const nextMetrics = await api.tasks.metrics(taskId)
-      metrics.value = nextMetrics
-      if (!live.value) {
-        const detail = await api.tasks.get(taskId)
-        task.value = detail
-        patchTaskInList(detail)
-        const page = await api.tasks.executions(taskId, {
-          page: executionPage.value,
-          page_size: executionPageSize,
-          latest_per_case: true,
-        })
-        executions.value = page.items
-        executionTotal.value = page.total
-        if (!['RUNNING', 'PAUSED', 'PENDING'].includes(detail.status)) {
-          stopPolling()
-          disconnectSocket()
-          void refreshTasks()
-        }
-      }
-    } catch {
-      stopPolling()
-    }
-  }, 4000)
-}
-
-function stopPolling(): void {
-  if (pollTimer !== null) {
-    window.clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-async function refreshCurrent(): Promise<void> {
-  await refreshTasks()
-  if (selectedTaskId.value) await selectTask(selectedTaskId.value)
-}
-
-async function pauseTask(): Promise<void> {
-  if (!task.value) return
-  try {
-    await api.tasks.pause(task.value.id)
-    toast.success('任务已暂停')
-    await refreshCurrent()
-  } catch (exc) {
-    reportError(exc)
-  }
-}
-
-async function resumeTask(): Promise<void> {
-  if (!task.value) return
-  try {
-    await api.tasks.resume(task.value.id)
-    toast.success('任务已恢复')
-    await refreshCurrent()
-  } catch (exc) {
-    reportError(exc)
-  }
-}
-
-async function abortTask(): Promise<void> {
-  if (!task.value) return
-  if (!window.confirm('确认终止当前任务？已完成的执行记录会保留。')) return
-  try {
-    await api.tasks.abort(task.value.id)
-    toast.success('终止指令已下发')
-    await refreshCurrent()
-  } catch (exc) {
-    reportError(exc)
-  }
-}
-
-async function retryFailed(): Promise<void> {
-  if (!task.value) return
-  try {
-    const result = await api.tasks.retryFailed(task.value.id)
-    toast.success(result.message)
-    await refreshCurrent()
-  } catch (exc) {
-    reportError(exc)
-  }
-}
-
-function openCreate(): void {
-  const stamp = new Date()
-  form.name = `回归任务 ${stamp.getMonth() + 1}/${stamp.getDate()} ${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}`
-  form.description = ''
-  form.environment_id = environments.value[0]?.id ?? null
-  form.concurrency = 3
-  form.qps_limit = 5
-  form.retry_on_env_error = true
-  form.max_env_retries = 2
-  form.retry_backoff_seconds = 3
-  form.case_scope = 'SELECTED'
-  form.case_ids = []
-  form.auto_start = true
-  form.schedule = defaultSchedule()
-  caseKeyword.value = ''
-  showCreate.value = true
-}
-
-function toggleCase(item: TestCase): void {
-  if (item.status !== 'ACTIVE') return
-  const index = form.case_ids.indexOf(item.id)
-  if (index >= 0) form.case_ids.splice(index, 1)
-  else form.case_ids.push(item.id)
-}
-
-function selectAllFiltered(): void {
-  const ids = filteredCases.value
-    .filter((item) => item.status === 'ACTIVE')
-    .map((item) => item.id)
-  form.case_ids = Array.from(new Set([...form.case_ids, ...ids]))
-}
-
-function clearSelected(): void {
-  form.case_ids = []
-}
-
-async function submitCreate(): Promise<void> {
-  if (!form.name.trim()) {
-    toast.error('请填写任务名称')
-    return
-  }
-  if (form.case_scope === 'SELECTED' && form.case_ids.length === 0) {
-    toast.error('请至少选择一个用例，或切换为「全部启用用例」')
-    return
-  }
-  if (form.case_scope === 'ALL_ACTIVE' && activeCaseCount.value === 0) {
-    toast.error('用例库中没有启用用例，无法批量执行')
-    return
-  }
-  const scheduleError = scheduleValidationError(form.schedule)
-  if (scheduleError) {
-    toast.error(scheduleError)
-    return
-  }
-  creating.value = true
-  try {
-    const created = await api.tasks.create({
-      name: form.name.trim(),
-      description: form.description.trim() || null,
-      environment_id: form.environment_id,
-      case_scope: form.case_scope,
-      case_ids: form.case_scope === 'SELECTED' ? [...form.case_ids] : [],
-      concurrency: form.concurrency,
-      qps_limit: form.qps_limit,
-      retry_on_env_error: form.retry_on_env_error,
-      max_env_retries: form.max_env_retries,
-      retry_backoff_seconds: form.retry_backoff_seconds,
-      ...schedulePayload(normalizeSchedule(form.schedule)),
-      auto_start: form.schedule.type === 'IMMEDIATE' && form.auto_start,
-    })
-    const scheduled = created.schedule_type !== 'IMMEDIATE'
-    toast.success(
-      scheduled
-        ? `定时任务 ${created.code} 已登记：${scheduleSummary(normalizeSchedule(form.schedule))}`
-        : `任务 ${created.code} 已创建，共 ${created.total_cases} 条用例`,
-    )
-    showCreate.value = false
-    await refreshTasks()
-    await selectTask(created.id)
-  } catch (exc) {
-    reportError(exc)
-  } finally {
-    creating.value = false
-  }
-}
-
-async function runTaskNow(): Promise<void> {
-  if (!task.value) return
-  const plan = isPlanTask(task.value)
-  const oneOff = task.value.schedule_type === 'SCHEDULED'
-  try {
-    const run = await api.tasks.runNow(task.value.id)
-    toast.success(plan ? `已按计划立即执行一次：${run.code}` : '任务已启动')
-    await refreshCurrent()
-    // 周期计划会克隆出新任务，直接切到这次执行
-    if (plan && !oneOff) {
-      await selectTask(run.id)
-      void router.replace({ name: 'dashboard', query: { task: String(run.id) } })
-    }
-  } catch (exc) {
-    reportError(exc)
-  }
-}
-
-async function stopPlan(): Promise<void> {
-  if (!task.value) return
-  if (!window.confirm('确认停止该定时计划？已生成的历史任务不会删除。')) return
-  try {
-    await api.tasks.abort(task.value.id)
-    toast.success('定时计划已停止')
-    await refreshCurrent()
-  } catch (exc) {
-    reportError(exc)
-  }
-}
-
-async function togglePlan(active: boolean): Promise<void> {
-  if (!task.value) return
-  try {
-    await api.tasks.updateSchedule(task.value.id, { active })
-    toast.success(active ? '定时计划已启用' : '定时计划已暂停')
-    await refreshCurrent()
-  } catch (exc) {
-    reportError(exc)
-  }
+function openTask(task: BatchTask): void {
+  void router.push({ name: 'task-detail', params: { id: String(task.id) } })
 }
 
 function openExecution(executionId: number): void {
-  void router.push({ name: 'trace', query: { execution: String(executionId) } })
+  void router.push({
+    name: 'trace',
+    query: { execution: String(executionId), from: 'task' },
+  })
 }
 
-function openTaskTrace(taskId: number): void {
-  void router.push({ name: 'trace', query: { task: String(taskId) } })
+function taskProgress(task: BatchTask): number {
+  if (!task.total_cases) return 0
+  return Math.min(100, Math.round((task.finished_cases / task.total_cases) * 100))
 }
 
-function searchAllTasks(): void {
-  const keyword = taskSearch.value.trim()
-  void router.push({ name: 'tasks', query: keyword ? { keyword } : {} })
+function taskPassRate(task: BatchTask): string {
+  if (!task.finished_cases) return '—'
+  return formatPercent((task.pass_count / task.finished_cases) * 100, 1)
 }
 
 onMounted(() => {
-  void loadBase()
-  if (route.query.create === '1') {
-    openCreate()
-    const query = { ...route.query }
-    delete query.create
-    void router.replace({ query })
-  }
+  void load()
+  refreshTimer = window.setInterval(() => {
+    if (!document.hidden) void load(true)
+  }, 20000)
 })
 
 onBeforeUnmount(() => {
-  disconnectSocket()
-  stopPolling()
+  if (refreshTimer !== null) window.clearInterval(refreshTimer)
 })
 </script>
 
 <template>
   <div class="space-y-4">
     <PageHeader
-      eyebrow="Dashboard · 实时大盘"
-      title="批量任务测试大盘"
-      description="批量任务概览与单次运行详情；选中任务后查看通过分布与用例级结果，点击用例行进入单笔执行结果页。"
+      eyebrow="Dashboard · 系统总览"
+      title="测试大盘"
+      description="整个测试平台的运行总览：用例资产、批量任务状态、最近执行通过率、环境健康与模型 / Prompt 资产。"
     >
       <template #actions>
-        <button class="btn-ghost" @click="refreshCurrent">刷新数据</button>
-        <button class="btn-primary" @click="openCreate">
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" d="M12 5v14M5 12h14" />
-          </svg>
-          新建批量任务
-        </button>
+        <button class="btn-ghost" @click="refreshData">刷新</button>
       </template>
     </PageHeader>
 
-    <div class="grid grid-cols-2 gap-3 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,0.92fr)_minmax(0,0.86fr)_minmax(0,1.3fr)]">
-      <MetricCard label="用例总数" :value="cases.length" hint="当前可用用例" accent="sky" />
-      <MetricCard label="批量任务" :value="tasks.length" hint="最近 50 条任务" accent="indigo" />
-      <MetricCard label="运行中" :value="runningCount" hint="实时执行任务数" accent="amber" />
+    <div class="grid grid-cols-2 gap-3 xl:grid-cols-4">
       <MetricCard
-        label="任务通过率"
-        :value="formatPercent(metrics?.pass_rate, 1)"
-        :hint="activeTask ? activeTask.name : '尚未选择任务'"
+        label="用例资产"
+        :value="caseTotal"
+        :hint="`其中启用 ${activeCaseTotal} 条`"
+        accent="sky"
+      />
+      <MetricCard
+        label="批量任务"
+        :value="taskTotal"
+        :hint="`最近 ${tasks.length} 条任务中 ${activeTaskCount} 条在队列`"
+        accent="indigo"
+      />
+      <MetricCard
+        label="运行中"
+        :value="runningCount"
+        hint="实时执行中的批量任务"
+        accent="amber"
+      />
+      <MetricCard
+        label="最近执行通过率"
+        :value="formatPercent(recentPassRate, 1)"
+        :hint="`基于最近 ${recentExecutions.length} 次执行`"
         accent="emerald"
-        :progress="metrics?.pass_rate ?? null"
+        :progress="recentPassRate"
       />
     </div>
 
     <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
       <div class="min-w-0 space-y-5">
-        <BatchMonitor
-          :task="task"
-          :metrics="metrics"
-          :executions="executions"
-          :live="live"
-          :execution-total="executionTotal"
-          :execution-page="executionPage"
-          :execution-page-size="executionPageSize"
-          @refresh="refreshCurrent"
-          @pause="pauseTask"
-          @resume="resumeTask"
-          @abort="abortTask"
-          @retry="retryFailed"
-          @run-now="runTaskNow"
-          @stop-plan="stopPlan"
-          @toggle-plan="togglePlan"
-          @select-execution="openExecution"
-          @view-task-trace="openTaskTrace"
-          @page-change="changeExecutionPage"
-        />
-      </div>
-
-      <section class="card flex flex-col overflow-hidden">
-        <header class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-          <div>
-            <h2 class="panel-title">批量任务</h2>
-            <p class="mt-0.5 text-[10px] text-slate-500">点击任务查看批量详情</p>
-          </div>
-          <div class="flex items-center gap-2">
-            <button class="text-[11px] text-slate-500 transition hover:text-slate-800" @click="refreshTasks">
-              刷新
-            </button>
-            <button class="text-[11px] font-medium text-indigo-600 transition hover:text-indigo-700" @click="searchAllTasks">
+        <section class="card overflow-hidden">
+          <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3">
+            <div>
+              <h2 class="panel-title">批量任务状态</h2>
+              <p class="mt-0.5 text-[11px] text-slate-500">基于最近 {{ tasks.length }} 条任务的状态分布</p>
+            </div>
+            <button class="text-[11px] font-medium text-indigo-600 transition hover:text-indigo-700" @click="router.push({ name: 'tasks' })">
               全部任务
             </button>
+          </header>
+          <div class="px-5 py-4">
+            <div v-if="taskStatusTotal" class="flex h-2 overflow-hidden rounded-full bg-slate-100">
+              <div
+                v-for="segment in taskStatusSegments.filter((item) => item.count > 0)"
+                :key="segment.key"
+                class="h-full transition-all duration-500"
+                :class="segment.color"
+                :style="{ width: `${(segment.count / taskStatusTotal) * 100}%` }"
+                :title="`${segment.label}: ${segment.count}`"
+              />
+            </div>
+            <div class="mt-3 flex flex-wrap gap-x-5 gap-y-2">
+              <span
+                v-for="segment in taskStatusSegments"
+                :key="segment.key"
+                class="inline-flex items-center gap-1.5 text-[11px]"
+                :class="segment.count ? 'text-slate-600' : 'text-slate-400'"
+              >
+                <span class="h-1.5 w-1.5 rounded-full" :class="segment.color" />
+                {{ segment.label }}
+                <span class="font-medium tabular-nums text-slate-800">{{ segment.count }}</span>
+              </span>
+            </div>
           </div>
-        </header>
-        <div class="border-b border-slate-200 px-4 py-2.5">
-          <div class="relative">
-            <svg
-              class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              aria-hidden="true"
+        </section>
+
+        <section class="card overflow-hidden">
+          <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3">
+            <div>
+              <h2 class="panel-title">最近批量任务</h2>
+              <p class="mt-0.5 text-[11px] text-slate-500">点击任务进入任务详情，查看逐用例结果与操作</p>
+            </div>
+            <button class="text-[11px] font-medium text-indigo-600 transition hover:text-indigo-700" @click="router.push({ name: 'tasks' })">
+              查看更多
+            </button>
+          </header>
+          <div class="overflow-x-auto">
+            <table class="table-shell">
+              <thead>
+                <tr>
+                  <th class="th">任务</th>
+                  <th class="th">状态</th>
+                  <th class="th">进度</th>
+                  <th class="th">通过率</th>
+                  <th class="th">创建时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="item in recentTaskList"
+                  :key="item.id"
+                  class="cursor-pointer"
+                  @click="openTask(item)"
+                >
+                  <td class="td">
+                    <p class="max-w-[240px] truncate text-sm font-medium text-slate-800">{{ item.name }}</p>
+                    <p class="mt-0.5 font-mono text-[11px] text-slate-500">{{ item.code }}</p>
+                  </td>
+                  <td class="td"><StatusPill :status="item.status" size="sm" /></td>
+                  <td class="td">
+                    <div class="flex items-center gap-2">
+                      <div class="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100">
+                        <div class="h-full rounded-full bg-indigo-500" :style="{ width: `${taskProgress(item)}%` }" />
+                      </div>
+                      <span class="text-[11px] tabular-nums text-slate-600">
+                        {{ item.finished_cases }}/{{ item.total_cases }}
+                      </span>
+                    </div>
+                  </td>
+                  <td class="td text-xs tabular-nums text-slate-700">{{ taskPassRate(item) }}</td>
+                  <td class="td text-xs text-slate-500">{{ formatDateTime(item.created_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <EmptyState
+              v-if="!loading && recentTaskList.length === 0"
+              compact
+              title="还没有批量任务"
+              description="前往批量任务页面即可创建并执行回归。"
             >
-              <circle cx="11" cy="11" r="7" />
-              <path stroke-linecap="round" d="m20 20-3.5-3.5" />
-            </svg>
-            <input
-              v-model="taskSearch"
-              class="input !py-1.5 !pl-8 text-xs"
-              type="search"
-              placeholder="搜索全部任务名称 / 编号"
-              @keyup.enter="searchAllTasks"
+            </EmptyState>
+          </div>
+        </section>
+
+        <section class="card overflow-hidden">
+          <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3">
+            <div>
+              <h2 class="panel-title">最近执行记录</h2>
+              <p class="mt-0.5 text-[11px] text-slate-500">
+                共 {{ executionTotal }} 次执行，点击记录查看单笔执行结果
+              </p>
+            </div>
+          </header>
+          <div class="overflow-x-auto">
+            <table class="table-shell">
+              <thead>
+                <tr>
+                  <th class="th">执行</th>
+                  <th class="th">用例</th>
+                  <th class="th">状态</th>
+                  <th class="th">得分</th>
+                  <th class="th">来源</th>
+                  <th class="th">耗时</th>
+                  <th class="th">开始时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="item in recentRunList"
+                  :key="item.id"
+                  class="cursor-pointer"
+                  @click="openExecution(item.id)"
+                >
+                  <td class="td font-mono text-xs text-indigo-600">#{{ item.id }}</td>
+                  <td class="td">
+                    <p class="font-mono text-xs text-slate-800">{{ item.case_code || '—' }}</p>
+                    <p class="mt-0.5 max-w-[200px] truncate text-[11px] text-slate-500">
+                      {{ item.case_name || '—' }} · v{{ item.case_version }}
+                    </p>
+                  </td>
+                  <td class="td"><StatusPill :status="item.status" size="sm" /></td>
+                  <td class="td text-xs tabular-nums">{{ formatScore(item.total_score) }}</td>
+                  <td class="td text-xs text-slate-600">{{ sourceLabel(item.source) }}</td>
+                  <td class="td text-xs tabular-nums">{{ formatMs(item.latency_ms) }}</td>
+                  <td class="td text-xs text-slate-500">{{ formatDateTime(item.started_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <EmptyState
+              v-if="!loading && recentRunList.length === 0"
+              compact
+              title="还没有执行记录"
+              description="运行一次批量任务或单条调试后再来查看。"
             />
           </div>
-        </div>
-        <div class="max-h-[560px] flex-1 overflow-y-auto">
-          <button
-            v-for="item in recentTasks"
-            :key="item.id"
-            class="w-full border-b border-slate-200 px-4 py-3 text-left transition hover:bg-slate-100/70"
-            :class="item.id === selectedTaskId ? 'bg-indigo-50' : ''"
-            @click="selectTask(item.id)"
-          >
-            <div class="flex items-center justify-between gap-2">
-              <span class="truncate text-sm font-medium text-slate-800">{{ item.name }}</span>
-              <StatusPill
-                :status="item.status"
-                size="sm"
-                :label="item.schedule_type !== 'IMMEDIATE' && item.status === 'ABORTED' ? '已停止' : null"
-              />
-            </div>
-            <p class="mt-1 font-mono text-[10px] text-slate-600">{{ item.code }}</p>
-            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
-              <span
-                class="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-slate-600"
-              >
-                {{ statusLabel(item.schedule_type) }}
-              </span>
-              <span
-                v-if="item.schedule_type !== 'IMMEDIATE'"
-                class="truncate"
-                :class="
-                  item.status === 'SCHEDULED' && item.next_run_at ? 'text-sky-700' : 'text-slate-500'
-                "
-              >
-                {{
-                  item.status === 'SCHEDULED'
-                    ? item.next_run_at
-                      ? `下次 ${formatDateTime(item.next_run_at)}`
-                      : '等待触发'
-                    : item.schedule_type === 'SCHEDULED'
-                      ? formatDateTime(item.scheduled_at)
-                      : '计划已停止'
-                }}
-              </span>
-            </div>
-            <div class="mt-2 flex items-center gap-2">
-              <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
-                <div
-                  class="h-full rounded-full bg-indigo-500"
-                  :style="{
-                    width: `${item.total_cases ? Math.min(100, (item.finished_cases / item.total_cases) * 100) : 0}%`,
-                  }"
-                />
-              </div>
-              <span class="text-[10px] tabular-nums text-slate-600">
-                {{ item.finished_cases }}/{{ item.total_cases }}
-              </span>
-            </div>
-            <p class="mt-1 text-[10px] text-slate-600">{{ formatDateTime(item.created_at) }}</p>
-          </button>
-          <EmptyState
-            v-if="recentTasks.length === 0 && !loadingBase"
-            compact
-            title="暂无任务"
-            description="创建第一个批量任务开始测试。"
-          />
-        </div>
-      </section>
-    </div>
-
-    <BaseModal v-model="showCreate" title="新建批量任务" subtitle="选择用例与执行方式（立即 / 指定时间 / 每天 / 每周），并设置并发、限速与失败重试策略" width="xl">
-      <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div class="space-y-4">
-          <div class="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label class="label">任务名称</label>
-              <input v-model="form.name" class="input" placeholder="例如：账单回归 2026-11" />
-            </div>
-            <div>
-              <label class="label">执行环境</label>
-              <select v-model="form.environment_id" class="input">
-                <option :value="null">不绑定环境（使用用例配置）</option>
-                <option v-for="env in environments" :key="env.id" :value="env.id">
-                  {{ env.name }}（{{ env.code }}）
-                </option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label class="label">任务描述</label>
-            <textarea v-model="form.description" class="input" rows="2" placeholder="可选，用于标记本次回归目的" />
-          </div>
-          <ScheduleField v-model="form.schedule" :disabled="creating" />
-          <div class="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label class="label">并发数</label>
-              <input v-model.number="form.concurrency" class="input" type="number" min="1" max="20" />
-            </div>
-            <div>
-              <label class="label">QPS 上限</label>
-              <input v-model.number="form.qps_limit" class="input" type="number" min="0.1" max="100" step="0.5" />
-            </div>
-          </div>
-          <div class="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <label class="flex items-start gap-2 text-sm text-slate-700">
-              <input
-                v-model="form.retry_on_env_error"
-                type="checkbox"
-                class="mt-0.5 h-4 w-4 rounded border-slate-300 bg-white"
-              />
-              <span>
-                环境类失败自动重试
-                <span class="block text-[11px] text-slate-500">
-                  仅重试连接失败、超时、HTTP 429/5xx、SSE 空响应等环境故障；规则不通过、裁判低分等业务失败不会重试。
-                </span>
-              </span>
-            </label>
-            <div
-              class="grid gap-3 sm:grid-cols-2"
-              :class="form.retry_on_env_error ? '' : 'pointer-events-none opacity-40'"
-            >
-              <div>
-                <label class="label">最大重试次数</label>
-                <input
-                  v-model.number="form.max_env_retries"
-                  class="input"
-                  type="number"
-                  min="0"
-                  max="10"
-                  :disabled="!form.retry_on_env_error"
-                />
-              </div>
-              <div>
-                <label class="label">基础退避（秒）</label>
-                <input
-                  v-model.number="form.retry_backoff_seconds"
-                  class="input"
-                  type="number"
-                  min="0"
-                  max="60"
-                  step="0.5"
-                  :disabled="!form.retry_on_env_error"
-                />
-              </div>
-            </div>
-            <p class="text-[11px] text-slate-500">
-              第 n 次重试前等待 = 基础退避 × 2^(n-1)，重试同样受并发数与 QPS 限制，暂停/终止会立即生效。
-            </p>
-          </div>
-          <label
-            v-if="form.schedule.type === 'IMMEDIATE'"
-            class="flex items-center gap-2 text-sm text-slate-700"
-          >
-            <input v-model="form.auto_start" type="checkbox" class="h-4 w-4 rounded border-slate-300 bg-white" />
-            创建后立即启动
-          </label>
-        </div>
-
-        <div class="flex min-h-0 flex-col rounded-xl border border-slate-200 bg-slate-50/80">
-          <div class="space-y-2 border-b border-slate-200 p-3">
-            <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-slate-700">执行范围</span>
-              <span class="text-[11px] text-slate-500">
-                本次 {{ scopeCount }} 条 / 库内启用 {{ activeCaseCount }} 条
-              </span>
-            </div>
-            <label
-              class="flex cursor-pointer items-start gap-2 rounded-lg border p-2 transition"
-              :class="
-                form.case_scope === 'SELECTED'
-                  ? 'border-indigo-200 bg-indigo-50'
-                  : 'border-slate-200 hover:bg-slate-100/70'
-              "
-            >
-              <input
-                v-model="form.case_scope"
-                type="radio"
-                value="SELECTED"
-                class="mt-0.5 h-4 w-4 border-slate-300 bg-white"
-              />
-              <span class="min-w-0 text-xs text-slate-800">
-                已选用例（{{ form.case_ids.length }} 条）
-                <span class="block text-[10px] text-slate-600">下方逐条勾选后执行。</span>
-              </span>
-            </label>
-            <label
-              class="flex cursor-pointer items-start gap-2 rounded-lg border p-2 transition"
-              :class="
-                form.case_scope === 'ALL_ACTIVE'
-                  ? 'border-indigo-200 bg-indigo-50'
-                  : 'border-slate-200 hover:bg-slate-100/70'
-              "
-            >
-              <input
-                v-model="form.case_scope"
-                type="radio"
-                value="ALL_ACTIVE"
-                class="mt-0.5 h-4 w-4 border-slate-300 bg-white"
-              />
-              <span class="min-w-0 text-xs text-slate-800">
-                全部启用用例（{{ activeCaseCount }} 条，跨分页）
-                <span class="block text-[10px] text-slate-600">
-                  自动执行用例库全部启用用例，不受勾选与分页限制。
-                </span>
-              </span>
-            </label>
-            <template v-if="form.case_scope === 'SELECTED'">
-              <input v-model="caseKeyword" class="input !py-1.5 text-xs" placeholder="搜索编号 / 名称 / 标签" />
-              <div class="flex gap-2">
-                <button class="btn-ghost btn-xs" @click="selectAllFiltered">
-                  全选筛选结果（{{ filteredCases.length }}）
-                </button>
-                <button class="btn-ghost btn-xs" @click="clearSelected">清空</button>
-              </div>
-            </template>
-          </div>
-          <div
-            class="max-h-[320px] flex-1 overflow-y-auto p-2"
-            :class="form.case_scope === 'ALL_ACTIVE' ? 'pointer-events-none opacity-40' : ''"
-          >
-            <label
-              v-for="item in filteredCases"
-              :key="item.id"
-              class="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 transition hover:bg-slate-100"
-            >
-              <input
-                type="checkbox"
-                class="mt-0.5 h-4 w-4 rounded border-slate-300 bg-white"
-                :checked="form.case_ids.includes(item.id)"
-                :disabled="item.status !== 'ACTIVE'"
-                :title="item.status === 'ACTIVE' ? '选择该用例' : '仅启用用例可批量执行'"
-                @change="toggleCase(item)"
-              />
-              <span class="min-w-0">
-                <span class="block truncate font-mono text-[11px] text-slate-700">{{ item.code }}</span>
-                <span class="block truncate text-[11px] text-slate-600">{{ item.name }}</span>
-                <span class="mt-0.5 inline-flex items-center gap-1 text-[10px] text-slate-500">
-                  {{ caseTypeLabel(item.case_type) }} · v{{ item.current_version }}
-                </span>
-              </span>
-            </label>
-            <EmptyState v-if="filteredCases.length === 0" compact title="没有匹配的用例" />
-          </div>
-        </div>
+        </section>
       </div>
 
-      <template #footer>
-        <button class="btn-ghost" @click="showCreate = false">取消</button>
-        <button class="btn-primary" :disabled="creating" @click="submitCreate">
-          {{
-            creating
-              ? '创建中…'
-              : form.schedule.type === 'IMMEDIATE'
-                ? `创建并执行（${scopeCount} 条）`
-                : `创建定时任务（${scopeCount} 条）`
-          }}
-        </button>
-      </template>
-    </BaseModal>
+      <div class="space-y-5">
+        <section class="card overflow-hidden">
+          <header class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <div>
+              <h2 class="panel-title">环境健康</h2>
+              <p class="mt-0.5 text-[10px] text-slate-500">
+                {{ activeEnvironments.length }} 个启用环境 · {{ healthyCount }} 健康
+                <span v-if="unhealthyCount" class="text-rose-600"> · {{ unhealthyCount }} 异常</span>
+              </p>
+            </div>
+            <RouterLink
+              to="/settings"
+              class="text-[11px] text-slate-500 transition hover:text-slate-800"
+            >
+              管理
+            </RouterLink>
+          </header>
+          <div class="divide-y divide-slate-200">
+            <div
+              v-for="env in envPreview"
+              :key="env.id"
+              class="flex items-center justify-between gap-2 px-4 py-2.5"
+            >
+              <div class="min-w-0">
+                <p class="truncate text-xs font-medium text-slate-800">{{ env.name }}</p>
+                <p class="mt-0.5 font-mono text-[10px] text-slate-500">{{ env.code }}</p>
+              </div>
+              <div class="flex shrink-0 items-center gap-2">
+                <span class="text-[10px] tabular-nums text-slate-500">{{ formatMs(env.last_health_latency_ms) }}</span>
+                <StatusPill :status="env.last_health_status || 'PENDING'" size="sm" />
+              </div>
+            </div>
+            <p v-if="envPreview.length === 0" class="px-4 py-4 text-[11px] text-slate-500">
+              暂无启用的执行环境
+            </p>
+          </div>
+        </section>
+
+        <section class="card overflow-hidden">
+          <header class="border-b border-slate-200 px-4 py-3">
+            <h2 class="panel-title">资产概况</h2>
+          </header>
+          <dl class="divide-y divide-slate-200 px-4">
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">用例总数</dt>
+              <dd class="font-medium tabular-nums text-slate-800">{{ caseTotal }}</dd>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">启用用例</dt>
+              <dd class="font-medium tabular-nums text-emerald-600">{{ activeCaseTotal }}</dd>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">Prompt 模板</dt>
+              <dd class="font-medium tabular-nums text-slate-800">{{ promptTotal }}</dd>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">模型配置</dt>
+              <dd class="font-medium tabular-nums text-slate-800">{{ modelTotal }}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="card overflow-hidden">
+          <header class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <div>
+              <h2 class="panel-title">运营待办</h2>
+              <p class="mt-0.5 text-[10px] text-slate-500">需要跟进的运营事项</p>
+            </div>
+            <RouterLink to="/ops" class="text-[11px] text-slate-500 transition hover:text-slate-800">
+              运营后台
+            </RouterLink>
+          </header>
+          <div class="divide-y divide-slate-200">
+            <RouterLink
+              to="/ops?tab=candidates"
+              class="flex items-center justify-between gap-2 px-4 py-2.5 transition hover:bg-canvas"
+            >
+              <span class="text-xs text-slate-600">待分诊候选</span>
+              <span
+                class="rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                :class="
+                  candidatePending
+                    ? 'bg-amber-50 text-amber-700'
+                    : 'bg-slate-100 text-slate-500'
+                "
+              >
+                {{ candidatePending }} 条
+              </span>
+            </RouterLink>
+            <RouterLink
+              to="/ops?tab=sources"
+              class="flex items-center justify-between gap-2 px-4 py-2.5 transition hover:bg-canvas"
+            >
+              <span class="text-xs text-slate-600">数据源探活异常</span>
+              <span
+                class="rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                :class="
+                  sourceProbeFailed
+                    ? 'bg-rose-50 text-rose-700'
+                    : 'bg-emerald-50 text-emerald-700'
+                "
+              >
+                {{ sourceProbeFailed }} 个
+              </span>
+            </RouterLink>
+            <RouterLink
+              to="/ops?tab=grader"
+              class="flex items-center justify-between gap-2 px-4 py-2.5 transition hover:bg-canvas"
+            >
+              <span class="text-xs text-slate-600">判分器自检</span>
+              <span
+                v-if="latestEval"
+                class="rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                :class="
+                  evalHealthy
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-rose-50 text-rose-700'
+                "
+              >
+                识别 {{ latestEval.detected }}/{{ latestEval.total }} · 误杀 {{ latestEval.false_kills }}
+              </span>
+              <span v-else class="text-[10px] text-slate-500">尚未运行</span>
+            </RouterLink>
+            <RouterLink
+              to="/ops?tab=stats"
+              class="flex items-center justify-between gap-2 px-4 py-2.5 transition hover:bg-canvas"
+            >
+              <span class="text-xs text-slate-600">幸运通过</span>
+              <span
+                class="rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                :class="
+                  opsOverview?.lucky_pass
+                    ? 'bg-amber-50 text-amber-700'
+                    : 'bg-slate-100 text-slate-500'
+                "
+              >
+                {{ opsOverview?.lucky_pass ?? 0 }} 次
+              </span>
+            </RouterLink>
+          </div>
+        </section>
+
+        <section class="card overflow-hidden">
+          <header class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <div>
+              <h2 class="panel-title">运营概况</h2>
+              <p class="mt-0.5 text-[10px] text-slate-500">口径、数据源与取数能力</p>
+            </div>
+            <RouterLink to="/ops" class="text-[11px] text-slate-500 transition hover:text-slate-800">
+              查看全部
+            </RouterLink>
+          </header>
+          <dl class="divide-y divide-slate-200 px-4">
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">业务口径</dt>
+              <dd class="font-medium tabular-nums text-slate-800">{{ caliberTotal }}</dd>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">数据源</dt>
+              <dd class="font-medium tabular-nums text-slate-800">
+                {{ sourceTotal }}
+                <span class="ml-1 font-normal text-slate-500">启用 {{ sourceActive }}</span>
+              </dd>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">取数能力</dt>
+              <dd class="font-medium tabular-nums text-slate-800">{{ capabilityTotal }}</dd>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">契约执行</dt>
+              <dd class="font-medium tabular-nums text-slate-800">
+                {{ opsOverview?.execution_total ?? 0 }} 次
+              </dd>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">契约通过率</dt>
+              <dd class="font-medium tabular-nums text-emerald-600">
+                {{ formatPercent(opsOverview?.pass_rate, 1) }}
+              </dd>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">事实通过率</dt>
+              <dd class="font-medium tabular-nums text-indigo-600">
+                {{ formatPercent(opsOverview?.fact_pass_rate, 1) }}
+              </dd>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-xs">
+              <dt class="text-slate-500">候选池</dt>
+              <dd class="font-medium tabular-nums text-slate-800">
+                {{ candidateTotal }}
+                <span class="ml-1 font-normal text-slate-500">待分诊 {{ candidatePending }}</span>
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <p class="text-[10px] text-slate-500">
+          大盘每 20 秒自动刷新一次；任务详情页内可查看用例级结果与实时进度。
+        </p>
+      </div>
+    </div>
   </div>
 </template>

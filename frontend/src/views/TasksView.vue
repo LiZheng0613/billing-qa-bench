@@ -5,6 +5,7 @@ import { api } from '../api'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
+import TaskCreateModal from './components/TaskCreateModal.vue'
 import type { BatchTask, TaskScheduleType } from '../types'
 import { errorMessage } from '../utils/errors'
 import { formatDateTime, formatPercent, statusLabel } from '../utils/format'
@@ -22,7 +23,6 @@ const STATUS_OPTIONS = [
   { value: 'SCHEDULED', label: '计划中' },
   { value: 'PENDING', label: '等待中' },
   { value: 'RUNNING', label: '执行中' },
-  { value: 'PAUSED', label: '已暂停' },
   { value: 'COMPLETED', label: '已完成' },
   { value: 'ABORTED', label: '已终止' },
   { value: 'FAILED', label: '执行失败' },
@@ -55,18 +55,26 @@ const scheduleFilter = ref<'' | TaskScheduleType>(
     : '',
 )
 const busyId = ref<number | null>(null)
+const showCreate = ref(false)
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 const hasFilter = computed(() =>
   Boolean(keyword.value.trim() || statusFilter.value || scheduleFilter.value),
 )
 
+const ACTIVE_STATUSES = ['PENDING', 'RUNNING']
+const hasActiveTask = computed(() =>
+  tasks.value.some((item) => ACTIVE_STATUSES.includes(item.status)),
+)
+
 let searchTimer: number | null = null
 let requestSeq = 0
+let pollTimer: number | null = null
+let followUpTimer: number | null = null
 
-async function load(): Promise<void> {
+async function load(silent = false): Promise<boolean> {
   const seq = ++requestSeq
-  loading.value = true
+  if (!silent) loading.value = true
   try {
     const data = await api.tasks.list({
       page: page.value,
@@ -75,14 +83,38 @@ async function load(): Promise<void> {
       status: statusFilter.value || undefined,
       schedule_type: scheduleFilter.value || undefined,
     })
-    if (seq !== requestSeq) return
+    if (seq !== requestSeq) return false
     tasks.value = data.items
     total.value = data.total
+    return true
   } catch (exc) {
-    if (seq === requestSeq) toast.error(errorMessage(exc))
+    if (seq === requestSeq && !silent) toast.error(errorMessage(exc))
+    return false
   } finally {
-    if (seq === requestSeq) loading.value = false
+    if (seq === requestSeq && !silent) loading.value = false
   }
+}
+
+async function refreshList(): Promise<void> {
+  if (await load()) toast.success('刷新成功')
+}
+
+/** 动作接口返回后，后端的运行状态可能还没落库；补一次延迟刷新避免列表停在旧状态。 */
+function scheduleFollowUpReload(): void {
+  if (followUpTimer !== null) window.clearTimeout(followUpTimer)
+  followUpTimer = window.setTimeout(() => {
+    followUpTimer = null
+    void load(true)
+  }, 900)
+}
+
+function startPolling(): void {
+  if (pollTimer !== null) return
+  pollTimer = window.setInterval(() => {
+    if (document.visibilityState !== 'visible') return
+    if (!hasActiveTask.value) return
+    void load(true)
+  }, 3000)
 }
 
 function syncQuery(): void {
@@ -159,55 +191,56 @@ function canRetry(task: BatchTask): boolean {
 }
 
 // ------------------------------------------------------------------ 行内操作
-async function withAction(task: BatchTask, action: () => Promise<void>): Promise<void> {
-  if (busyId.value !== null) return
+async function withAction(
+  task: BatchTask,
+  action: () => Promise<void>,
+  options: { refresh?: boolean } = {},
+): Promise<void> {
+  if (busyId.value === task.id) return
   busyId.value = task.id
   try {
     await action()
   } catch (exc) {
+    // 动作失败（例如任务已被其它入口启动导致 409）时也要同步一次，避免列表停在旧状态。
     toast.error(errorMessage(exc))
   } finally {
     busyId.value = null
+    if (options.refresh !== false) {
+      await load(true)
+      scheduleFollowUpReload()
+    }
   }
 }
 
 function openDetail(task: BatchTask): void {
-  void router.push({ name: 'dashboard', query: { task: String(task.id) } })
+  void router.push({ name: 'task-detail', params: { id: String(task.id) } })
 }
 
 function openCreate(): void {
-  void router.push({ name: 'dashboard', query: { create: '1' } })
+  showCreate.value = true
+}
+
+async function onCreated(task: BatchTask): Promise<void> {
+  await load()
+  void router.push({ name: 'task-detail', params: { id: String(task.id) } })
 }
 
 async function runNow(task: BatchTask): Promise<void> {
-  await withAction(task, async () => {
-    const run = await api.tasks.runNow(task.id)
-    toast.success(`已启动任务 ${run.code}`)
-    void router.push({ name: 'dashboard', query: { task: String(run.id) } })
-  })
+  await withAction(
+    task,
+    async () => {
+      const run = await api.tasks.runNow(task.id)
+      toast.success(`已启动任务 ${run.code}`)
+      void router.push({ name: 'task-detail', params: { id: String(run.id) } })
+    },
+    { refresh: false },
+  )
 }
 
 async function startTask(task: BatchTask): Promise<void> {
   await withAction(task, async () => {
     await api.tasks.start(task.id)
     toast.success('任务已启动')
-    await load()
-  })
-}
-
-async function pauseTask(task: BatchTask): Promise<void> {
-  await withAction(task, async () => {
-    await api.tasks.pause(task.id)
-    toast.success('任务已暂停')
-    await load()
-  })
-}
-
-async function resumeTask(task: BatchTask): Promise<void> {
-  await withAction(task, async () => {
-    await api.tasks.resume(task.id)
-    toast.success('任务已恢复')
-    await load()
   })
 }
 
@@ -216,7 +249,6 @@ async function abortTask(task: BatchTask): Promise<void> {
   await withAction(task, async () => {
     await api.tasks.abort(task.id)
     toast.success('终止指令已下发')
-    await load()
   })
 }
 
@@ -225,7 +257,6 @@ async function stopPlan(task: BatchTask): Promise<void> {
   await withAction(task, async () => {
     await api.tasks.abort(task.id)
     toast.success('定时计划已停止')
-    await load()
   })
 }
 
@@ -233,7 +264,6 @@ async function enablePlan(task: BatchTask): Promise<void> {
   await withAction(task, async () => {
     await api.tasks.updateSchedule(task.id, { active: true })
     toast.success('定时计划已启用')
-    await load()
   })
 }
 
@@ -241,16 +271,30 @@ async function retryFailed(task: BatchTask): Promise<void> {
   await withAction(task, async () => {
     await api.tasks.retryFailed(task.id)
     toast.success('失败重跑已提交')
-    await load()
   })
 }
 
 onMounted(() => {
   void load()
+  startPolling()
+  if (route.query.create === '1') {
+    showCreate.value = true
+    const query = { ...route.query }
+    delete query.create
+    void router.replace({ name: 'tasks', query })
+  }
 })
 
 onBeforeUnmount(() => {
   if (searchTimer !== null) window.clearTimeout(searchTimer)
+  if (pollTimer !== null) {
+    window.clearInterval(pollTimer)
+    pollTimer = null
+  }
+  if (followUpTimer !== null) {
+    window.clearTimeout(followUpTimer)
+    followUpTimer = null
+  }
 })
 </script>
 
@@ -259,10 +303,10 @@ onBeforeUnmount(() => {
     <PageHeader
       eyebrow="Tasks · 批量任务"
       title="批量任务管理"
-      description="按名称或编号搜索，按状态与执行方式筛选；在这里查看进度、调整定时计划，并执行启动、暂停、终止与失败重跑。"
+      description="按名称或编号搜索，按状态与执行方式筛选；在这里查看进度、调整定时计划，并执行启动、终止与失败重跑。"
     >
       <template #actions>
-        <button class="btn-ghost" @click="load">刷新</button>
+        <button class="btn-ghost" @click="refreshList">刷新</button>
         <button class="btn-primary" @click="openCreate">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" d="M12 5v14M5 12h14" />
@@ -300,6 +344,7 @@ onBeforeUnmount(() => {
       <div class="w-36">
         <label class="label">任务状态</label>
         <select v-model="statusFilter" class="input" @change="applyFilters">
+          <button><selectedcontent></selectedcontent></button>
           <option v-for="item in STATUS_OPTIONS" :key="item.value" :value="item.value">
             {{ item.label }}
           </option>
@@ -308,6 +353,7 @@ onBeforeUnmount(() => {
       <div class="w-36">
         <label class="label">执行方式</label>
         <select v-model="scheduleFilter" class="input" @change="applyFilters">
+          <button><selectedcontent></selectedcontent></button>
           <option v-for="item in SCHEDULE_OPTIONS" :key="item.value" :value="item.value">
             {{ item.label }}
           </option>
@@ -315,16 +361,13 @@ onBeforeUnmount(() => {
       </div>
       <button class="btn-primary" @click="applyFilters">查询</button>
       <button class="btn-ghost" :disabled="!hasFilter" @click="resetFilters">重置</button>
-      <p class="pb-2 text-[11px] text-slate-500">
-        共 <span class="font-medium tabular-nums text-slate-700">{{ total }}</span> 条任务
-      </p>
     </div>
 
     <section class="card overflow-hidden">
       <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
         <span class="panel-title">任务列表</span>
         <span class="text-[11px] text-slate-500">
-          周期任务每次触发会生成新的批量任务，历史记录独立保留
+          周期计划只保留一条记录，每次触发的执行在计划详情的「历次执行」中查看
         </span>
       </header>
       <div class="overflow-x-auto">
@@ -380,7 +423,18 @@ onBeforeUnmount(() => {
                 </p>
               </td>
               <td class="td">
-                <template v-if="planWaiting(item)">
+                <template v-if="isRecurring(item) && (item.run_count ?? 0) > 0">
+                  <p class="text-[11px] font-medium text-slate-700">
+                    已执行 {{ item.run_count }} 次
+                  </p>
+                  <p
+                    class="mt-0.5 text-[10px]"
+                    :class="planActive(item) ? 'text-sky-700' : 'text-slate-500'"
+                  >
+                    {{ planActive(item) ? '计划生效中' : '计划已停止' }} · 详情查看历次执行
+                  </p>
+                </template>
+                <template v-else-if="planWaiting(item)">
                   <span
                     class="text-[11px]"
                     :class="planActive(item) ? 'text-sky-700' : 'text-slate-500'"
@@ -429,11 +483,11 @@ onBeforeUnmount(() => {
               <td class="td text-xs tabular-nums text-slate-500">
                 {{ formatDateTime(item.created_at) }}
               </td>
-              <td class="td text-right">
-                <div class="flex flex-wrap items-center justify-end gap-1" @click.stop>
+              <td class="td whitespace-nowrap text-right">
+                <div class="flex flex-nowrap items-center justify-end gap-1" @click.stop>
                   <button class="btn-ghost btn-xs" @click="openDetail(item)">详情</button>
                   <button
-                    v-if="planWaiting(item)"
+                    v-if="planWaiting(item) && planActive(item)"
                     class="btn-primary btn-xs"
                     :disabled="busyId === item.id"
                     @click="runNow(item)"
@@ -449,7 +503,7 @@ onBeforeUnmount(() => {
                     停止计划
                   </button>
                   <button
-                    v-if="planWaiting(item) && isRecurring(item) && !planActive(item)"
+                    v-if="planWaiting(item) && !planActive(item)"
                     class="btn-ghost btn-xs"
                     :disabled="busyId === item.id"
                     @click="enablePlan(item)"
@@ -465,23 +519,7 @@ onBeforeUnmount(() => {
                     启动
                   </button>
                   <button
-                    v-if="item.status === 'RUNNING'"
-                    class="btn-ghost btn-xs"
-                    :disabled="busyId === item.id"
-                    @click="pauseTask(item)"
-                  >
-                    暂停
-                  </button>
-                  <button
-                    v-if="item.status === 'PAUSED'"
-                    class="btn-ghost btn-xs"
-                    :disabled="busyId === item.id"
-                    @click="resumeTask(item)"
-                  >
-                    恢复
-                  </button>
-                  <button
-                    v-if="['RUNNING', 'PAUSED', 'PENDING'].includes(item.status) && !isPlanTask(item)"
+                    v-if="['RUNNING', 'PENDING'].includes(item.status) && !isPlanTask(item)"
                     class="btn-danger btn-xs"
                     :disabled="busyId === item.id"
                     @click="abortTask(item)"
@@ -516,7 +554,9 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="flex items-center justify-between border-t border-slate-200 px-4 py-3">
-        <span class="text-[11px] text-slate-500">第 {{ page }} / {{ pageCount }} 页</span>
+        <span class="text-[11px] text-slate-500">
+          共 <span class="font-medium tabular-nums text-slate-700">{{ total }}</span> 条任务 · 第 {{ page }} / {{ pageCount }} 页
+        </span>
         <div class="flex gap-1">
           <button class="btn-ghost btn-xs" :disabled="page <= 1" @click="goPage(page - 1)">
             上一页
@@ -527,5 +567,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </section>
+
+    <TaskCreateModal v-model="showCreate" @created="onCreated" />
   </div>
 </template>

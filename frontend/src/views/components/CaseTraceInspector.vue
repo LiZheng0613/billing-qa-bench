@@ -16,14 +16,14 @@ import {
 import { useToastStore } from '../../stores/toast'
 
 const props = defineProps<{ detail: ExecutionDetail | null; loading: boolean }>()
-const emit = defineEmits<{ (e: 'refresh'): void }>()
 
 const toast = useToastStore()
 
-type TabKey = 'turns' | 'judges' | 'rules' | 'snapshot' | 'raw'
+type TabKey = 'turns' | 'judges' | 'contract' | 'rules' | 'snapshot' | 'raw'
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'turns', label: '对话轮次' },
   { key: 'judges', label: '裁判明细' },
+  { key: 'contract', label: '契约判分' },
   { key: 'rules', label: '规则校验' },
   { key: 'snapshot', label: '用例快照' },
   { key: 'raw', label: '原始报文' },
@@ -37,6 +37,29 @@ interface RuleCheckItem {
   actual?: unknown
   passed?: boolean
   evidence?: string
+  mode?: string
+  bound_name?: string | null
+  reason?: string
+}
+
+const BINDING_MODE_LABEL: Record<string, string> = {
+  name_bound: '名称绑定',
+  window: '邻近名称绑定',
+  json_key: 'JSON key 绑定',
+  claim_bound: '断言锚定',
+  value_only: '仅数值兜底',
+  name_mismatch: '名称绑定值不符',
+  json_key_mismatch: 'JSON 值不符',
+  claim_mismatch: '断言值不符',
+  name_conflict: '数值归属冲突',
+  name_missing: '缺少业务名称',
+  name_unbound: '名称未绑定数值',
+  missing: '未找到数值',
+}
+
+function bindingModeLabel(mode?: string | null): string {
+  if (!mode) return ''
+  return BINDING_MODE_LABEL[mode] ?? mode
 }
 
 const DIMENSION_MAX: Record<string, number> = {
@@ -51,6 +74,92 @@ const DIMENSION_LABEL: Record<string, string> = {
   logic_consistency: '逻辑一致性',
   goal_completion: '目标完成度',
   tone_clarity: '语气清晰度',
+}
+
+const ROOT_CAUSE_LABEL: Record<string, string> = {
+  HALLUCINATION: '答案幻觉',
+  RETRIEVAL: '取数缺失',
+  SYNTHESIS: '汇总错误',
+  BEHAVIOR: '交互行为不当',
+  UNKNOWN: '未定位',
+}
+
+const GATE_LABEL: Record<string, string> = {
+  safety: '安全',
+  behavior: '行为',
+  facts: '事实',
+  extras: '扩展',
+}
+
+const SCORECARD_LABEL: Record<string, string> = {
+  fact_completeness: '事实完整',
+  assumption_honesty: '假设诚实',
+  clarity: '表达清晰',
+  helpful_extra: '有帮助扩展',
+}
+
+const SCORECARD_WEIGHT: Record<string, string> = {
+  fact_completeness: '50%',
+  assumption_honesty: '20%',
+  clarity: '20%',
+  helpful_extra: '10%',
+}
+
+const BEHAVIOR_LABEL: Record<string, string> = {
+  answer: '直接作答',
+  clarify: '澄清追问',
+  assumption: '声明假设后作答',
+  partial: '部分披露',
+  refuse: '拒绝并说明',
+}
+
+const EXTRA_KIND_LABEL: Record<string, string> = {
+  grounded: '有据扩展',
+  unsupported: '无据扩展',
+  off_topic: '跑题',
+  may: '允许项',
+}
+
+const FACT_KIND_LABEL: Record<string, string> = {
+  scalar: '数值',
+  date: '日期',
+  set: '集合',
+  topk: 'TopK',
+  boolean: '布尔',
+  text: '文本',
+  semantic: '语义',
+}
+
+interface ContractFactItem {
+  fact_id?: string
+  kind?: string
+  label?: string | null
+  expected?: unknown
+  actual?: unknown
+  passed?: boolean
+  reason?: string
+  is_gate?: boolean
+  mode?: string
+  bound_name?: string | null
+  conflict_name?: string | null
+  degraded?: boolean
+  evidence_ref?: string | null
+}
+
+interface ContractBehaviorItem {
+  detected?: string
+  allowed?: boolean
+  stated_assumption?: boolean
+  matched_scenario?: string | null
+  missing_slots?: string[]
+  violations?: string[]
+  detail?: string
+}
+
+interface ContractExtraItem {
+  text?: string
+  kind?: string
+  evidence_ref?: string | null
 }
 
 const ruleBlock = computed(() => {
@@ -82,6 +191,119 @@ const dims = computed(() => {
   }))
 })
 
+const contractGrading = computed<Record<string, unknown> | null>(() => {
+  const raw = props.detail?.answer_grading
+  if (!raw || typeof raw !== 'object') return null
+  return raw as Record<string, unknown>
+})
+
+const contractGates = computed(() => {
+  const raw = contractGrading.value?.gates
+  if (!raw || typeof raw !== 'object') return [] as Array<{ key: string; label: string; passed: boolean }>
+  return Object.entries(raw as Record<string, boolean>).map(([key, passed]) => ({
+    key,
+    label: GATE_LABEL[key] ?? key,
+    passed: Boolean(passed),
+  }))
+})
+
+const contractScorecard = computed(() => {
+  const raw = contractGrading.value?.scorecard
+  if (!raw || typeof raw !== 'object') {
+    return [] as Array<{ key: string; label: string; value: number }>
+  }
+  return Object.entries(raw as Record<string, number>).map(([key, value]) => ({
+    key,
+    label: SCORECARD_LABEL[key] ?? key,
+    value,
+  }))
+})
+
+const contractFacts = computed<ContractFactItem[]>(() => {
+  const raw = props.detail?.fact_results
+  if (Array.isArray(raw)) return raw as ContractFactItem[]
+  const nested = contractGrading.value?.facts
+  return Array.isArray(nested) ? (nested as ContractFactItem[]) : []
+})
+
+const contractDiagnostics = computed<Record<string, unknown> | null>(() => {
+  const raw = props.detail?.diagnostics
+  if (!raw || typeof raw !== 'object') return null
+  return raw as Record<string, unknown>
+})
+
+const missingCapabilities = computed<string[]>(() => {
+  const raw = contractDiagnostics.value?.missing_capabilities
+  return Array.isArray(raw) ? raw.map(String) : []
+})
+
+const contractBehavior = computed<ContractBehaviorItem | null>(() => {
+  const raw = contractGrading.value?.behavior
+  if (!raw || typeof raw !== 'object') return null
+  return raw as ContractBehaviorItem
+})
+
+const contractExtras = computed<ContractExtraItem[]>(() => {
+  const raw = contractGrading.value?.extras
+  return Array.isArray(raw) ? (raw as ContractExtraItem[]) : []
+})
+
+const contractNotes = computed<string[]>(() => {
+  const raw = contractGrading.value?.notes
+  return Array.isArray(raw) ? raw.map(String) : []
+})
+
+const contractQuality = computed<{ total_score?: number; dimension_scores?: Record<string, number> } | null>(() => {
+  const raw = aggregate.value?.quality
+  if (!raw || typeof raw !== 'object') return null
+  return raw as { total_score?: number; dimension_scores?: Record<string, number> }
+})
+
+const contractTotalScore = computed<number | null>(() => {
+  const raw = contractGrading.value?.total_score
+  return typeof raw === 'number' ? raw : null
+})
+
+const contractQualityDims = computed(() => {
+  const raw = contractQuality.value?.dimension_scores
+  if (!raw || typeof raw !== 'object') {
+    return [] as Array<{ key: string; label: string; value: number }>
+  }
+  return Object.entries(raw).map(([key, value]) => ({
+    key,
+    label: DIMENSION_LABEL[key] ?? key,
+    value,
+  }))
+})
+
+const failedGates = computed(() => contractGates.value.filter((gate) => !gate.passed))
+
+const gateSummary = computed(() => {
+  const total = contractGates.value.length
+  if (!total) return ''
+  const passed = total - failedGates.value.length
+  return `${passed}/${total}`
+})
+
+const failedFacts = computed(() =>
+  contractFacts.value.filter((fact) => fact.passed === false),
+)
+
+const visibleTabs = computed(() =>
+  TABS.filter((tab) => {
+    // 契约判分与规则硬校验互斥：契约模式只看契约判分，4 维评分模式只看规则校验。
+    if (tab.key === 'contract') return contractGrading.value !== null
+    if (tab.key === 'rules') return props.detail?.grading_mode !== 'ANSWER_CONTRACT'
+    return true
+  }),
+)
+
+const rootCauseText = computed(() => {
+  const raw = props.detail?.root_cause
+  if (!raw) return null
+  return ROOT_CAUSE_LABEL[raw] ?? raw
+})
+
 watch(
   () => props.detail?.id,
   () => {
@@ -106,6 +328,87 @@ function valueText(value: unknown): string {
   if (value === null || value === undefined) return '—'
   if (typeof value === 'object') return safeJson(value, 0)
   return String(value)
+}
+
+function filled(value: unknown): boolean {
+  return value !== null && value !== undefined && value !== ''
+}
+
+function factKindLabel(kind?: string | null): string {
+  if (!kind) return '—'
+  return FACT_KIND_LABEL[kind] ?? kind
+}
+
+function behaviorLabel(detected?: string | null): string {
+  if (!detected) return '—'
+  return BEHAVIOR_LABEL[detected] ?? detected
+}
+
+function extraKindLabel(kind?: string | null): string {
+  if (!kind) return '未知'
+  return EXTRA_KIND_LABEL[kind] ?? kind
+}
+
+/** 把判分结果里的 expected 结构翻译成业务可读文本。 */
+function factExpectedText(fact: ContractFactItem): string {
+  const expected = fact.expected
+  if (expected === null || expected === undefined) return '—'
+  if (typeof expected !== 'object') return String(expected)
+  const obj = expected as Record<string, unknown>
+  const kind = fact.kind ?? ''
+  const unit = filled(obj.unit) ? ` ${String(obj.unit)}` : ''
+  if (kind === 'scalar') {
+    if (!filled(obj.value)) return '—'
+    const tolerance =
+      typeof obj.tolerance === 'number' && obj.tolerance > 0
+        ? `（容差 ±${obj.tolerance}）`
+        : ''
+    return `${String(obj.value)}${unit}${tolerance}`
+  }
+  if (kind === 'set' || kind === 'topk') {
+    const values = Array.isArray(obj.values) ? obj.values.map(String) : []
+    if (values.length) return `候选：${values.join(' / ')}`
+    return filled(obj.value) ? String(obj.value) : '—'
+  }
+  if (kind === 'date') {
+    return filled(obj.value) ? String(obj.value) : '—'
+  }
+  if (kind === 'boolean') {
+    return obj.value === false ? '不应出现' : '应出现'
+  }
+  const keywords = Array.isArray(obj.keywords) ? obj.keywords.map(String).filter(Boolean) : []
+  if (keywords.length) return `包含：${keywords.join(' / ')}`
+  if (kind === 'text' || kind === 'semantic') {
+    if (filled(obj.value)) return String(obj.value)
+    return obj.value === false ? '不应出现' : '应出现'
+  }
+  return valueText(expected)
+}
+
+/** 把判分结果里的 actual 结构翻译成业务可读文本。 */
+function factActualText(fact: ContractFactItem): string {
+  const actual = fact.actual
+  if (actual === null || actual === undefined) return '未命中'
+  if (typeof actual !== 'object') return String(actual)
+  const obj = actual as Record<string, unknown>
+  if (filled(obj.bound_value)) {
+    const name = filled(obj.bound_name) ? `（${String(obj.bound_name)}）` : ''
+    return `${String(obj.bound_value)}${name}`
+  }
+  if (Array.isArray(obj.hits)) {
+    const hits = obj.hits.map(String).filter(Boolean)
+    return hits.length ? `命中：${hits.join(' / ')}` : '未命中'
+  }
+  if (Array.isArray(obj.numbers)) {
+    const numbers = obj.numbers.map(String)
+    return numbers.length ? `提取数值：${numbers.join(', ')}` : '未提取到数值'
+  }
+  if (Array.isArray(obj.values)) {
+    const values = obj.values.map(String)
+    return values.length ? `提取：${values.join(' / ')}` : '未提取到候选值'
+  }
+  if (filled(obj.value)) return String(obj.value)
+  return valueText(actual)
 }
 
 function judgeDimensions(judge: JudgeResult): Array<{ key: string; label: string; value: number; max: number }> {
@@ -138,7 +441,7 @@ async function copyTraceUid(): Promise<void> {
     />
     <template v-else>
       <header class="border-b border-slate-200 px-5 py-4">
-        <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="flex flex-wrap items-start gap-3">
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <h2 class="truncate text-base font-semibold text-slate-900">
@@ -153,6 +456,19 @@ async function copyTraceUid(): Promise<void> {
               <span v-if="detail.error_kind === 'ENV'" class="tag border-amber-200 text-amber-700">
                 环境异常
               </span>
+              <span
+                v-if="detail.grading_mode === 'ANSWER_CONTRACT'"
+                class="tag border-indigo-200 text-indigo-700"
+              >
+                答案契约
+              </span>
+              <span v-if="detail.lucky_pass" class="tag border-amber-300 text-amber-700">
+                幸运通过（无取数证据）
+              </span>
+              <span v-if="rootCauseText" class="tag border-rose-200 text-rose-700">
+                根因：{{ rootCauseText }}
+              </span>
+              <span v-if="detail.grader_version" class="tag">{{ detail.grader_version }}</span>
             </div>
             <p class="mt-1 truncate text-xs text-slate-500">{{ detail.case_name || '—' }}</p>
             <button
@@ -165,7 +481,6 @@ async function copyTraceUid(): Promise<void> {
               </svg>
             </button>
           </div>
-          <button class="btn-ghost btn-xs" @click="emit('refresh')">刷新</button>
         </div>
 
         <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
@@ -214,7 +529,7 @@ async function copyTraceUid(): Promise<void> {
 
       <div class="flex flex-wrap gap-1 border-b border-slate-200 px-4 py-2">
         <button
-          v-for="tab in TABS"
+          v-for="tab in visibleTabs"
           :key="tab.key"
           class="tab-btn"
           :class="activeTab === tab.key ? 'tab-btn-active' : ''"
@@ -223,6 +538,7 @@ async function copyTraceUid(): Promise<void> {
           {{ tab.label }}
           <span v-if="tab.key === 'turns'" class="ml-1 text-[10px] text-slate-600">{{ detail.turns.length }}</span>
           <span v-if="tab.key === 'judges'" class="ml-1 text-[10px] text-slate-600">{{ detail.judges.length }}</span>
+          <span v-if="tab.key === 'contract'" class="ml-1 text-[10px] text-slate-600">{{ gateSummary }}</span>
         </button>
       </div>
 
@@ -289,7 +605,10 @@ async function copyTraceUid(): Promise<void> {
                 <JsonViewer :value="turn.raw_db_data" label="底层取数 raw_db_data" max-height="160px" />
               </div>
 
-              <details v-if="turn.rule_check" class="border-t border-slate-200 px-3 py-2">
+              <details
+                v-if="turn.rule_check && detail.grading_mode !== 'ANSWER_CONTRACT'"
+                class="border-t border-slate-200 px-3 py-2"
+              >
                 <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">
                   本轮规则校验
                   <span :class="turn.rule_check.passed ? 'text-emerald-700' : 'text-rose-700'">
@@ -339,6 +658,13 @@ async function copyTraceUid(): Promise<void> {
               </span>
             </div>
           </div>
+
+          <p
+            v-if="detail.grading_mode === 'ANSWER_CONTRACT'"
+            class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700"
+          >
+            答案契约模式下，四维裁判只提供质量分参考，不参与通过判定；正确性以「契约判分」页的闸门与事实为准。
+          </p>
 
           <div v-if="detail.judges.length === 0">
             <EmptyState compact title="没有裁判明细" description="该执行未运行 LLM 裁判。" />
@@ -407,6 +733,240 @@ async function copyTraceUid(): Promise<void> {
           </div>
         </template>
 
+        <template v-else-if="activeTab === 'contract'">
+          <div v-if="contractGrading" class="space-y-4">
+            <div class="flex flex-wrap items-center gap-2">
+              <StatusPill :status="contractGrading.passed ? 'PASS' : 'FAIL'" />
+              <span
+                v-for="gate in contractGates"
+                :key="gate.key"
+                class="tag"
+                :class="gate.passed ? 'border-emerald-200 text-emerald-700' : 'border-rose-200 text-rose-700'"
+              >
+                {{ gate.label }}{{ gate.passed ? '通过' : '未过' }}
+              </span>
+              <span v-if="detail.as_of" class="tag">冻结：{{ detail.as_of }}</span>
+              <span v-if="detail.grader_version" class="tag">{{ detail.grader_version }}</span>
+              <span
+                v-if="contractGrading.degraded"
+                class="tag border-amber-300 text-amber-700"
+              >
+                判分降级
+              </span>
+            </div>
+
+            <div
+              v-if="failedGates.length || failedFacts.length || rootCauseText"
+              class="space-y-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700"
+            >
+              <p class="font-medium">未通过原因</p>
+              <p v-if="failedGates.length">
+                闸门未过：{{ failedGates.map((gate) => gate.label).join('、') }}
+              </p>
+              <p v-if="failedFacts.length">
+                事实未命中：{{ failedFacts.map((fact) => fact.label || fact.fact_id).join('、') }}
+              </p>
+              <p v-if="rootCauseText">根因：{{ rootCauseText }}</p>
+            </div>
+
+            <div>
+              <div class="flex flex-wrap items-baseline justify-between gap-2">
+                <p class="text-xs font-medium text-slate-700">
+                  记分卡（仅用于排序与优化，不决定通过与否）
+                </p>
+                <p class="text-[11px] text-slate-500">
+                  排序分 <span class="font-semibold text-slate-800">{{ formatScore(contractTotalScore) }}</span>
+                </p>
+              </div>
+              <div class="mt-2 grid gap-2 sm:grid-cols-4">
+                <div
+                  v-for="item in contractScorecard"
+                  :key="item.key"
+                  class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                >
+                  <p class="text-[10px] uppercase tracking-wider text-slate-500">
+                    {{ item.label }}
+                    <span class="text-slate-400">{{ SCORECARD_WEIGHT[item.key] }}</span>
+                  </p>
+                  <p class="text-sm font-semibold tabular-nums text-slate-800">{{ formatScore(item.value) }}</p>
+                </div>
+              </div>
+            </div>
+
+            <div
+              v-if="contractBehavior"
+              class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <p class="font-medium text-slate-700">响应契约（行为判定）</p>
+                <span
+                  class="tag"
+                  :class="
+                    contractBehavior.allowed
+                      ? 'border-emerald-200 text-emerald-700'
+                      : 'border-rose-200 text-rose-700'
+                  "
+                >
+                  {{ contractBehavior.allowed ? '行为通过' : '行为未过' }}
+                </span>
+              </div>
+              <div class="mt-1 flex flex-wrap gap-3">
+                <span>识别行为：{{ behaviorLabel(contractBehavior.detected) }}</span>
+                <span>声明假设：{{ contractBehavior.stated_assumption ? '是' : '否' }}</span>
+                <span v-if="contractBehavior.matched_scenario">
+                  匹配场景：{{ contractBehavior.matched_scenario }}
+                </span>
+              </div>
+              <p v-if="contractBehavior.missing_slots?.length" class="mt-1 text-amber-700">
+                未澄清槽位：{{ (contractBehavior.missing_slots ?? []).join('、') }}
+              </p>
+              <p
+                v-for="violation in contractBehavior.violations ?? []"
+                :key="violation"
+                class="mt-1 text-rose-700"
+              >
+                违规：{{ violation }}
+              </p>
+              <p v-if="contractBehavior.detail" class="mt-1 text-slate-500">
+                {{ contractBehavior.detail }}
+              </p>
+            </div>
+
+            <div v-if="contractFacts.length" class="overflow-hidden rounded-xl border border-slate-200">
+              <table class="table-shell">
+                <thead>
+                  <tr>
+                    <th class="th">事实</th>
+                    <th class="th">类型</th>
+                    <th class="th">期望</th>
+                    <th class="th">实际</th>
+                    <th class="th">闸门</th>
+                    <th class="th">结果</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(fact, index) in contractFacts" :key="fact.fact_id ?? index">
+                    <td class="td">
+                      <p class="text-slate-800">{{ fact.label || fact.fact_id || '—' }}</p>
+                      <p class="font-mono text-[10px] text-slate-500">{{ fact.fact_id }}</p>
+                      <p v-if="fact.mode" class="mt-0.5 text-[10px] text-slate-500">
+                        {{ bindingModeLabel(fact.mode) }}
+                        <span v-if="fact.bound_name">· {{ fact.bound_name }}</span>
+                      </p>
+                    </td>
+                    <td class="td text-xs">{{ factKindLabel(fact.kind) }}</td>
+                    <td class="td max-w-[220px] break-words text-xs">{{ factExpectedText(fact) }}</td>
+                    <td class="td max-w-[220px] break-words text-xs">{{ factActualText(fact) }}</td>
+                    <td class="td text-[11px] text-slate-500">{{ fact.is_gate ? 'Must' : 'May' }}</td>
+                    <td class="td">
+                      <span
+                        v-if="fact.degraded"
+                        class="rounded-full border border-amber-300 px-1.5 py-0.5 text-[10px] text-amber-700"
+                      >
+                        未判定
+                      </span>
+                      <StatusPill v-else :status="fact.passed ? 'PASS' : 'FAIL'" size="sm" />
+                      <p v-if="fact.reason" class="mt-1 text-[10px]" :class="fact.passed ? 'text-slate-500' : 'text-rose-600'">
+                        {{ fact.reason }}
+                      </p>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p
+              v-else
+              class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500"
+            >
+              本次没有事实级明细：该用例未配置 Must 事实，或答案走的是澄清 / 拒绝等行为契约分支。
+            </p>
+
+            <div
+              v-if="contractExtras.length"
+              class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"
+            >
+              <p class="font-medium text-slate-700">扩展内容判定</p>
+              <ul class="mt-1 space-y-1">
+                <li
+                  v-for="(extra, index) in contractExtras"
+                  :key="index"
+                  class="flex flex-wrap items-center gap-2"
+                >
+                  <span
+                    class="rounded-full border px-1.5 py-0.5 text-[10px]"
+                    :class="
+                      extra.kind === 'grounded' || extra.kind === 'may'
+                        ? 'border-emerald-200 text-emerald-700'
+                        : 'border-amber-300 text-amber-700'
+                    "
+                  >
+                    {{ extraKindLabel(extra.kind) }}
+                  </span>
+                  <span class="break-words text-slate-700">{{ extra.text || '—' }}</span>
+                  <span v-if="extra.evidence_ref" class="font-mono text-[10px] text-slate-500">
+                    证据：{{ extra.evidence_ref }}
+                  </span>
+                </li>
+              </ul>
+            </div>
+
+            <div
+              v-if="contractQuality"
+              class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"
+            >
+              <p class="font-medium text-slate-700">
+                质量分参考（四维裁判，仅参考，不参与判定）
+                <span class="ml-1 text-slate-800">
+                  {{ formatScore(contractQuality.total_score) }}
+                </span>
+              </p>
+              <div v-if="contractQualityDims.length" class="mt-1 flex flex-wrap gap-3">
+                <span v-for="dim in contractQualityDims" :key="dim.key">
+                  {{ dim.label }}
+                  <span class="text-slate-800">{{ dim.value }}</span>
+                </span>
+              </div>
+            </div>
+
+            <div
+              v-if="contractDiagnostics"
+              class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"
+            >
+              <p class="font-medium text-slate-700">轨迹诊断（0 权重，仅用于根因定位）</p>
+              <div class="mt-1 flex flex-wrap gap-3">
+                <span>工具调用：{{ contractDiagnostics.tool_call_count ?? 0 }}</span>
+                <span>取数行数：{{ contractDiagnostics.evidence_rows ?? 0 }}</span>
+                <span v-if="detail.lucky_pass" class="text-amber-700">幸运通过（答案对但无取数证据）</span>
+                <span v-if="rootCauseText" class="text-rose-700">根因：{{ rootCauseText }}</span>
+              </div>
+              <p v-if="missingCapabilities.length" class="mt-1 text-amber-700">
+                缺失能力：{{ missingCapabilities.join('、') }}
+              </p>
+            </div>
+
+            <div v-if="contractNotes.length" class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+              <p v-for="note in contractNotes" :key="note" class="text-xs text-amber-700">
+                · {{ note }}
+              </p>
+            </div>
+
+            <details class="rounded-xl border border-slate-200 bg-slate-50">
+              <summary class="cursor-pointer px-3 py-2 text-[11px] text-slate-600">
+                answer_grading 原始 JSON
+              </summary>
+              <div class="border-t border-slate-200 p-2">
+                <JsonViewer :value="contractGrading" max-height="360px" />
+              </div>
+            </details>
+          </div>
+          <EmptyState
+            v-else
+            compact
+            title="没有契约判分"
+            description="该执行不是答案契约模式，或判分结果尚未生成。"
+          />
+        </template>
+
         <template v-else-if="activeTab === 'rules'">
           <div v-if="ruleChecks.length" class="space-y-3">
             <div class="flex flex-wrap items-center gap-2">
@@ -429,12 +989,19 @@ async function copyTraceUid(): Promise<void> {
                     <td class="td">
                       <p class="text-slate-800">{{ ruleCheckLabel(check) }}</p>
                       <p class="font-mono text-[10px] text-slate-500">{{ check.type }}</p>
+                      <p v-if="check.mode" class="mt-0.5 text-[10px] text-slate-500">
+                        {{ bindingModeLabel(check.mode) }}
+                        <span v-if="check.bound_name">· {{ check.bound_name }}</span>
+                      </p>
                     </td>
                     <td class="td max-w-[200px] break-all text-xs">{{ valueText(check.expected) }}</td>
                     <td class="td max-w-[220px] break-all text-xs">{{ valueText(check.actual) }}</td>
                     <td class="td max-w-[220px] break-words text-[11px] text-slate-500">{{ check.evidence || '—' }}</td>
                     <td class="td">
                       <StatusPill :status="check.passed ? 'PASS' : 'FAIL'" size="sm" />
+                      <p v-if="!check.passed && check.reason" class="mt-1 text-[10px] text-rose-600">
+                        {{ check.reason }}
+                      </p>
                     </td>
                   </tr>
                 </tbody>

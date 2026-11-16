@@ -112,12 +112,16 @@ async function loadModels(): Promise<void> {
   }
 }
 
-async function loadTemplates(): Promise<void> {
+async function loadTemplates(): Promise<boolean> {
   loadingList.value = true
   try {
     const page = await api.prompts.list({
       page_size: 200,
-      template_type: (typeFilter.value || undefined) as 'USER_SIMULATOR' | 'LLM_JUDGE' | undefined,
+      template_type: (typeFilter.value || undefined) as
+        | 'USER_SIMULATOR'
+        | 'LLM_JUDGE'
+        | 'CASE_AUTHOR'
+        | undefined,
       keyword: keyword.value.trim() || undefined,
     })
     templates.value = page.items
@@ -128,11 +132,17 @@ async function loadTemplates(): Promise<void> {
       if (first) await loadDetail(first.id)
       else detail.value = null
     }
+    return true
   } catch (exc) {
     toast.error(errorMessage(exc))
+    return false
   } finally {
     loadingList.value = false
   }
+}
+
+async function refreshTemplates(): Promise<void> {
+  if (await loadTemplates()) toast.success('刷新成功')
 }
 
 async function loadDetail(templateId: number): Promise<void> {
@@ -361,12 +371,15 @@ onMounted(() => {
           <input v-model="keyword" class="input !py-1.5 text-xs" placeholder="搜索编码 / 名称" @keyup.enter="loadTemplates" />
           <div class="flex gap-2">
             <select v-model="typeFilter" class="input !py-1.5 text-xs" @change="loadTemplates">
+              <button><selectedcontent></selectedcontent></button>
               <option value="">全部类型</option>
               <option value="USER_SIMULATOR">用户模拟器</option>
               <option value="LLM_JUDGE">LLM 裁判</option>
+              <option value="CASE_AUTHOR">AI 用例编写</option>
             </select>
-            <button class="btn-ghost btn-xs shrink-0" @click="loadTemplates">刷新</button>
+            <button class="btn-ghost btn-xs shrink-0" @click="refreshTemplates">刷新</button>
           </div>
+          <p class="text-[11px] text-slate-500">共 {{ filteredTemplates.length }} 条</p>
         </div>
         <div class="flex-1 overflow-y-auto">
           <button
@@ -423,8 +436,10 @@ onMounted(() => {
         <div>
           <label class="label">模板类型</label>
           <select v-model="createForm.template_type" class="input">
+            <button><selectedcontent></selectedcontent></button>
             <option value="USER_SIMULATOR">用户模拟器（动态多轮）</option>
             <option value="LLM_JUDGE">LLM 裁判（评分）</option>
+            <option value="CASE_AUTHOR">AI 用例编写（草稿生成）</option>
           </select>
         </div>
         <div>
@@ -557,6 +572,7 @@ onMounted(() => {
             <div>
               <label class="label">执行角色</label>
               <select v-model="sandboxForm.mode" class="input">
+                <button><selectedcontent></selectedcontent></button>
                 <option value="SIMULATOR">用户模拟器</option>
                 <option value="JUDGE">LLM 裁判</option>
               </select>
@@ -564,6 +580,7 @@ onMounted(() => {
             <div>
               <label class="label">使用模型</label>
               <select v-model="sandboxForm.model_id" class="input">
+                <button><selectedcontent></selectedcontent></button>
                 <option :value="null">按角色默认</option>
                 <option v-for="item in models" :key="item.id" :value="item.id">
                   {{ item.name }}（{{ item.role === 'SIMULATOR' ? '模拟' : '裁判' }}）

@@ -19,7 +19,7 @@ const tone = computed(() => {
   if (['FAIL', 'ERROR', 'FAILED', 'DOWN', 'REPETITION_ABORT'].includes(value)) {
     return 'border-rose-200 bg-rose-50 text-rose-700'
   }
-  if (['MAX_TURNS_EXCEEDED', 'PAUSED', 'GIVE_UP'].includes(value)) {
+  if (['MAX_TURNS_EXCEEDED', 'GIVE_UP'].includes(value)) {
     return 'border-amber-200 bg-amber-50 text-amber-700'
   }
   if (['RUNNING', 'SANDBOX'].includes(value)) {
@@ -38,7 +38,7 @@ const dotTone = computed(() => {
   const value = (props.status ?? '').toUpperCase()
   if (['PASS', 'COMPLETED', 'ACTIVE', 'UP', 'GOAL_ACHIEVED'].includes(value)) return 'bg-emerald-500'
   if (['FAIL', 'ERROR', 'FAILED', 'DOWN', 'REPETITION_ABORT'].includes(value)) return 'bg-rose-500'
-  if (['MAX_TURNS_EXCEEDED', 'PAUSED', 'GIVE_UP'].includes(value)) return 'bg-amber-500'
+  if (['MAX_TURNS_EXCEEDED', 'GIVE_UP'].includes(value)) return 'bg-amber-500'
   if (['RUNNING', 'SANDBOX'].includes(value)) return 'bg-indigo-500 animate-pulse'
   return 'bg-slate-400'
 })

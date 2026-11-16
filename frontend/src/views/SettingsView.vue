@@ -88,13 +88,15 @@ function parseOptionalObject(text: string, label: string): Record<string, unknow
   }
 }
 
-async function loadEnvironments(): Promise<void> {
+async function loadEnvironments(): Promise<boolean> {
   envLoading.value = true
   try {
     const page = await api.environments.list({ page_size: 200 })
     environments.value = page.items
+    return true
   } catch (exc) {
     toast.error(errorMessage(exc))
+    return false
   } finally {
     envLoading.value = false
   }
@@ -449,16 +451,23 @@ const modelTitle = computed(() =>
   editingModel.value ? `编辑模型 · ${editingModel.value.code}` : '注册新模型',
 )
 
-async function loadModels(): Promise<void> {
+async function loadModels(): Promise<boolean> {
   modelLoading.value = true
   try {
     const page = await api.models.list({ page_size: 200 })
     models.value = page.items
+    return true
   } catch (exc) {
     toast.error(errorMessage(exc))
+    return false
   } finally {
     modelLoading.value = false
   }
+}
+
+async function refreshConfig(): Promise<void> {
+  const results = await Promise.all([loadEnvironments(), loadModels()])
+  if (results.every(Boolean)) toast.success('刷新成功')
 }
 
 function resetModelForm(): void {
@@ -693,7 +702,7 @@ onMounted(() => {
       description="配置被测系统接入（SSE / 非流式）、环境变量与鉴权钩子，并管理模拟器与裁判模型。"
     >
       <template #actions>
-        <button class="btn-ghost" @click="loadEnvironments(); loadModels()">刷新</button>
+        <button class="btn-ghost" @click="refreshConfig">刷新</button>
         <button v-if="activeTab === 'environments'" class="btn-primary" @click="openCreateEnv">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" d="M12 5v14M5 12h14" />
@@ -852,7 +861,9 @@ onMounted(() => {
                   :class="
                     item.role === 'SIMULATOR'
                       ? 'bg-fuchsia-500/10 text-fuchsia-700'
-                      : 'bg-emerald-50 text-emerald-700'
+                      : item.role === 'CASE_AUTHOR'
+                        ? 'bg-indigo-50 text-indigo-700'
+                        : 'bg-emerald-50 text-emerald-700'
                   "
                 >
                   {{ roleLabel(item.role) }}
@@ -949,6 +960,7 @@ onMounted(() => {
           <div>
             <label class="label">请求方法</label>
             <select v-model="envForm.api_method" class="input">
+              <button><selectedcontent></selectedcontent></button>
               <option value="POST">POST</option>
               <option value="GET">GET</option>
               <option value="PUT">PUT</option>
@@ -1114,8 +1126,10 @@ onMounted(() => {
           <div>
             <label class="label">角色</label>
             <select v-model="modelForm.role" class="input">
+              <button><selectedcontent></selectedcontent></button>
               <option value="SIMULATOR">模拟器模型（SIMULATOR）</option>
               <option value="JUDGE">裁判模型（JUDGE）</option>
+              <option value="CASE_AUTHOR">用例编写模型（CASE_AUTHOR）</option>
             </select>
           </div>
         </div>
@@ -1203,6 +1217,7 @@ onMounted(() => {
               <div>
                 <label class="label">模型</label>
                 <select v-model="modelForm.opencode_model" class="input font-mono">
+                  <button><selectedcontent></selectedcontent></button>
                   <option value="">跟随 Serve 默认模型</option>
                   <optgroup
                     v-for="group in catalogModelGroups"
@@ -1240,6 +1255,7 @@ onMounted(() => {
               <div>
                 <label class="label">Agent</label>
                 <select v-model="modelForm.opencode_agent" class="input font-mono">
+                  <button><selectedcontent></selectedcontent></button>
                   <option value="">跟随 Serve 默认 Agent</option>
                   <option v-for="agent in catalogAgentOptions" :key="agent.id" :value="agent.id">
                     {{ agent.name }}（{{ agent.id }}）

@@ -25,11 +25,21 @@ withDefaults(
       <p v-if="description" class="page-sub">{{ description }}</p>
       <slot name="sub" />
     </div>
-    <div v-if="$slots.actions" class="flex flex-wrap items-center gap-2">
-      <slot name="actions" />
+    <div v-if="$slots.actions && $slots.meta" class="ml-auto flex flex-col items-end gap-2">
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <slot name="actions" />
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <slot name="meta" />
+      </div>
     </div>
-    <div v-if="$slots.meta" class="flex flex-wrap items-center gap-2">
-      <slot name="meta" />
-    </div>
+    <template v-else>
+      <div v-if="$slots.actions" class="flex flex-wrap items-center gap-2">
+        <slot name="actions" />
+      </div>
+      <div v-if="$slots.meta" class="flex flex-wrap items-center gap-2">
+        <slot name="meta" />
+      </div>
+    </template>
   </header>
 </template>

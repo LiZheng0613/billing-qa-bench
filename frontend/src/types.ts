@@ -5,11 +5,11 @@
 
 export type CaseType = 'SINGLE' | 'STATIC_MULTI' | 'DYNAMIC_MULTI'
 export type CaseStatus = 'ACTIVE' | 'DISABLED' | 'DRAFT'
-export type TemplateType = 'USER_SIMULATOR' | 'LLM_JUDGE'
+export type TemplateType = 'USER_SIMULATOR' | 'LLM_JUDGE' | 'CASE_AUTHOR'
 export type TemplateStrategy = 'LATEST' | 'PINNED'
-export type ModelRole = 'SIMULATOR' | 'JUDGE'
+export type ModelRole = 'SIMULATOR' | 'JUDGE' | 'CASE_AUTHOR'
 export type JudgeStrategy = 'AVG' | 'VETO'
-export type TaskStatus = 'PENDING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'ABORTED' | 'FAILED'
+export type TaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'ABORTED' | 'FAILED' | 'SCHEDULED'
 
 export type ExecutionStatus =
   | 'PASS'
@@ -337,6 +337,8 @@ export interface NumericExpectation {
   label: string
   value: number
   tolerance: number
+  aliases?: string[]
+  require_name?: boolean
 }
 
 export interface RuleConfig {
@@ -353,6 +355,108 @@ export interface TurnItem {
   expected_answer?: string | null
   expected_rules?: RuleConfig | null
   notes?: string | null
+}
+
+// ------------------------------------------------------- 答案契约（P0）
+export type GradingMode = 'LEGACY' | 'ANSWER_CONTRACT'
+
+export type InputType =
+  | 'CLEAR'
+  | 'UNDERSPECIFIED'
+  | 'AMBIGUOUS_REF'
+  | 'MULTI_INTENT'
+  | 'VAGUE'
+  | 'UNANSWERABLE'
+  | 'CONTRADICTORY'
+  | 'UNAUTHORIZED'
+
+export type FactKind = 'scalar' | 'set' | 'topk' | 'date' | 'boolean' | 'text'
+
+export type FactVerificationStatus =
+  | 'PENDING'
+  | 'VERIFIED'
+  | 'CONFLICT'
+  | 'NO_EVIDENCE'
+  | 'WAIVED'
+  | 'STALE'
+
+export interface FactAtom {
+  id?: string
+  kind?: FactKind
+  label?: string | null
+  value?: number | string | boolean | null
+  values?: string[]
+  unit?: string | null
+  tolerance?: number
+  time_scope?: string | null
+  matcher?: string | null
+  evidence_required?: boolean
+  derived_from?: string[]
+  formula?: string | null
+  keywords?: string[]
+  aliases?: string[]
+  require_name?: boolean
+  // ---- 取证与验证（存于答案包络 JSON）----
+  verification_status?: FactVerificationStatus
+  verified_by?: string | null
+  verified_at?: string | null
+  verification_note?: string | null
+  evidence_ref?: string | null
+}
+
+export interface FactAtomView extends FactAtom {
+  section: 'must' | 'may' | 'must_not'
+}
+
+
+export interface AnswerEnvelope {
+  must: FactAtom[]
+  may?: FactAtom[]
+  must_not?: FactAtom[]
+  forbidden_phrases?: string[]
+  aliases?: Record<string, string[]>
+  tolerances?: Record<string, number>
+  extras_policy?: 'strict' | 'lenient'
+  clarity_rules?: Record<string, unknown>
+}
+
+export interface ClarifySpec {
+  must_ask_slot: string[]
+  must_not_assert?: string[]
+}
+
+export interface AssumptionScenario {
+  assumption: string
+  must: Record<string, unknown>
+}
+
+export interface AssumptionSpec {
+  must_state_assumption: boolean
+  scenarios: AssumptionScenario[]
+}
+
+export interface PartialSpec {
+  must_disclose: boolean
+  required_facts: string[]
+}
+
+export interface RefuseSpec {
+  must_reason: boolean
+}
+
+export interface ResponseContract {
+  allowed: Array<'clarify' | 'answer_with_assumption' | 'partial' | 'refuse'>
+  clarify?: ClarifySpec | null
+  answer_with_assumption?: AssumptionSpec | null
+  partial?: PartialSpec | null
+  refuse?: RefuseSpec | null
+}
+
+export interface PlanSpec {
+  required_capabilities: string[]
+  alternatives?: Record<string, string[]>
+  max_tool_calls?: number | null
+  allow_parallel?: boolean
 }
 
 export interface HiddenContextItem {
@@ -394,6 +498,19 @@ export interface TestCase {
   judge_model_ids: number[] | null
   judge_strategy: string
   pass_threshold: number | null
+  grading_mode?: string | null
+  input_type?: string | null
+  as_of?: string | null
+  snapshot_id?: string | null
+  answer_envelope?: AnswerEnvelope | null
+  response_contract?: ResponseContract | null
+  plan_spec?: PlanSpec | null
+  risk_level?: string | null
+  owner?: string | null
+  review_status?: string | null
+  reviewed_by?: string | null
+  dataset_version?: string | null
+  dedupe_hash?: string | null
   current_version: number
   created_by: string | null
   updated_by: string | null
@@ -436,7 +553,90 @@ export interface CasePayload {
   judge_model_ids?: number[]
   judge_strategy?: JudgeStrategy
   pass_threshold?: number | null
+  grading_mode?: GradingMode
+  input_type?: InputType
+  as_of?: string | null
+  snapshot_id?: string | null
+  answer_envelope?: AnswerEnvelope | null
+  response_contract?: ResponseContract | null
+  plan_spec?: PlanSpec | null
+  risk_level?: 'LOW' | 'HIGH'
+  owner?: string | null
+  review_status?: string | null
+  dataset_version?: string | null
   change_summary?: string | null
+}
+
+// ------------------------------------------------------------------ AI 用例草稿
+export type DraftSource = 'USER' | 'ASSET' | 'CASE' | 'LLM' | 'NONE'
+
+export interface DraftFact extends FactAtom {
+  section: 'must' | 'may' | 'must_not'
+  source: DraftSource
+  source_ref?: string | null
+}
+
+export interface DraftMissing {
+  field: string
+  label: string
+  reason: string
+}
+
+export interface DraftTurn {
+  query: string
+  expected_answer: string | null
+  notes: string | null
+}
+
+export interface CaseAIDraft {
+  case_type: CaseType
+  name: string | null
+  description: string | null
+  priority: string | null
+  tags: string[]
+  grading_mode: GradingMode | null
+  input_type: InputType | null
+  as_of: string | null
+  query: string | null
+  expected_answer: string | null
+  turns: DraftTurn[]
+  must: DraftFact[]
+  may: DraftFact[]
+  must_not: DraftFact[]
+  forbidden_phrases: string[]
+  risk_level: 'LOW' | 'HIGH'
+  confidence: number
+  field_sources: Partial<Record<string, DraftSource>>
+  missing: DraftMissing[]
+  warnings: string[]
+  suggested_code: string | null
+}
+
+export interface CaseAIDraftContext {
+  calibers: number
+  similar_cases: number
+}
+
+export interface CaseAIDraftResponse {
+  drafts: CaseAIDraft[]
+  mode: 'CREATE' | 'EDIT'
+  base_case_id: number | null
+  base_case_code: string | null
+  model_id: number | null
+  model_code: string | null
+  model_name: string | null
+  elapsed_ms: number
+  context: CaseAIDraftContext
+  warnings: string[]
+}
+
+export interface CaseAIDraftRequest {
+  request: string
+  mode?: 'CREATE' | 'EDIT'
+  count?: number
+  base_case_id?: number | null
+  model_id?: number | null
+  environment_id?: number | null
 }
 
 export interface CaseRevision {
@@ -566,6 +766,7 @@ export interface BatchTask {
   summary: Record<string, unknown> | null
   error_message: string | null
   environment_name?: string | null
+  run_count?: number
 }
 
 export interface StatusDistribution {
@@ -577,6 +778,27 @@ export interface StatusDistribution {
   ABORTED: number
   RUNNING: number
   PENDING: number
+}
+
+export interface TaskRunSummary {
+  total_runs: number
+  completed: number
+  failed: number
+  aborted: number
+  running: number
+  pending: number
+  pass_count: number
+  finished_cases: number
+  total_cases: number
+  pass_rate: number
+}
+
+export interface TaskRunsPage {
+  items: BatchTask[]
+  total: number
+  page: number
+  page_size: number
+  summary: TaskRunSummary
 }
 
 export interface TaskMetrics {
@@ -680,6 +902,9 @@ export interface ExecutionListItem {
   ttft_ms: number | null
   simulator_tokens: number
   judge_tokens: number
+  grading_mode?: string | null
+  lucky_pass?: boolean | null
+  root_cause?: string | null
   started_at: string
   finished_at: string | null
 }
@@ -696,6 +921,11 @@ export interface ExecutionDetail extends ExecutionListItem {
   trace_uid: string
   turns: TurnTrace[]
   judges: JudgeResult[]
+  answer_grading?: Record<string, unknown> | null
+  fact_results?: Array<Record<string, unknown>> | null
+  diagnostics?: Record<string, unknown> | null
+  grader_version?: string | null
+  as_of?: string | null
   raw_request_response: Array<Record<string, unknown>>
 }
 
@@ -705,4 +935,181 @@ export interface RawExecution {
   case_snapshot: Record<string, unknown>
   turns: Array<Record<string, unknown>>
   judges: Array<{ model: string; prompt: string | null }>
+}
+
+// ------------------------------------------------------- 事实验证 / 评审 / 冻结
+export interface FactVerifyPayload {
+  verification_status?: FactVerificationStatus
+  note?: string | null
+  evidence_ref?: string | null
+}
+
+export interface CaseReviewPayload {
+  review_status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  note?: string | null
+}
+
+export interface CaseFreezePayload {
+  dataset_version?: string | null
+  note?: string | null
+}
+
+// ------------------------------------------------------- 运营：候选池
+export type CandidateSource = 'PRODUCTION' | 'TRACE' | 'LLM' | 'MANUAL'
+export type CandidateStatus = 'NEW' | 'TRIAGED' | 'PROMOTED' | 'REJECTED'
+
+export interface CaseCandidate {
+  id: number
+  source: CandidateSource | string
+  raw_question: string
+  context: Record<string, unknown> | null
+  trace_uid: string | null
+  environment_id: number | null
+  draft: Record<string, unknown> | null
+  status: CandidateStatus | string
+  dedupe_hash: string | null
+  note: string | null
+  reviewed_by: string | null
+  promoted_case_id: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CandidatePromoteResult {
+  candidate_id: number
+  case_id: number
+  case_code: string
+}
+
+// ------------------------------------------------------- 运营：判分器自检
+export interface GraderEval {
+  id: number
+  dataset_version: string | null
+  grader_version: string
+  mutant_kind: string
+  total: number
+  detected: number
+  false_kills: number
+  run_at: string
+  details: Record<string, unknown> | null
+}
+
+// ------------------------------------------------------- 运营：业务口径
+export interface Caliber {
+  id: number
+  key: string
+  name: string
+  definition: string | null
+  canonical_source: string
+  owner: string | null
+  created_at: string
+  updated_at: string
+}
+
+// ------------------------------------------------------- 运营：数据源
+export type DataSourceKind = 'CYPHER_TOOL' | 'SQL_DB' | 'HTTP_API'
+
+export interface DataSource {
+  id: number
+  code: string
+  name: string
+  kind: DataSourceKind | string
+  endpoint_url: string | null
+  description: string | null
+  has_auth: boolean
+  timeout_seconds: number
+  max_rows: number
+  tool_version: string | null
+  is_active: boolean
+  last_probe_status: string | null
+  last_probe_latency_ms: number | null
+  last_probe_at: string | null
+  last_probe_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProbeResult {
+  ok: boolean
+  status: string
+  latency_ms: number | null
+  message: string
+  meta: Record<string, unknown> | null
+}
+
+// ------------------------------------------------------- 运营：取数能力
+export interface Capability {
+  id: number
+  key: string
+  name: string
+  kind: string
+  description: string | null
+  source_id: number | null
+  query_text: string | null
+  params_schema: Array<Record<string, unknown>> | null
+  param_binding: Record<string, string> | null
+  intent_patterns: string[] | null
+  lookup_queries: Record<string, string> | null
+  version: number
+  status: string
+  cert_result: Record<string, unknown> | null
+  certified_at: string | null
+  certified_by: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface GoldQuery {
+  id: number
+  case_id: number
+  capability_id: number | null
+  capability_version: number | null
+  origin: string
+  fact_ids: string[] | null
+  template_params: Record<string, unknown> | null
+  query_text: string | null
+  columns: string[] | null
+  rows: Array<Record<string, unknown>> | null
+  row_count: number
+  truncated: boolean
+  executor_version: string | null
+  executed_at: string
+  is_active: boolean
+}
+
+export interface CapabilityExecuteResult {
+  capability_id: number
+  capability_key: string
+  execution: Record<string, unknown>
+  gold_query: GoldQuery
+}
+
+// ------------------------------------------------------- 运营：统计
+export interface FactStatItem {
+  fact_id: string
+  label: string | null
+  total: number
+  passed: number
+  pass_rate: number
+  last_run_at: string | null
+}
+
+export interface FactStatsOverview {
+  execution_total: number
+  passed: number
+  pass_rate: number
+  lucky_pass: number
+  avg_score: number
+  fact_total: number
+  fact_passed: number
+  fact_pass_rate: number
+  top_failed: FactStatItem[]
+}
+
+export interface DatasetStatItem {
+  dataset_version: string | null
+  grading_mode: string
+  review_status: string
+  total: number
 }

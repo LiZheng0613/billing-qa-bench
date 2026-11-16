@@ -2,15 +2,13 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import type { CaseImportAction, CaseImportConflict, CaseImportResult } from '../api'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import ScheduleField from '../components/ScheduleField.vue'
 import StatusPill from '../components/StatusPill.vue'
 import TestCaseDrawer from './components/TestCaseDrawer.vue'
-import CaseRevisionPanel from './components/CaseRevisionPanel.vue'
-import CaseTrendPanel from './components/CaseTrendPanel.vue'
-import RunComparePanel from './components/RunComparePanel.vue'
 import type {
   CasePayload,
   Environment,
@@ -44,24 +42,82 @@ const pageSize = ref(20)
 const keyword = ref('')
 const caseType = ref('')
 const status = ref('')
+const gradingMode = ref('')
+const reviewStatus = ref('')
 const loading = ref(false)
+
+const REVIEW_STATUS_META: Record<string, { label: string; className: string }> = {
+  NOT_REQUIRED: { label: '无需评审', className: 'bg-slate-100 text-slate-600' },
+  PENDING: { label: '待评审', className: 'bg-amber-50 text-amber-700' },
+  APPROVED: { label: '已通过', className: 'bg-emerald-50 text-emerald-700' },
+  REJECTED: { label: '已驳回', className: 'bg-rose-50 text-rose-700' },
+}
+
+function reviewMeta(status?: string | null): { label: string; className: string } {
+  return REVIEW_STATUS_META[status ?? ''] ?? {
+    label: status || '未设置',
+    className: 'bg-slate-100 text-slate-600',
+  }
+}
 
 const environments = ref<Environment[]>([])
 const templates = ref<PromptListItem[]>([])
 const models = ref<ModelConfig[]>([])
 
 const drawerOpen = ref(false)
-const editingCase = ref<TestCase | null>(null)
 const saving = ref(false)
 const debuggingId = ref<number | null>(null)
 const importInput = ref<HTMLInputElement | null>(null)
+const importOpen = ref(false)
+const importFile = ref<File | null>(null)
+const importPreviewing = ref(false)
+const importRunning = ref(false)
+const importConflict = ref<CaseImportConflict>('upsert')
+const importPreview = ref<CaseImportResult | null>(null)
 
-const revisionOpen = ref(false)
-const revisionCase = ref<TestCase | null>(null)
-const trendOpen = ref(false)
-const trendCase = ref<TestCase | null>(null)
-const compareOpen = ref(false)
-const compareCase = ref<TestCase | null>(null)
+const IMPORT_CONFLICT_OPTIONS: Array<{
+  value: CaseImportConflict
+  label: string
+  hint: string
+}> = [
+  { value: 'upsert', label: '覆盖更新', hint: '编号已存在时按文件内容更新（推荐）' },
+  { value: 'skip', label: '跳过', hint: '编号已存在时保持库里的记录不动' },
+  { value: 'error', label: '报错', hint: '编号已存在时整条判为失败，只导入新用例' },
+]
+
+const IMPORT_ACTION_META: Record<
+  CaseImportAction,
+  { label: string; className: string }
+> = {
+  created: { label: '新增', className: 'bg-emerald-50 text-emerald-700' },
+  updated: { label: '更新', className: 'bg-indigo-50 text-indigo-700' },
+  skipped: { label: '跳过', className: 'bg-amber-50 text-amber-700' },
+  failed: { label: '失败', className: 'bg-rose-50 text-rose-700' },
+}
+
+const importBusy = computed(() => importPreviewing.value || importRunning.value)
+const importConflictHint = computed(
+  () => IMPORT_CONFLICT_OPTIONS.find((option) => option.value === importConflict.value)?.hint ?? '',
+)
+const importStats = computed(() => {
+  const preview = importPreview.value
+  if (!preview) return []
+  return [
+    { label: '文件条数', value: preview.total, className: 'text-ink' },
+    { label: '新增', value: preview.created, className: 'text-emerald-600' },
+    { label: '更新', value: preview.updated, className: 'text-indigo-600' },
+    { label: '跳过', value: preview.skipped, className: 'text-amber-600' },
+    {
+      label: '失败',
+      value: preview.failed,
+      className: preview.failed ? 'text-rose-600' : 'text-slate-400',
+    },
+  ]
+})
+const importHasWrites = computed(() => {
+  const preview = importPreview.value
+  return !!preview && preview.created + preview.updated > 0
+})
 
 const selectedIds = ref<number[]>([])
 const batchOpen = ref(false)
@@ -118,7 +174,7 @@ async function loadOptions(): Promise<void> {
   }
 }
 
-async function loadCases(): Promise<void> {
+async function loadCases(): Promise<boolean> {
   loading.value = true
   try {
     const pageData = await api.cases.list({
@@ -127,6 +183,8 @@ async function loadCases(): Promise<void> {
       keyword: keyword.value.trim() || undefined,
       case_type: caseType.value || undefined,
       status: status.value || undefined,
+      grading_mode: gradingMode.value || undefined,
+      review_status: reviewStatus.value || undefined,
     })
     cases.value = pageData.items
     total.value = pageData.total
@@ -134,11 +192,17 @@ async function loadCases(): Promise<void> {
       page.value -= 1
       await loadCases()
     }
+    return true
   } catch (exc) {
     toast.error(errorMessage(exc))
+    return false
   } finally {
     loading.value = false
   }
+}
+
+async function refreshCases(): Promise<void> {
+  if (await loadCases()) toast.success('刷新成功')
 }
 
 function applyFilters(): void {
@@ -150,33 +214,25 @@ function resetFilters(): void {
   keyword.value = ''
   caseType.value = ''
   status.value = ''
+  gradingMode.value = ''
+  reviewStatus.value = ''
   page.value = 1
   void loadCases()
 }
 
 function openCreate(): void {
-  editingCase.value = null
   drawerOpen.value = true
 }
 
-function openEdit(item: TestCase): void {
-  editingCase.value = item
-  drawerOpen.value = true
+function openDetail(item: TestCase): void {
+  void router.push({ name: 'case-detail', params: { id: String(item.id) } })
 }
 
 async function submitCase(payload: CasePayload): Promise<void> {
   saving.value = true
   try {
-    if (editingCase.value) {
-      const body: Partial<CasePayload> = { ...payload }
-      body.code = undefined
-      body.case_type = undefined
-      const updated = await api.cases.update(editingCase.value.id, body)
-      toast.success(`用例 ${updated.code} 已更新至 v${updated.current_version}`)
-    } else {
-      const created = await api.cases.create(payload)
-      toast.success(`用例 ${created.code} 已创建`)
-    }
+    const created = await api.cases.create(payload)
+    toast.success(`用例 ${created.code} 已创建`)
     drawerOpen.value = false
     await loadCases()
   } catch (exc) {
@@ -186,63 +242,21 @@ async function submitCase(payload: CasePayload): Promise<void> {
   }
 }
 
-async function removeCase(item: TestCase): Promise<void> {
-  if (!window.confirm(`确认删除用例 ${item.code}？删除为软删除，历史执行记录保留。`)) return
-  try {
-    const result = await api.cases.remove(item.id)
-    toast.success(result.message)
-    await loadCases()
-  } catch (exc) {
-    toast.error(errorMessage(exc))
-  }
-}
-
 async function debugCase(item: TestCase): Promise<void> {
   debuggingId.value = item.id
   toast.info(`正在执行 ${item.code} 单条调试，请稍候…`)
   try {
     const detail = await api.cases.debug(item.id, { environment_id: item.environment_id })
     toast.success(`调试完成：${statusLabel(detail.status)}，得分 ${detail.total_score ?? '—'}`)
-    await router.push({ name: 'trace', query: { execution: String(detail.id) } })
+    await router.push({
+      name: 'trace',
+      query: { execution: String(detail.id), from: 'case' },
+    })
   } catch (exc) {
     toast.error(errorMessage(exc))
   } finally {
     debuggingId.value = null
   }
-}
-
-function openRevisions(item: TestCase): void {
-  revisionCase.value = item
-  revisionOpen.value = true
-}
-
-function openTrend(item: TestCase): void {
-  trendCase.value = item
-  trendOpen.value = true
-}
-
-function openCompare(item: TestCase): void {
-  compareCase.value = item
-  compareOpen.value = true
-}
-
-function openTrace(executionId: number): void {
-  trendOpen.value = false
-  void router.push({ name: 'trace', query: { execution: String(executionId) } })
-}
-
-function openCaseHistory(item: TestCase): void {
-  void router.push({ name: 'trace', query: { case: String(item.id) } })
-}
-
-function openTrendHistory(): void {
-  if (!trendCase.value) return
-  trendOpen.value = false
-  openCaseHistory(trendCase.value)
-}
-
-async function onRevisionUpdated(): Promise<void> {
-  await loadCases()
 }
 
 function triggerImport(): void {
@@ -252,30 +266,77 @@ function triggerImport(): void {
 async function onImport(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
+  // 先清空，允许用户再次选择同一个文件
+  input.value = ''
   if (!file) return
+  importFile.value = file
+  importConflict.value = 'upsert'
+  importPreview.value = null
+  importOpen.value = true
+  await previewImport()
+}
+
+async function previewImport(): Promise<void> {
+  const file = importFile.value
+  if (!file) return
+  importPreviewing.value = true
   try {
-    const result = await api.cases.importFile(file)
-    toast.success(`导入完成：新增 ${result.created}，更新 ${result.updated}，失败 ${result.failed}`)
+    importPreview.value = await api.cases.importFile(file, {
+      dryRun: true,
+      onConflict: importConflict.value,
+    })
+  } catch (exc) {
+    importPreview.value = null
+    toast.error(errorMessage(exc))
+  } finally {
+    importPreviewing.value = false
+  }
+}
+
+async function changeConflict(value: CaseImportConflict): Promise<void> {
+  if (importConflict.value === value) return
+  importConflict.value = value
+  await previewImport()
+}
+
+function importActionMeta(action: CaseImportAction): { label: string; className: string } {
+  return IMPORT_ACTION_META[action]
+}
+
+async function confirmImport(): Promise<void> {
+  const file = importFile.value
+  if (!file) return
+  importRunning.value = true
+  try {
+    const result = await api.cases.importFile(file, {
+      dryRun: false,
+      onConflict: importConflict.value,
+    })
+    const parts = [`新增 ${result.created}`, `更新 ${result.updated}`]
+    if (result.skipped) parts.push(`跳过 ${result.skipped}`)
+    parts.push(`失败 ${result.failed}`)
+    toast.success(`导入完成：${parts.join('，')}`)
     if (result.errors.length) {
       toast.error(
         result.errors
           .slice(0, 3)
-          .map((item) => `第 ${item.row} 行：${item.message}`)
+          .map((item) => `第 ${item.row} 条：${item.message}`)
           .join('\n'),
       )
     }
+    importOpen.value = false
     await loadCases()
   } catch (exc) {
     toast.error(errorMessage(exc))
   } finally {
-    input.value = ''
+    importRunning.value = false
   }
 }
 
-async function exportCases(format: 'json' | 'xlsx'): Promise<void> {
+async function exportCases(): Promise<void> {
   try {
-    await api.cases.export(format)
-    toast.success(`已导出 ${format.toUpperCase()} 文件`)
+    await api.cases.export('json')
+    toast.success('已导出 JSON 文件')
   } catch (exc) {
     toast.error(errorMessage(exc))
   }
@@ -400,7 +461,7 @@ async function submitBatch(): Promise<void> {
     )
     batchOpen.value = false
     selectedIds.value = []
-    await router.push({ name: 'dashboard', query: { task: String(created.id) } })
+    await router.push({ name: 'task-detail', params: { id: String(created.id) } })
   } catch (exc) {
     toast.error(errorMessage(exc))
   } finally {
@@ -428,10 +489,9 @@ onMounted(() => {
       description="单轮 / 静态多轮 / 动态多轮三类用例，支持批量执行、版本快照、字段 Diff、回滚、导入导出与单条调试。"
     >
       <template #actions>
-        <input ref="importInput" type="file" accept=".xlsx,.json" class="hidden" @change="onImport" />
-        <button class="btn-ghost" @click="triggerImport">导入</button>
-        <button class="btn-ghost" @click="exportCases('json')">导出 JSON</button>
-        <button class="btn-ghost" @click="exportCases('xlsx')">导出 Excel</button>
+        <input ref="importInput" type="file" accept=".json" class="hidden" @change="onImport" />
+        <button class="btn-ghost" @click="triggerImport">导入 JSON</button>
+        <button class="btn-ghost" @click="exportCases">导出 JSON</button>
         <button
           class="btn-ghost"
           title="选择当前页、跨页筛选结果或全部启用用例执行"
@@ -464,6 +524,7 @@ onMounted(() => {
       <div class="w-40">
         <label class="label">用例类型</label>
         <select v-model="caseType" class="input" @change="applyFilters">
+          <button><selectedcontent></selectedcontent></button>
           <option value="">全部类型</option>
           <option value="SINGLE">单轮</option>
           <option value="STATIC_MULTI">静态多轮</option>
@@ -473,10 +534,31 @@ onMounted(() => {
       <div class="w-32">
         <label class="label">状态</label>
         <select v-model="status" class="input" @change="applyFilters">
+          <button><selectedcontent></selectedcontent></button>
           <option value="">全部</option>
           <option value="ACTIVE">启用</option>
           <option value="DRAFT">草稿</option>
           <option value="DISABLED">停用</option>
+        </select>
+      </div>
+      <div class="w-36">
+        <label class="label">判分方式</label>
+        <select v-model="gradingMode" class="input" @change="applyFilters">
+          <button><selectedcontent></selectedcontent></button>
+          <option value="">全部</option>
+          <option value="LEGACY">4 维评分</option>
+          <option value="ANSWER_CONTRACT">答案契约</option>
+        </select>
+      </div>
+      <div class="w-32">
+        <label class="label">评审状态</label>
+        <select v-model="reviewStatus" class="input" @change="applyFilters">
+          <button><selectedcontent></selectedcontent></button>
+          <option value="">全部</option>
+          <option value="PENDING">待评审</option>
+          <option value="APPROVED">已通过</option>
+          <option value="REJECTED">已驳回</option>
+          <option value="NOT_REQUIRED">无需评审</option>
         </select>
       </div>
       <button class="btn-ghost" @click="applyFilters">查询</button>
@@ -486,8 +568,6 @@ onMounted(() => {
     <div class="card overflow-hidden">
       <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
         <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-          <span>共 {{ total }} 条</span>
-          <span class="text-slate-300" aria-hidden="true">|</span>
           <span>当前页：单轮 {{ typeCount.single }} · 静态 {{ typeCount.static }} · 动态 {{ typeCount.dynamic }}</span>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -498,7 +578,7 @@ onMounted(() => {
           <button v-if="selectedIds.length" class="btn-ghost btn-xs" @click="clearSelection">
             清空选择
           </button>
-          <button class="text-[11px] text-slate-500 transition hover:text-slate-800" @click="loadCases">
+          <button class="btn-ghost btn-xs" @click="refreshCases">
             刷新
           </button>
         </div>
@@ -519,12 +599,9 @@ onMounted(() => {
                 />
               </th>
               <th class="th">用例</th>
-              <th class="th">类型</th>
-              <th class="th">状态</th>
-              <th class="th">版本</th>
-              <th class="th">环境 / Prompt</th>
+              <th class="th">关联配置</th>
               <th class="th">更新时间</th>
-              <th class="th text-right">操作</th>
+              <th class="th sticky right-0 z-10 bg-white text-right">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -539,35 +616,64 @@ onMounted(() => {
                   @change="toggleSelect(item)"
                 />
               </td>
-              <td class="td max-w-[300px]">
-                <p class="font-mono text-xs text-indigo-600">{{ item.code }}</p>
-                <p class="mt-0.5 truncate text-sm text-slate-800" :title="item.name">{{ item.name }}</p>
+              <td class="td max-w-[380px]">
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <button
+                    class="font-mono text-xs text-indigo-600 transition hover:text-indigo-800 hover:underline"
+                    @click="openDetail(item)"
+                  >
+                    {{ item.code }}
+                  </button>
+                  <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">
+                    {{ caseTypeLabel(item.case_type) }}
+                  </span>
+                  <StatusPill :status="item.status" size="sm" />
+                  <span class="font-mono text-[10px] text-slate-500">v{{ item.current_version }}</span>
+                  <span class="rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-500">{{ item.priority }}</span>
+                </div>
+                <button
+                  class="mt-1 block max-w-full truncate text-left text-sm text-slate-800 transition hover:text-brand"
+                  :title="item.name"
+                  @click="openDetail(item)"
+                >
+                  {{ item.name }}
+                </button>
                 <p class="mt-0.5 text-[11px] text-slate-500" :title="item.description ?? ''">
-                  {{ truncate(item.description, 44) }}
+                  {{ truncate(item.description, 48) }}
                 </p>
-                <div class="mt-1 flex flex-wrap gap-1">
+                <div class="mt-1 flex flex-wrap items-center gap-1">
                   <span v-for="tag in item.tags ?? []" :key="tag" class="tag">{{ tag }}</span>
                 </div>
+                <div class="mt-1 flex flex-wrap items-center gap-1">
+                  <span
+                    class="rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                    :class="
+                      item.grading_mode === 'ANSWER_CONTRACT'
+                        ? 'bg-indigo-50 text-indigo-700'
+                        : 'bg-slate-100 text-slate-600'
+                    "
+                  >
+                    {{ item.grading_mode === 'ANSWER_CONTRACT' ? '答案契约' : '4 维评分' }}
+                  </span>
+                  <span
+                    v-if="item.review_status && item.review_status !== 'NOT_REQUIRED'"
+                    class="rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                    :class="reviewMeta(item.review_status).className"
+                    :title="item.reviewed_by ? `评审人：${item.reviewed_by}` : undefined"
+                  >
+                    {{ reviewMeta(item.review_status).label }}
+                  </span>
+                </div>
               </td>
-              <td class="td">
-                <span class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-700">
-                  {{ caseTypeLabel(item.case_type) }}
-                </span>
-              </td>
-              <td class="td"><StatusPill :status="item.status" size="sm" /></td>
-              <td class="td">
-                <span class="font-mono text-xs text-slate-700">v{{ item.current_version }}</span>
-                <span class="ml-1 rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-600">{{ item.priority }}</span>
-              </td>
-              <td class="td max-w-[200px] text-[11px] text-slate-500">
+              <td class="td max-w-[220px] text-[11px] text-slate-500">
                 <p class="truncate text-slate-600">{{ item.environment_name || '未绑定环境' }}</p>
                 <p class="truncate">模拟：{{ item.simulator_template_code || '—' }}</p>
                 <p class="truncate">裁判：{{ item.judge_template_code || '—' }}</p>
               </td>
               <td class="td text-xs text-slate-500">{{ formatDateTime(item.updated_at) }}</td>
-              <td class="td">
+              <td class="td sticky right-0 z-10 bg-white">
                 <div class="flex flex-wrap justify-end gap-1">
-                  <button class="btn-ghost btn-xs" @click="openEdit(item)">编辑</button>
+                  <button class="btn-ghost btn-xs" @click="openDetail(item)">详情</button>
                   <button
                     class="btn-ghost btn-xs"
                     :disabled="debuggingId === item.id"
@@ -575,11 +681,6 @@ onMounted(() => {
                   >
                     {{ debuggingId === item.id ? '执行中…' : '调试' }}
                   </button>
-                  <button class="btn-ghost btn-xs" @click="openRevisions(item)">版本</button>
-                  <button class="btn-ghost btn-xs" @click="openTrend(item)">趋势</button>
-                  <button class="btn-ghost btn-xs" @click="openCaseHistory(item)">历史</button>
-                  <button class="btn-ghost btn-xs" @click="openCompare(item)">对比</button>
-                  <button class="btn-danger btn-xs" @click="removeCase(item)">删除</button>
                 </div>
               </td>
             </tr>
@@ -595,7 +696,9 @@ onMounted(() => {
       </div>
 
       <div class="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3">
-        <span class="text-[11px] text-slate-500">第 {{ page }} / {{ pageCount }} 页</span>
+        <span class="text-[11px] text-slate-500">
+          共 <span class="font-medium tabular-nums text-slate-700">{{ total }}</span> 条用例 · 第 {{ page }} / {{ pageCount }} 页
+        </span>
         <div class="flex items-center gap-2">
           <button class="btn-ghost btn-xs" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
           <button class="btn-ghost btn-xs" :disabled="page >= pageCount" @click="goPage(page + 1)">下一页</button>
@@ -666,6 +769,7 @@ onMounted(() => {
           <div>
             <label class="label">执行环境</label>
             <select v-model="batchForm.environment_id" class="input">
+              <button><selectedcontent></selectedcontent></button>
               <option :value="null">不绑定环境（使用用例配置）</option>
               <option v-for="env in environments" :key="env.id" :value="env.id">
                 {{ env.name }}（{{ env.code }}）
@@ -756,29 +860,124 @@ onMounted(() => {
       </template>
     </BaseModal>
 
+    <BaseModal
+      v-model="importOpen"
+      title="导入用例"
+      :subtitle="importFile ? importFile.name : ''"
+      width="lg"
+    >
+      <div class="space-y-4">
+        <div class="space-y-1.5">
+          <span class="label">编号已存在时的处理策略</span>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="option in IMPORT_CONFLICT_OPTIONS"
+              :key="option.value"
+              class="rounded-xl border px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60"
+              :class="
+                importConflict === option.value
+                  ? 'border-brand bg-brand/5 text-ink'
+                  : 'border-line bg-white text-slate-500 hover:border-slate-300'
+              "
+              :disabled="importBusy"
+              :title="option.hint"
+              @click="changeConflict(option.value)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+          <p class="hint">{{ importConflictHint }}</p>
+        </div>
+
+        <div
+          v-if="importPreviewing"
+          class="rounded-xl border border-line bg-slate-50 px-4 py-6 text-center text-xs text-slate-500"
+        >
+          正在预检文件…
+        </div>
+        <template v-else-if="importPreview">
+          <div class="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            <div
+              v-for="stat in importStats"
+              :key="stat.label"
+              class="rounded-xl border border-line bg-white px-3 py-2"
+            >
+              <p class="text-[11px] text-slate-500">{{ stat.label }}</p>
+              <p class="text-lg font-semibold" :class="stat.className">{{ stat.value }}</p>
+            </div>
+          </div>
+          <p class="text-[11px] text-slate-500">
+            以上只是预检结果，确认之前不会写入数据库。成功导入的用例会按内容变更记录版本。
+          </p>
+          <div class="max-h-72 overflow-auto rounded-xl border border-line">
+            <table class="table-shell">
+              <thead>
+                <tr>
+                  <th class="th w-16">序号</th>
+                  <th class="th">用例编号</th>
+                  <th class="th w-20">动作</th>
+                  <th class="th">说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in importPreview.items" :key="`${item.row}-${item.code ?? ''}`">
+                  <td class="td text-xs">{{ item.row }}</td>
+                  <td class="td font-mono text-xs">{{ item.code || '—' }}</td>
+                  <td class="td">
+                    <span
+                      class="rounded-full px-1.5 py-0.5 text-[11px] font-medium"
+                      :class="importActionMeta(item.action).className"
+                    >
+                      {{ importActionMeta(item.action).label }}
+                    </span>
+                  </td>
+                  <td class="td text-xs text-slate-500">{{ item.message || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div
+            v-if="importPreview.warnings.length"
+            class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-800"
+          >
+            <p class="font-medium">文件级提示</p>
+            <ul class="mt-1 list-disc space-y-0.5 pl-4">
+              <li v-for="(warning, index) in importPreview.warnings" :key="index">
+                {{ warning }}
+              </li>
+            </ul>
+          </div>
+        </template>
+        <div
+          v-else
+          class="rounded-xl border border-dashed border-line px-4 py-6 text-center text-xs text-slate-500"
+        >
+          没有可预览的内容，请重新选择文件。
+        </div>
+      </div>
+
+      <template #footer>
+        <button class="btn-ghost" :disabled="importRunning" @click="importOpen = false">
+          取消
+        </button>
+        <button
+          class="btn-primary"
+          :disabled="importBusy || !importHasWrites"
+          @click="confirmImport"
+        >
+          {{ importRunning ? '导入中…' : `确认导入（${importPreview?.created ?? 0} 新增 / ${importPreview?.updated ?? 0} 更新）` }}
+        </button>
+      </template>
+    </BaseModal>
+
     <TestCaseDrawer
       v-model="drawerOpen"
-      :case-data="editingCase"
+      :case-data="null"
       :environments="environments"
       :templates="templates"
       :models="models"
       :saving="saving"
       @submit="submitCase"
     />
-
-    <CaseRevisionPanel
-      v-model="revisionOpen"
-      :case-data="revisionCase"
-      @updated="onRevisionUpdated"
-    />
-
-    <CaseTrendPanel
-      v-model="trendOpen"
-      :case-data="trendCase"
-      @select-execution="openTrace"
-      @view-all="openTrendHistory"
-    />
-
-    <RunComparePanel v-model="compareOpen" :case-data="compareCase" />
   </div>
 </template>

@@ -2,10 +2,13 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useBreadcrumbStore } from '../stores/breadcrumb'
+import type { BreadcrumbItem } from '../stores/breadcrumb'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const breadcrumbStore = useBreadcrumbStore()
 
 interface NavItem {
   name: string
@@ -40,23 +43,28 @@ const navItems: NavItem[] = [
     icon: 'm8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14',
   },
   {
-    name: 'trace',
-    label: '执行记录',
-    path: '/trace',
-    icon: 'M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z',
-  },
-  {
-    name: 'settings',
-    label: '环境与模型',
-    path: '/settings',
-    icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3c0-.34-.03-.67-.1-1l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L14.8 3h-4l-.4 2.6a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.07-.33.1-.66.1-1Z',
+    name: 'ops',
+    label: '运营后台',
+    path: '/ops',
+    icon: 'M4 19V9m5 10V5m5 14v-7m5 7V8M3 21h18',
   },
 ]
 
-const activeName = computed(() => (route.name as string) ?? 'dashboard')
+const activeName = computed(
+  () => (route.meta.nav as string | undefined) ?? (route.name as string) ?? 'dashboard',
+)
 const pageTitle = computed(() =>
   typeof route.meta.title === 'string' ? route.meta.title : '测试平台',
 )
+
+// 面包屑：优先使用页面按数据注册的完整路径，否则用路由 meta 的父级 + 当前页标题。
+const breadcrumbs = computed<BreadcrumbItem[]>(() => {
+  if (breadcrumbStore.trail.length > 0) return breadcrumbStore.trail
+  const parents = Array.isArray(route.meta.breadcrumb)
+    ? (route.meta.breadcrumb as BreadcrumbItem[])
+    : []
+  return [...parents, { label: pageTitle.value }]
+})
 
 function logout(): void {
   auth.logout()
@@ -135,6 +143,21 @@ function logout(): void {
               </p>
               <p class="truncate text-[9.5px] text-slate-600">管理员</p>
             </div>
+            <RouterLink
+              to="/settings"
+              class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition"
+              :class="
+                activeName === 'settings'
+                  ? 'bg-brand-soft text-brand'
+                  : 'text-slate-500 hover:bg-canvas hover:text-ink'
+              "
+              title="环境与模型"
+              aria-label="环境与模型"
+            >
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3c0-.34-.03-.67-.1-1l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L14.8 3h-4l-.4 2.6a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.07-.33.1-.66.1-1Z" />
+              </svg>
+            </RouterLink>
             <button
               class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-canvas hover:text-rose-500"
               title="退出登录"
@@ -154,9 +177,29 @@ function logout(): void {
           class="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 bg-canvas/85 px-6 backdrop-blur max-md:px-4"
         >
           <div class="flex min-w-0 items-center gap-2 text-[11px] text-slate-600">
-            <span class="hidden sm:inline">问账 QA</span>
-            <span class="hidden text-slate-300 sm:inline" aria-hidden="true">/</span>
-            <span class="truncate font-medium text-ink-soft">{{ pageTitle }}</span>
+            <RouterLink
+              to="/"
+              class="hidden shrink-0 transition hover:text-ink sm:inline"
+            >
+              问账 QA
+            </RouterLink>
+            <template v-for="(crumb, index) in breadcrumbs" :key="`${index}-${crumb.label}`">
+              <span class="hidden shrink-0 text-slate-300 sm:inline" aria-hidden="true">/</span>
+              <RouterLink
+                v-if="crumb.to && index < breadcrumbs.length - 1"
+                :to="crumb.to"
+                class="truncate transition hover:text-ink"
+              >
+                {{ crumb.label }}
+              </RouterLink>
+              <span
+                v-else
+                class="truncate font-medium text-ink-soft"
+                :aria-current="index === breadcrumbs.length - 1 ? 'page' : undefined"
+              >
+                {{ crumb.label }}
+              </span>
+            </template>
           </div>
           <div class="flex items-center gap-2">
             <span

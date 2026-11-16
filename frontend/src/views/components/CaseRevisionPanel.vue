@@ -108,6 +108,7 @@ watch(
         <div>
           <label class="label">基线版本</label>
           <select v-model="fromVersion" class="input">
+            <button><selectedcontent></selectedcontent></button>
             <option v-for="version in versions" :key="version" :value="version">v{{ version }}</option>
           </select>
         </div>
@@ -115,6 +116,7 @@ watch(
         <div>
           <label class="label">目标版本</label>
           <select v-model="toVersion" class="input">
+            <button><selectedcontent></selectedcontent></button>
             <option v-for="version in versions" :key="version" :value="version">v{{ version }}</option>
           </select>
         </div>

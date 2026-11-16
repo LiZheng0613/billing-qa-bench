@@ -22,22 +22,21 @@ const props = withDefaults(
     executionTotal?: number
     executionPage?: number
     executionPageSize?: number
+    latestPerCase?: boolean
   }>(),
-  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30 },
+  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, latestPerCase: true },
 )
 
 const emit = defineEmits<{
-  (e: 'refresh'): void
-  (e: 'pause'): void
-  (e: 'resume'): void
+  (e: 'start'): void
   (e: 'abort'): void
   (e: 'retry'): void
   (e: 'run-now'): void
   (e: 'stop-plan'): void
   (e: 'toggle-plan', active: boolean): void
   (e: 'select-execution', executionId: number): void
-  (e: 'view-task-trace', taskId: number): void
   (e: 'page-change', page: number): void
+  (e: 'mode-change', latestPerCase: boolean): void
 }>()
 
 const segmented = computed(() => {
@@ -59,28 +58,26 @@ const distributionTotal = computed(() =>
   segmented.value.reduce((sum, item) => sum + item.count, 0),
 )
 
-const hasTask = computed(() => Boolean(props.task))
 // 定时计划行：只保留配置与下次触发时间，历史执行都在克隆出的批量任务里
 const isPlan = computed(() => Boolean(props.task && props.task.schedule_type !== 'IMMEDIATE'))
-const isRecurringPlan = computed(() =>
-  Boolean(props.task && ['DAILY', 'WEEKLY'].includes(props.task.schedule_type)),
-)
 const planWaiting = computed(() =>
   Boolean(props.task && isPlan.value && ['SCHEDULED', 'ABORTED'].includes(props.task.status)),
 )
-const canPause = computed(() => !planWaiting.value && props.task?.status === 'RUNNING')
-const canResume = computed(() => !planWaiting.value && props.task?.status === 'PAUSED')
+const canStart = computed(
+  () => !planWaiting.value && props.task?.status === 'PENDING',
+)
 const canAbort = computed(() =>
   !planWaiting.value &&
-  Boolean(props.task && ['RUNNING', 'PAUSED', 'PENDING'].includes(props.task.status)),
+  Boolean(props.task && ['RUNNING', 'PENDING'].includes(props.task.status)),
 )
 const canRetry = computed(() =>
   !planWaiting.value &&
+  !isPlan.value &&
   Boolean(props.task && ['COMPLETED', 'ABORTED', 'FAILED'].includes(props.task.status)),
 )
-const canRunNow = computed(() => planWaiting.value)
+const canRunNow = computed(() => planWaiting.value && planActive.value)
 const canStopPlan = computed(() => planWaiting.value)
-const canTogglePlan = computed(() => isRecurringPlan.value && planWaiting.value)
+const canEnablePlan = computed(() => planWaiting.value && !planActive.value)
 const planActive = computed(
   () => Boolean(props.task?.schedule_active && props.task.status === 'SCHEDULED'),
 )
@@ -176,31 +173,22 @@ const stats = computed(() => [
           :status="task.status"
           :label="planWaiting && !planActive ? '已停止' : null"
         />
-        <button class="btn-ghost btn-xs" :disabled="!hasTask" @click="emit('refresh')">刷新</button>
         <button v-if="canRunNow" class="btn-primary btn-xs" @click="emit('run-now')">
-          立即执行一次
+          立即执行
         </button>
         <button
-          v-if="canTogglePlan"
+          v-if="canEnablePlan"
           class="btn-ghost btn-xs"
-          @click="emit('toggle-plan', !planActive)"
+          @click="emit('toggle-plan', true)"
         >
-          {{ planActive ? '暂停计划' : '启用计划' }}
+          启用计划
         </button>
         <button v-if="canStopPlan && planActive" class="btn-danger btn-xs" @click="emit('stop-plan')">
           停止计划
         </button>
-        <button v-if="canPause" class="btn-ghost btn-xs" @click="emit('pause')">暂停</button>
-        <button v-if="canResume" class="btn-primary btn-xs" @click="emit('resume')">恢复</button>
+        <button v-if="canStart" class="btn-primary btn-xs" @click="emit('start')">启动</button>
         <button v-if="canAbort" class="btn-danger btn-xs" @click="emit('abort')">终止</button>
         <button v-if="canRetry" class="btn-ghost btn-xs" @click="emit('retry')">失败重跑</button>
-        <button
-          v-if="task && !planWaiting"
-          class="btn-ghost btn-xs"
-          @click="emit('view-task-trace', task.id)"
-        >
-          全部执行记录（含重试）
-        </button>
       </div>
     </header>
 
@@ -219,12 +207,12 @@ const stats = computed(() => [
                 {{
                   planActive
                     ? '计划生效中，到点会自动生成新的批量任务执行。'
-                    : '计划已停止，不再自动触发；已生成的历史任务不受影响。'
+                    : '计划已停止，不再自动触发；启用后可立即执行，已生成的历史任务不受影响。'
                 }}
               </p>
             </div>
             <button v-if="canRunNow" class="btn-primary btn-xs" @click="emit('run-now')">
-              立即执行一次
+              立即执行
             </button>
           </div>
           <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -303,10 +291,38 @@ const stats = computed(() => [
           <div>
             <h3 class="panel-title">用例执行结果</h3>
             <p class="mt-0.5 text-[11px] text-slate-500">
-              按用例汇总最新一次尝试；点击行进入该用例的单笔执行结果页。
+              {{ latestPerCase ? '按用例汇总最新一次尝试' : '展示每次尝试（含失败重跑）' }}；点击行进入该用例的单笔执行结果页。
             </p>
           </div>
-          <span class="text-[11px] text-slate-500">共 {{ executionTotal }} 条用例</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
+              <button
+                class="rounded-md px-2.5 py-1 transition"
+                :class="
+                  latestPerCase
+                    ? 'bg-white font-medium text-slate-900 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                "
+                @click="emit('mode-change', true)"
+              >
+                每用例最新
+              </button>
+              <button
+                class="rounded-md px-2.5 py-1 transition"
+                :class="
+                  !latestPerCase
+                    ? 'bg-white font-medium text-slate-900 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                "
+                @click="emit('mode-change', false)"
+              >
+                全部尝试
+              </button>
+            </div>
+            <span class="text-[11px] text-slate-500">
+              共 {{ executionTotal }} {{ latestPerCase ? '条用例' : '次执行' }}
+            </span>
+          </div>
         </div>
         <table class="table-shell mt-2">
           <thead>
@@ -325,7 +341,7 @@ const stats = computed(() => [
           <tbody>
             <tr
               v-for="item in executions"
-              :key="item.case_id ?? item.id"
+              :key="item.id"
               class="cursor-pointer"
               @click="emit('select-execution', item.id)"
             >
@@ -340,7 +356,7 @@ const stats = computed(() => [
               <td class="td"><StatusPill :status="item.status" size="sm" /></td>
               <td class="td tabular-nums">{{ formatScore(item.total_score) }}</td>
               <td class="td tabular-nums">{{ item.turns_used }}</td>
-              <td class="td tabular-nums">{{ item.attempt_count ?? 1 }}</td>
+              <td class="td tabular-nums">{{ item.attempt_no }}</td>
               <td class="td tabular-nums">{{ formatMs(item.latency_ms) }}</td>
               <td class="td text-xs text-slate-500">{{ formatDateTime(item.started_at) }}</td>
               <td class="td text-right">
