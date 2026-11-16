@@ -32,7 +32,7 @@
 batch_test/
 ├── backend/
 │   ├── billing_qa/            # 应用包（避免与 site-packages 中的 app 冲突）
-│   │   ├── api/v1/            # auth / environments / models / prompts / cases / tasks / executions / ws
+│   │   ├── api/v1/            # auth / environments / models / prompts / cases / tasks / executions / ws / calibers / candidates / capabilities / grader / stats
 │   │   ├── core/              # 配置、日志、安全、异常、加密、任务控制面
 │   │   ├── db/                # 引擎/会话、建库初始化、种子数据、演示数据
 │   │   ├── models/            # 18 张 ORM 表
@@ -58,8 +58,8 @@ batch_test/
 │       ├── api/               # fetch 封装（统一错误、401 登出、鉴权下载）
 │       ├── components/        # AppShell / BaseModal / StatusPill / JsonViewer 等
 │       ├── composables/       # useEChart
-│       ├── stores/            # auth / toast
-│       ├── views/             # 大盘 / 用例 / Prompt / Trace / 环境与模型
+│       ├── stores/            # auth / toast / breadcrumb
+│       ├── views/             # 大盘 / 批量任务与详情 / 用例与详情 / Prompt / Trace / 环境与模型 / 运营后台
 │       └── utils/
 └── README.md
 ```
@@ -112,7 +112,7 @@ python -m billing_qa.db.init_db --demo --reset
 python -m uvicorn billing_qa.main:app --host 127.0.0.1 --port 8000
 ```
 
-- `--reset` 会删除 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `batch_task` / `case_candidate` 中的全部数据，保留环境、模型、Prompt 等基础资产，再重新写入演示用例、业务口径与候选池。
+- `--reset` 会删除 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` 中的全部数据，保留环境、模型、Prompt 等基础资产，再重新写入演示用例、业务口径与候选池。
 - 需要演示大盘、趋势与 Run 对比时，再执行 `python scripts/seed_demo_history.py`：脚本会真实调用 Mock 服务生成 3 条已完成批量任务（全量回归 / 单轮与契约专项 / 动态多轮专项），以及对应的执行记录、轮次轨迹与裁判明细，并回填近 3 天历史时间。脚本幂等，重复执行只重建 `DEMO-TASK-*`。
 
 - Swagger：<http://127.0.0.1:8000/api/v1/docs>
