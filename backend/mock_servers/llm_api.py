@@ -16,50 +16,130 @@ from fastapi import FastAPI, Request
 
 app = FastAPI(title="Mock OpenAI Compatible LLM", version="1.0.0")
 
+_PHONE_PATTERN = re.compile(r"1[3-9]\d{9}")
+_ACCOUNT_PATTERN = re.compile(r"CTC\d{8,}")
 _ORDER_PATTERN = re.compile(r"[A-Z]\d{7}")
+_PERIOD_PATTERN = re.compile(r"(20\d{2})\s*[-/年]\s*(\d{1,2})")
 _TURN_PATTERN = re.compile(r"当前轮次：\s*(\d+)")
 _TERMINATION_PATTERN = re.compile(r"结束状态\s*([A-Z_]+)")
+_AMOUNT_PATTERN = re.compile(
+    r"(?<![\d.])(\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?)\s*元"
+    r"|(?<![\d.])(\d{1,6}\.\d{1,2})(?![\d.])"
+)
 
 DISTINCT_QUERIES = [
-    "那能不能把每笔明细也发我看一下？",
-    "这些费用里包含税费吗？",
-    "上个月的账期是不是也一起结清了？",
-    "发票大概什么时候可以开出来？",
-    "有没有产生额外的违约金或者手续费？",
+    "那流量超套的 9GB 是怎么算的？",
+    "这些费用里包含增值业务扣费吗？",
+    "上个月的账单是不是也都结清了？",
+    "电子发票大概什么时候可以开出来？",
+    "有没有产生额外的违约金或者滞纳金？",
 ]
+
+
+def _hidden_entity(prompt: str) -> tuple[str, str] | None:
+    """从渲染后的隐藏上下文里找到可释放的实体（手机号 / 宽带账号 / 订单号）。"""
+    for pattern, label in (
+        (_PHONE_PATTERN, "手机号"),
+        (_ACCOUNT_PATTERN, "宽带账号"),
+        (_ORDER_PATTERN, "订单号"),
+    ):
+        match = pattern.search(prompt)
+        if match:
+            return label, match.group(0)
+    return None
+
+
+def _prompt_period(prompt: str) -> str | None:
+    match = _PERIOD_PATTERN.search(prompt)
+    if match is None:
+        return None
+    month = int(match.group(2))
+    if not 1 <= month <= 12:
+        return None
+    return f"{int(match.group(1)):04d}-{month:02d}"
+
+
+def _goal_text(prompt: str) -> str:
+    """只取模拟器 Prompt 的「测试目标」段落，避免被对话历史里的词干扰。"""
+    marker = "# Core Testing Goal"
+    if marker not in prompt:
+        return prompt
+    block = prompt.split(marker, 1)[1]
+    for stop in ("# Hidden Context", "# Constraints", "# Dialogue History"):
+        if stop in block:
+            block = block.split(stop, 1)[0]
+    return block
+
+
+def _topic_query(prompt: str) -> str:
+    goal = _goal_text(prompt)
+    if any(word in goal for word in ("余额", "预存", "冻结", "赠费")):
+        return "查一下账户可用余额、冻结余额和赠费到期时间"
+    if any(
+        word in goal
+        for word in ("offer", "可订购", "可办理", "能办理", "订购", "合约", "优惠", "折扣")
+    ):
+        if any(word in goal for word in ("已订", "合约", "到期", "生效")):
+            return "查一下已订购 offer 的月费、优惠价和合约到期时间"
+        return "查一下当前可以订购的 offer 和月费"
+    if any(word in goal for word in ("欠费", "停机", "复机")):
+        return "查一下欠费金额、账期和停机状态"
+    if "漫游" in goal:
+        return "查一下国际漫游费用明细"
+    if any(word in goal for word in ("增值", "彩铃", "会员", "退订")):
+        return "查一下已订购的增值业务和扣费"
+    if "发票" in goal:
+        return "查一下可开具的电子发票金额"
+    if any(word in goal for word in ("套餐", "余量", "流量", "超套")):
+        return "查一下套餐余量和超套费用"
+    return "核对一下账单总额和费用明细"
 
 
 def _simulator_content(prompt: str) -> dict[str, Any]:
     turn_match = _TURN_PATTERN.search(prompt)
     turn = int(turn_match.group(1)) if turn_match else 1
-    order_match = _ORDER_PATTERN.search(prompt)
+    entity = _hidden_entity(prompt)
 
     if "[MOCK:GIVEUP]" in prompt:
-        return {"thought": "客服一直给不出有效信息，放弃追问", "status": "GIVE_UP", "query": "那算了吧"}
+        return {
+            "thought": "客服一直给不出有效信息，放弃追问",
+            "status": "GIVE_UP",
+            "query": "那算了吧",
+        }
     if "[MOCK:REPEAT]" in prompt:
         return {
             "thought": "继续用同一句话追问，用于验证复读机熔断",
             "status": "CONTINUE",
-            "query": "帮我查一下订单 A2024001 的含税金额",
+            "query": "帮我查一下手机号 13800138000 的账单金额",
         }
     if "[MOCK:MAXTURNS]" in prompt:
         query = DISTINCT_QUERIES[(turn - 1) % len(DISTINCT_QUERIES)]
         return {"thought": "目标尚未达成，继续追问不同细节", "status": "CONTINUE", "query": query}
 
     if turn >= 3:
-        return {"thought": "已经拿到金额和笔数，目标达成", "status": "GOAL_ACHIEVED", "query": "好的，清楚了，谢谢"}
-    if turn == 2 and order_match:
         return {
-            "thought": "客服要求提供订单号，这里释放隐藏信息",
+            "thought": "已经拿到金额和明细，目标达成",
+            "status": "GOAL_ACHIEVED",
+            "query": "好的，清楚了，谢谢",
+        }
+    if turn == 2 and entity:
+        label, value = entity
+        period = _prompt_period(prompt) or "2026-10"
+        return {
+            "thought": "客服要求提供必要信息，这里释放隐藏的手机号与账期",
             "status": "CONTINUE",
-            "query": f"订单号是 {order_match.group(0)}，麻烦帮我核对一下。",
+            "query": f"{label}是 {value}，账期是 {period}，麻烦帮我{_topic_query(prompt)}。",
         }
     if turn == 2:
-        return {"thought": "先补充账期信息", "status": "CONTINUE", "query": "账期是 2026-10，麻烦查一下。"}
+        return {
+            "thought": "先补充账期信息",
+            "status": "CONTINUE",
+            "query": "账期是 2026-10，麻烦查一下。",
+        }
     return {
-        "thought": "先描述诉求，暂不主动给出订单号",
+        "thought": "先描述诉求，暂不主动给出手机号",
         "status": "CONTINUE",
-        "query": "我想核对一下这个月的账单金额和明细，但订单号一时找不到。",
+        "query": f"{_topic_query(prompt)}，但手机号一时找不到。",
     }
 
 
@@ -120,6 +200,381 @@ def _judge_content(prompt: str, model: str) -> dict[str, Any]:
     }
 
 
+def _author_request(prompt: str) -> str:
+    marker = "# User Request"
+    if marker not in prompt:
+        return prompt
+    block = prompt.split(marker, 1)[1]
+    for stop in (
+        "# Generation Mode",
+        "# Business Calibers",
+        "# Similar Cases",
+        "# Output JSON Schema",
+    ):
+        if stop in block:
+            block = block.split(stop, 1)[0]
+    return block.strip()
+
+
+def _author_amounts(text: str) -> list[str]:
+    values: list[str] = []
+    for match in _AMOUNT_PATTERN.finditer(text):
+        raw = (match.group(1) or match.group(2) or "").replace(",", "")
+        if not raw:
+            continue
+        value = f"{float(raw):.2f}"
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def _base_case_type(text: str) -> str:
+    match = re.search(r"case_type：\s*([A-Z_]+)", text or "")
+    return match.group(1) if match else "SINGLE"
+
+
+def _base_name(text: str) -> str | None:
+    match = re.search(r"^\[[^\]]+\]\s*(.+)$", (text or "").strip(), re.M)
+    return match.group(1).strip() if match else None
+
+
+def _base_description(text: str) -> str | None:
+    match = re.search(r"^描述：\s*(.+)$", (text or "").strip(), re.M)
+    return match.group(1).strip() if match else None
+
+
+def _base_query(text: str) -> str | None:
+    match = re.search(r"^query：\s*(.+)$", (text or "").strip(), re.M)
+    return match.group(1).strip() if match else None
+
+
+def _base_priority(text: str) -> str | None:
+    match = re.search(r"^优先级：\s*(P[0-3])", (text or "").strip(), re.M)
+    return match.group(1) if match else None
+
+
+def _base_turns(text: str) -> list[dict[str, Any]]:
+    """从基线用例简介里还原静态多轮脚本。"""
+    if _base_case_type(text) != "STATIC_MULTI":
+        return []
+    queries: dict[int, str] = {}
+    answers: dict[int, str] = {}
+    notes: dict[int, str] = {}
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        match = re.match(r"第(\d+)轮：(.*)$", line)
+        if match:
+            queries[int(match.group(1))] = match.group(2).strip()
+            continue
+        match = re.match(r"第(\d+)轮预期：(.*)$", line)
+        if match:
+            answers[int(match.group(1))] = match.group(2).strip()
+            continue
+        match = re.match(r"第(\d+)轮备注：(.*)$", line)
+        if match:
+            notes[int(match.group(1))] = match.group(2).strip()
+    turns = []
+    for index in sorted(queries):
+        if not queries[index]:
+            continue
+        turns.append(
+            {
+                "query": queries[index],
+                "expected_answer": answers.get(index),
+                "notes": notes.get(index),
+            }
+        )
+    return turns
+
+
+_CN_TURN_DIGITS = {
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+
+
+def _turn_no(text: str) -> int | None:
+    """解析「第 2 轮 / 第二轮」中的轮次（1-based）。"""
+    match = re.search(r"第\s*([0-9一二三四五六七八九十]+)\s*轮", text or "")
+    if not match:
+        return None
+    raw = match.group(1)
+    if raw.isdigit():
+        return int(raw)
+    if raw == "十":
+        return 10
+    if raw.startswith("十"):
+        return 10 + _CN_TURN_DIGITS.get(raw[1:], 0)
+    if "十" in raw:
+        left, right = raw.split("十", 1)
+        return _CN_TURN_DIGITS.get(left, 0) * 10 + (
+            _CN_TURN_DIGITS.get(right, 0) if right else 0
+        )
+    return _CN_TURN_DIGITS.get(raw)
+
+
+def _author_content(prompt: str) -> dict[str, Any]:
+    """确定性生成用例草稿：只使用用户描述中明确出现的信息。"""
+    request = _author_request(prompt)
+    if "# Base Case" in request:
+        user_part, base_part = request.split("# Base Case", 1)
+    else:
+        user_part, base_part = request, ""
+
+    variant_match = re.search(r"候选\s*(\d+)\s*/\s*(\d+)", prompt)
+    variant = int(variant_match.group(1)) if variant_match else 1
+
+    # EDIT 模式：用户新描述优先；没给数值/账期时回落到基线用例，模拟「保留既有语义」。
+    entity = _hidden_entity(user_part) or _hidden_entity(base_part)
+    period = _prompt_period(user_part) or _prompt_period(base_part)
+    amounts = _author_amounts(user_part) or _author_amounts(base_part)
+    topic = user_part
+    scenario_words = ("欠费", "停机", "复机", "流量", "超套", "套餐", "余量", "账单", "金额", "费用")
+    if not any(word in topic for word in scenario_words):
+        topic = f"{user_part} {base_part}"
+
+    base_turns = _base_turns(base_part)
+    base_name = _base_name(base_part)
+    base_description = _base_description(base_part)
+    base_query = _base_query(base_part)
+    base_priority = _base_priority(base_part)
+
+    if entity:
+        label, value = entity
+        subject = f"{label} {value}"
+    else:
+        subject = "该号码"
+    period_text = period or "最近一期"
+
+    if any(word in topic for word in ("欠费", "停机", "复机")):
+        name = "欠费金额与停机状态校验"
+        tags = ["欠费", "停复机"]
+        fact_label, unit = "欠费金额", "CNY"
+    elif any(word in topic for word in ("流量", "超套", "套餐", "余量")):
+        name = "套餐余量与超套费用校验"
+        tags = ["套餐", "超套"]
+        fact_label, unit = "超套费用", "CNY"
+    elif any(word in topic for word in ("账单", "金额", "费用")):
+        name = "账单总额与费用项数校验"
+        tags = ["账单", "费用明细"]
+        fact_label, unit = "账单总额", "CNY"
+    else:
+        name = "AI 生成用例草稿"
+        tags = ["AI 草稿"]
+        fact_label, unit = "核对金额", "CNY"
+
+    query = f"帮我查一下 {subject} 在 {period_text} 的{fact_label}和费用项数？"
+
+    # 多候选：保持业务数值不变，只让名称 / 标签 / 提问措辞可区分。
+    if variant > 1:
+        suffix = "边界" if variant % 2 == 0 else "明细"
+        name = f"{name}（{suffix}）"
+        tags = [*tags, suffix]
+        if variant % 2 == 0:
+            query = f"请问 {subject} 在 {period_text} 的{fact_label}是多少？"
+        else:
+            query = f"核对一下 {subject} 在 {period_text} 的{fact_label}和费用明细"
+
+    # EDIT：用户没要求换提问时保留基线提问，避免"只改优先级"却把原提问覆盖成模板句。
+    if base_query and not any(
+        word in user_part for word in ("改成问", "换成问", "改问", "重新问", "改成查询")
+    ):
+        rewritten = base_query
+        base_period = _prompt_period(base_part)
+        if period and base_period and period != base_period:
+            rewritten = _PERIOD_PATTERN.sub(period, rewritten)
+        if "口语化" in user_part or "口语" in user_part:
+            if not rewritten.startswith("麻烦问下"):
+                rewritten = f"麻烦问下，{rewritten}"
+        query = rewritten
+
+    grading = "ANSWER_CONTRACT" if (amounts or "契约" in request) else "LEGACY"
+    if grading == "ANSWER_CONTRACT":
+        name = f"{name}（契约）"
+        tags = [*tags, "答案契约"]
+
+    must: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    if period:
+        must.append(
+            {
+                "label": "本期账期",
+                "kind": "date",
+                "value": period,
+                "source": "USER",
+                "source_ref": None,
+            }
+        )
+    if amounts:
+        must.append(
+            {
+                "label": fact_label,
+                "kind": "scalar",
+                "value": float(amounts[0]),
+                "unit": unit,
+                "tolerance": 0.01,
+                "aliases": ["total_amount"] if fact_label == "账单总额" else [],
+                "require_name": True,
+                "source": "USER",
+                "source_ref": None,
+            }
+        )
+    else:
+        missing.append(
+            {
+                "field": "must.amount",
+                "label": fact_label,
+                "reason": "用户描述中没有给出具体数值，已留空待补充",
+            }
+        )
+        warnings.append(f"{fact_label}缺少权威依据，已留空，请人工补充")
+
+    if "费用项" in request:
+        missing.append(
+            {
+                "field": "must.item_count",
+                "label": "费用项数",
+                "reason": "用户描述没有给出具体项数，已留空待补充",
+            }
+        )
+        warnings.append("费用项数缺少权威依据，已留空，请人工补充")
+
+    must_not: list[dict[str, Any]] = []
+    for amount in amounts[1:]:
+        must_not.append(
+            {
+                "label": "错误金额",
+                "kind": "text",
+                "value": amount,
+                "source": "USER",
+                "source_ref": None,
+            }
+        )
+        warnings.append(f"已将 {amount} 作为禁止出现的错误金额")
+
+    description = (
+        f"校验 {subject} 在 {period_text} 的{fact_label}"
+        + ("与费用项数" if "费用项" in request else "")
+        + "，关注数值准确性与口径一致性。"
+    )
+
+    turns: list[dict[str, Any]] = []
+    if not base_turns and re.search(r"多轮|两轮|2\s*轮|三轮|3\s*轮|追问|连续对话", user_part):
+        # 新建多轮：先给出与单轮一致的提问，再补一轮口语化追问；只写问法，不编造数值。
+        turns = [
+            {"index": 1, "query": query, "expected_answer": None, "notes": None},
+            {
+                "index": 2,
+                "query": "那这笔账单的费用明细都有哪些？",
+                "expected_answer": None,
+                "notes": "追问明细，验证上下文继承",
+            },
+        ]
+        if "三轮" in user_part or "3 轮" in user_part:
+            turns.append(
+                {
+                    "index": 3,
+                    "query": "这些费用里哪一项超套了？",
+                    "expected_answer": None,
+                    "notes": "继续追问超套项",
+                }
+            )
+    if base_turns:
+        turns = [dict(item) for item in base_turns]
+        # 支持「把第 2 轮改成『...』」这类明确的轮次改写。
+        quoted = re.search(
+            r"第\s*[0-9一二三四五六七八九十]+\s*轮[^「『\"“]*[「『\"“]([^」』\"”]+)[」』\"”]",
+            user_part,
+        )
+        if quoted:
+            target = (_turn_no(user_part) or 1) - 1
+            if 0 <= target < len(turns):
+                turns[target]["query"] = quoted.group(1).strip()
+        # 用户给了新账期时，同步替换各轮里的旧账期。
+        base_period = _prompt_period(base_part)
+        if period and base_period and period != base_period:
+            for turn in turns:
+                turn["query"] = _PERIOD_PATTERN.sub(period, str(turn.get("query") or ""))
+        if "口语化" in user_part and turns:
+            index = max(0, min(len(turns) - 1, (_turn_no(user_part) or 1) - 1))
+            query_text = str(turns[index].get("query") or "")
+            if not query_text.startswith("麻烦问下"):
+                turns[index]["query"] = f"麻烦问下，{query_text}"
+        # 「补充一轮…追问」：在末尾追加一轮口语化追问，只写问法，不带任何数值。
+        if re.search(r"(?:补充|增加|添加|再来)\s*(?:一|1|两|2)?\s*轮", user_part):
+            topic = "费用明细" if "明细" in user_part else ("账单总额" if "总额" in user_part else "账单")
+            extra_query = f"那这笔账单的{topic}能再说细一点吗？"
+            if all(extra_query != str(turn.get("query") or "") for turn in turns):
+                turns.append(
+                    {
+                        "index": len(turns) + 1,
+                        "query": extra_query,
+                        "expected_answer": None,
+                        "notes": "用户在基线基础上新增的追问轮次",
+                    }
+                )
+        if base_name and not any(word in user_part for word in ("名称", "改名", "命名为")):
+            name = base_name
+        if base_description and "描述" not in user_part:
+            description = base_description
+
+    priority_match = re.search(r"优先级[^P0-9]{0,6}P([0-3])", user_part) or re.search(
+        r"(?<![A-Za-z])P([0-3])(?![0-9])", user_part
+    )
+    if priority_match:
+        priority = f"P{priority_match.group(1)}"
+        priority_source = "USER"
+    elif base_priority:
+        priority = base_priority
+        priority_source = "CASE"
+    else:
+        priority = "P0" if grading == "ANSWER_CONTRACT" else "P1"
+        priority_source = "LLM"
+
+    return {
+        "case_type": "STATIC_MULTI" if turns else "SINGLE",
+        "name": name,
+        "description": description,
+        "priority": priority,
+        "tags": tags,
+        "grading_mode": grading,
+        "input_type": "CLEAR",
+        "as_of": period,
+        "query": None if turns else query,
+        "expected_answer": (
+            None
+            if turns
+            else (f"{period_text}{fact_label}为 {amounts[0]} 元" if amounts else None)
+        ),
+        "turns": turns,
+        "risk_level": "HIGH" if grading == "ANSWER_CONTRACT" else "LOW",
+        "confidence": 0.72,
+        "must": must,
+        "may": [],
+        "must_not": must_not,
+        "forbidden_phrases": [],
+        "field_sources": {
+            "case_type": "CASE" if base_turns else "LLM",
+            "name": "CASE" if base_name and name == base_name else "LLM",
+            "priority": priority_source,
+            "query": "CASE" if base_query and query == base_query else "LLM",
+            "turns": "CASE" if base_turns else ("LLM" if turns else "NONE"),
+            "as_of": "USER" if period else "NONE",
+            fact_label: "USER" if amounts else "NONE",
+        },
+        "missing": missing,
+        "warnings": warnings,
+    }
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "mock-llm"}
@@ -136,6 +591,8 @@ async def chat_completions(request: Request) -> dict[str, Any]:
         content: Any = _simulator_content(prompt)
     elif "审计裁判官" in prompt or "Scoring Rubrics" in prompt:
         content = _judge_content(prompt, model)
+    elif "问账测试用例编写助手" in prompt or "# Generation Mode" in prompt:
+        content = _author_content(prompt)
     elif '"ok": true' in prompt:
         content = {"ok": True}
     else:

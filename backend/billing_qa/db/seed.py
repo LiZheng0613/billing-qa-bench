@@ -68,6 +68,69 @@ JUDGE_DEFAULT_CONTENT = """# Role
   "reason": "明确指出哪一轮、哪一个数字或哪句话与预期/底层 Raw Data 不符"
 }"""
 
+CASE_AUTHOR_DEFAULT_CONTENT = """# Role
+你是一名「问账测试用例编写助手」。请依据用户需求、业务口径资产与相似历史用例，生成一条可直接录入系统的测试用例草稿。
+
+# Hard Rules
+1. 只输出合法 JSON，不要 Markdown 代码块，不要任何解释性前后缀。
+2. 只输出语义字段。严禁输出 environment_id / simulator_template_id / judge_template_id / simulator_model_id / judge_model_ids / snapshot_id / code 等外键、编号或系统 ID。
+3. 数值（金额、笔数、账期、日期）必须有明确依据：用户需求原文、业务口径或相似历史用例。没有依据时不要编造，把该项写进 missing 并在 warnings 中说明。
+4. 每条事实必须给出 source：USER / ASSET / CASE / LLM / NONE；尽量填写 source_ref（业务口径 key 或历史用例编号）。
+5. 第一版默认只生成单轮问答（case_type=SINGLE）。若用户明确要求多轮，仍按单轮给出最接近的 query，并在 warnings 中提示暂不支持。
+6. must_not 表示答案中绝对不能出现的内容（如错误金额），其值应为不含逗号的原子短语或数值。
+7. 事实取值规则：scalar 用数值 value + unit；date 用 yyyy-MM-dd 或 yyyy-MM 字符串；set/topk 用 values 列表；boolean/text 用 value。
+8. 没有把握的字段一律留空（null），不要用占位符或猜测值填充。
+
+# User Request
+{{user_request}}
+
+# Generation Mode
+{{mode}}（CREATE=新建；EDIT=基于既有用例改写）；count={{count}}
+
+# Business Calibers
+{{calibers}}
+
+# Similar Cases
+{{similar_cases}}
+
+# Output JSON Schema
+{
+  "name": "用例名称",
+  "description": "这条用例覆盖什么、关注什么风险",
+  "priority": "P0/P1/P2",
+  "tags": ["账单", "答案契约"],
+  "grading_mode": "ANSWER_CONTRACT 或 LEGACY",
+  "input_type": "CLEAR / AMBIGUOUS / MISSING",
+  "as_of": "账期或冻结时间，可为空",
+  "query": "用户会怎么问这句话",
+  "expected_answer": "预期答案摘要，可为空",
+  "risk_level": "LOW 或 HIGH",
+  "confidence": 0.0,
+  "must": [
+    {
+      "label": "账单总额",
+      "kind": "scalar",
+      "value": 268.5,
+      "unit": "CNY",
+      "tolerance": 0.01,
+      "aliases": ["total_amount"],
+      "require_name": true,
+      "source": "USER",
+      "source_ref": null
+    }
+  ],
+  "may": [],
+  "must_not": [
+    {"label": "错误金额", "kind": "text", "value": "999.00", "source": "USER"}
+  ],
+  "forbidden_phrases": [],
+  "field_sources": {"name": "USER", "query": "USER"},
+  "missing": [
+    {"field": "must.item_count", "label": "费用项数", "reason": "用户描述与业务口径均未给出具体项数"}
+  ],
+  "warnings": ["费用项数缺少权威依据，已留空待补充"]
+}"""
+
 _VAR_PATTERN = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
 
@@ -96,6 +159,13 @@ async def seed_builtin_prompts(db: AsyncSession) -> list[str]:
             "description": "金融问账场景零容错裁判，输出结构化评分 JSON。",
             "template_type": TemplateType.LLM_JUDGE,
             "content": JUDGE_DEFAULT_CONTENT,
+        },
+        {
+            "code": "CASE_AUTHOR_DEFAULT",
+            "name": "默认 AI 用例编写助手模板",
+            "description": "依据用户描述、业务口径与相似用例生成用例草稿，只输出语义字段。",
+            "template_type": TemplateType.CASE_AUTHOR,
+            "content": CASE_AUTHOR_DEFAULT_CONTENT,
         },
     ]
     created: list[str] = []

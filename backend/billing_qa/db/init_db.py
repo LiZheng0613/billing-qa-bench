@@ -6,6 +6,7 @@
 用法（在 backend 目录下）：
     python -m billing_qa.db.init_db            # 建库 + 升级表结构 + 内置模板
     python -m billing_qa.db.init_db --demo     # 额外写入演示环境/模型/用例
+    python -m billing_qa.db.init_db --demo --reset  # 清空全部用例后重建演示数据
 """
 
 from __future__ import annotations
@@ -72,7 +73,7 @@ async def upgrade_database() -> None:
     logger.info("数据表已就绪，共 %d 张", len(Base.metadata.tables))
 
 
-async def init_database(with_demo: bool = False) -> None:
+async def init_database(with_demo: bool = False, reset: bool = False) -> None:
     ensure_database()
     await upgrade_database()
     async with SessionLocal() as db:
@@ -84,15 +85,20 @@ async def init_database(with_demo: bool = False) -> None:
         if with_demo:
             from billing_qa.db.seed_demo import seed_demo_data
 
-            await seed_demo_data(db)
-            logger.info("演示数据已就绪")
+            await seed_demo_data(db, reset=reset)
+            logger.info("演示数据已就绪%s", "（已先清空全部用例）" if reset else "")
 
 
 async def _main() -> None:
     parser = argparse.ArgumentParser(description="初始化批量测试平台数据库")
     parser.add_argument("--demo", action="store_true", help="同时写入演示环境/模型/用例")
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="先清空全部用例、执行记录与候选池，再重建演示数据（需配合 --demo）",
+    )
     args = parser.parse_args()
-    await init_database(with_demo=args.demo)
+    await init_database(with_demo=args.demo, reset=args.reset)
     # 校验连接
     async with SessionLocal() as db:
         value = (await db.execute(text("SELECT 1"))).scalar_one()
