@@ -17,6 +17,7 @@ from billing_qa.core.control_store import control_store
 from billing_qa.core.exceptions import AppError
 from billing_qa.core.logging import get_logger, setup_logging
 from billing_qa.db.session import dispose_engine
+from billing_qa.services.engine.schedule import schedule_dispatcher
 from billing_qa.services.engine.scheduler import scheduler
 
 logger = get_logger(__name__)
@@ -30,10 +31,12 @@ async def lifespan(app: FastAPI):
     recovered = await scheduler.recover_interrupted_tasks()
     if recovered:
         logger.warning("检测到 %d 个中断任务，已置为暂停待恢复", recovered)
+    await schedule_dispatcher.start()
     logger.info("服务已就绪: http://%s:%s%s/docs", settings.host, settings.port, settings.api_prefix)
     try:
         yield
     finally:
+        await schedule_dispatcher.stop()
         await scheduler.shutdown()
         await control_store.close()
         await dispose_engine()

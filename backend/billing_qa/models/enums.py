@@ -51,6 +51,16 @@ class TaskStatus(StrEnum):
     COMPLETED = "COMPLETED"
     ABORTED = "ABORTED"
     FAILED = "FAILED"
+    SCHEDULED = "SCHEDULED"
+
+
+class TaskScheduleType(StrEnum):
+    """批量任务的执行方式。"""
+
+    IMMEDIATE = "IMMEDIATE"
+    SCHEDULED = "SCHEDULED"
+    DAILY = "DAILY"
+    WEEKLY = "WEEKLY"
 
 
 class ExecutionStatus(StrEnum):

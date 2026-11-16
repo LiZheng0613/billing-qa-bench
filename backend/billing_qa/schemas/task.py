@@ -5,8 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from billing_qa.core.schedule_time import (
+    normalize_local,
+    normalize_weekdays,
+    parse_time_text,
+)
+from billing_qa.models.enums import TaskScheduleType
 from billing_qa.schemas.case import CaseExecutionItem
 from billing_qa.schemas.common import ORMModel
 
@@ -23,7 +29,56 @@ class TaskCreate(BaseModel):
     retry_on_env_error: bool = True
     max_env_retries: int = Field(default=2, ge=0, le=10)
     retry_backoff_seconds: float = Field(default=3.0, ge=0, le=60)
+    # 执行方式：立即 / 指定时间一次 / 每天 / 每周
+    schedule_type: TaskScheduleType = TaskScheduleType.IMMEDIATE
+    scheduled_at: datetime | None = Field(default=None, description="指定时间执行的时间点")
+    schedule_time: str | None = Field(default=None, max_length=5, description="周期时刻 HH:MM")
+    schedule_weekdays: list[int] = Field(
+        default_factory=list, description="每周执行的星期，1=周一 … 7=周日"
+    )
     auto_start: bool = True
+
+    @model_validator(mode="after")
+    def _validate_schedule(self) -> TaskCreate:
+        if self.schedule_type == TaskScheduleType.SCHEDULED:
+            moment = normalize_local(self.scheduled_at)
+            if moment is None:
+                raise ValueError("指定时间执行必须填写执行时间")
+            if moment <= datetime.now():
+                raise ValueError("指定执行时间必须晚于当前时间")
+            self.scheduled_at = moment
+            self.schedule_time = None
+            self.schedule_weekdays = []
+        elif self.schedule_type in {TaskScheduleType.DAILY, TaskScheduleType.WEEKLY}:
+            if not self.schedule_time:
+                raise ValueError("周期执行必须填写执行时刻")
+            try:
+                parse_time_text(self.schedule_time)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            self.scheduled_at = None
+            if self.schedule_type == TaskScheduleType.WEEKLY:
+                try:
+                    self.schedule_weekdays = normalize_weekdays(self.schedule_weekdays)
+                except ValueError as exc:
+                    raise ValueError(str(exc)) from exc
+            else:
+                self.schedule_weekdays = []
+        else:
+            self.scheduled_at = None
+            self.schedule_time = None
+            self.schedule_weekdays = []
+        return self
+
+
+class TaskScheduleUpdate(BaseModel):
+    """调整定时计划：执行方式、时间点、星期与启停。"""
+
+    schedule_type: TaskScheduleType | None = None
+    scheduled_at: datetime | None = None
+    schedule_time: str | None = Field(default=None, max_length=5)
+    schedule_weekdays: list[int] | None = None
+    active: bool | None = None
 
 
 class TaskOut(ORMModel):
@@ -46,6 +101,14 @@ class TaskOut(ORMModel):
     retry_on_env_error: bool
     max_env_retries: int
     retry_backoff_seconds: float
+    schedule_type: str
+    scheduled_at: datetime | None
+    schedule_time: str | None
+    schedule_weekdays: list | None
+    next_run_at: datetime | None
+    last_run_at: datetime | None
+    schedule_active: bool
+    schedule_source_id: int | None
     created_by: str | None
     created_at: datetime
     started_at: datetime | None

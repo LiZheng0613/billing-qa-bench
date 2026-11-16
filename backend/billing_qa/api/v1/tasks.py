@@ -2,26 +2,30 @@
 
 from __future__ import annotations
 
-import random
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import task_to_out
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
+from billing_qa.core.schedule_time import normalize_local, normalize_weekdays, parse_time_text
 from billing_qa.core.security import get_current_operator
+from billing_qa.db.base import now
 from billing_qa.db.session import get_db
-from billing_qa.models.enums import TaskStatus
+from billing_qa.models.enums import TaskScheduleType, TaskStatus
 from billing_qa.models.environment import Environment
 from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.case import CaseExecutionItem
 from billing_qa.schemas.common import MessageResponse, Page
-from billing_qa.schemas.task import TaskCreate, TaskMetrics, TaskOut
+from billing_qa.schemas.task import TaskCreate, TaskMetrics, TaskOut, TaskScheduleUpdate
 from billing_qa.services.engine.metrics import apply_metrics_to_task, compute_task_metrics
+from billing_qa.services.engine.schedule import (
+    clone_for_run,
+    generate_task_code,
+    initial_next_run,
+)
 from billing_qa.services.engine.scheduler import scheduler
 
 router = APIRouter(
@@ -30,7 +34,7 @@ router = APIRouter(
 
 
 def _generate_code() -> str:
-    return f"BATCH{datetime.now():%Y%m%d%H%M%S}{random.randint(100, 999)}"
+    return generate_task_code()
 
 
 async def _get_task(db: AsyncSession, task_id: int) -> BatchTask:
@@ -51,6 +55,7 @@ async def _env_name(db: AsyncSession, env_id: int | None) -> str | None:
 @router.get("", response_model=Page[TaskOut], summary="任务列表")
 async def list_tasks(
     status: TaskStatus | None = None,
+    schedule_type: TaskScheduleType | None = None,
     keyword: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
@@ -59,6 +64,8 @@ async def list_tasks(
     conditions = []
     if status:
         conditions.append(BatchTask.status == status)
+    if schedule_type:
+        conditions.append(BatchTask.schedule_type == schedule_type.value)
     if keyword:
         like = f"%{keyword}%"
         conditions.append(BatchTask.name.ilike(like) | BatchTask.code.ilike(like))
@@ -136,7 +143,11 @@ async def create_task(
         code=_generate_code(),
         name=payload.name,
         description=payload.description,
-        status=TaskStatus.PENDING,
+        status=(
+            TaskStatus.PENDING
+            if payload.schedule_type == TaskScheduleType.IMMEDIATE
+            else TaskStatus.SCHEDULED
+        ),
         control_state="RUNNING",
         environment_id=environment_id,
         case_ids=case_ids,
@@ -146,12 +157,24 @@ async def create_task(
         retry_on_env_error=payload.retry_on_env_error,
         max_env_retries=payload.max_env_retries,
         retry_backoff_seconds=payload.retry_backoff_seconds,
+        schedule_type=payload.schedule_type.value,
+        scheduled_at=payload.scheduled_at,
+        schedule_time=payload.schedule_time,
+        schedule_weekdays=payload.schedule_weekdays or None,
+        schedule_active=True,
+        next_run_at=initial_next_run(
+            schedule_type=payload.schedule_type.value,
+            scheduled_at=payload.scheduled_at,
+            schedule_time=payload.schedule_time,
+            schedule_weekdays=payload.schedule_weekdays,
+        ),
         created_by=operator,
     )
     db.add(task)
     await db.commit()
     await db.refresh(task)
-    if payload.auto_start:
+    # 定时/周期计划注册后由后台派发；只有立即执行才在创建时启动
+    if payload.auto_start and payload.schedule_type == TaskScheduleType.IMMEDIATE:
         await scheduler.start(task.id)
         await db.refresh(task)
     return task_to_out(task, env_name=await _env_name(db, task.environment_id))
@@ -163,13 +186,136 @@ async def get_task(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskOut:
     return task_to_out(task, env_name=await _env_name(db, task.environment_id))
 
 
+def _is_plan(task: BatchTask) -> bool:
+    return task.schedule_type != TaskScheduleType.IMMEDIATE.value
+
+
+async def _trigger_plan(db: AsyncSession, task: BatchTask) -> BatchTask:
+    """立即执行一次计划：一次性计划用自身，周期计划克隆新任务。"""
+    if task.schedule_type == TaskScheduleType.SCHEDULED.value:
+        if not task.schedule_active and task.status not in {
+            TaskStatus.PENDING,
+            TaskStatus.RUNNING,
+        }:
+            raise ConflictError("该一次性计划已执行过，请重新创建或调整计划时间")
+        task.schedule_active = False
+        task.next_run_at = None
+        task.last_run_at = now()
+        task.status = TaskStatus.PENDING
+        task.control_state = "RUNNING"
+        await db.commit()
+        await scheduler.start(task.id)
+        return task
+
+    run = clone_for_run(task)
+    db.add(run)
+    await db.flush()
+    task.last_run_at = now()
+    await db.commit()
+    await db.refresh(run)
+    await scheduler.start(run.id)
+    return run
+
+
 @router.post("/{task_id}/start", response_model=MessageResponse, summary="启动任务")
 async def start_task(task_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
-    await _get_task(db, task_id)
+    task = await _get_task(db, task_id)
+    if _is_plan(task):
+        run = await _trigger_plan(db, task)
+        return MessageResponse(message=f"已按计划立即执行一次：{run.code}")
     started = await scheduler.start(task_id)
     if not started:
         raise ConflictError("任务已在运行中")
     return MessageResponse(message="任务已启动")
+
+
+@router.post(
+    "/{task_id}/run-now", response_model=TaskOut, summary="立即执行一次定时计划"
+)
+async def run_task_now(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskOut:
+    task = await _get_task(db, task_id)
+    if _is_plan(task):
+        run = await _trigger_plan(db, task)
+    else:
+        if not await scheduler.start(task.id):
+            raise ConflictError("任务已在运行中")
+        run = task
+    await db.refresh(run)
+    return task_to_out(run, env_name=await _env_name(db, run.environment_id))
+
+
+@router.put("/{task_id}/schedule", response_model=TaskOut, summary="调整定时计划")
+async def update_schedule(
+    task_id: int,
+    payload: TaskScheduleUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> TaskOut:
+    task = await _get_task(db, task_id)
+    if not _is_plan(task):
+        raise ConflictError("当前任务为立即执行，请新建任务时选择定时执行方式")
+    if scheduler.is_running(task.id):
+        raise ConflictError("任务正在运行，无法调整计划")
+
+    schedule_type = (
+        payload.schedule_type.value if payload.schedule_type else task.schedule_type
+    )
+    scheduled_at = task.scheduled_at
+    schedule_time = task.schedule_time
+    weekdays = list(task.schedule_weekdays or [])
+
+    if schedule_type == TaskScheduleType.SCHEDULED.value:
+        moment = normalize_local(payload.scheduled_at) or (
+            task.scheduled_at if payload.scheduled_at is None else None
+        )
+        if moment is None:
+            raise ValidationError("指定时间执行必须填写执行时间")
+        if moment <= now():
+            raise ValidationError("指定执行时间必须晚于当前时间")
+        scheduled_at, schedule_time, weekdays = moment, None, []
+    else:
+        if payload.schedule_time is not None:
+            schedule_time = payload.schedule_time
+        if not schedule_time:
+            raise ValidationError("周期执行必须填写执行时刻")
+        try:
+            parse_time_text(schedule_time)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        scheduled_at = None
+        if schedule_type == TaskScheduleType.WEEKLY:
+            if payload.schedule_weekdays is not None:
+                weekdays = payload.schedule_weekdays
+            try:
+                weekdays = normalize_weekdays(weekdays)
+            except ValueError as exc:
+                raise ValidationError(str(exc)) from exc
+        else:
+            weekdays = []
+
+    task.schedule_type = schedule_type
+    task.scheduled_at = scheduled_at
+    task.schedule_time = schedule_time
+    task.schedule_weekdays = weekdays or None
+    task.schedule_active = payload.active if payload.active is not None else True
+    if task.schedule_active:
+        task.next_run_at = initial_next_run(
+            schedule_type=schedule_type,
+            scheduled_at=scheduled_at,
+            schedule_time=schedule_time,
+            schedule_weekdays=weekdays,
+        )
+        task.status = TaskStatus.SCHEDULED
+        task.control_state = "RUNNING"
+        task.finished_at = None
+        task.error_message = None
+    else:
+        task.next_run_at = None
+        if task.status == TaskStatus.SCHEDULED:
+            task.status = TaskStatus.ABORTED
+            task.control_state = "ABORTED"
+    await db.commit()
+    await db.refresh(task)
+    return task_to_out(task, env_name=await _env_name(db, task.environment_id))
 
 
 @router.post("/{task_id}/pause", response_model=MessageResponse, summary="暂停任务")
@@ -193,6 +339,15 @@ async def resume_task(task_id: int, db: AsyncSession = Depends(get_db)) -> Messa
 @router.post("/{task_id}/abort", response_model=MessageResponse, summary="终止任务")
 async def abort_task(task_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
     task = await _get_task(db, task_id)
+    # 定时计划：还没开跑时直接停掉后续触发，不进入调度器
+    if _is_plan(task) and task.status == TaskStatus.SCHEDULED:
+        task.schedule_active = False
+        task.next_run_at = None
+        task.status = TaskStatus.ABORTED
+        task.control_state = "ABORTED"
+        task.finished_at = now()
+        await db.commit()
+        return MessageResponse(message="定时计划已停止，不再触发后续执行")
     if task.status in {TaskStatus.COMPLETED, TaskStatus.ABORTED, TaskStatus.FAILED}:
         raise ConflictError("任务已结束，无需终止")
     await scheduler.abort(task_id)

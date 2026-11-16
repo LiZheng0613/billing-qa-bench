@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     max_turns_hard_limit: int = 20
     repetition_similarity_threshold: float = 0.9
     task_retention_days: int = 30
+    schedule_poll_interval_seconds: float = 15.0
 
     # ---------- Mock ----------
     mock_llm_base_url: str = "http://127.0.0.1:8001/v1"

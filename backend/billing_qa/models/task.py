@@ -27,6 +27,7 @@ class BatchTask(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_batch_task_status", "status"),
         Index("ix_batch_task_created", "created_at"),
+        Index("ix_batch_task_next_run", "schedule_type", "next_run_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -58,6 +59,29 @@ class BatchTask(Base, TimestampMixin):
     retry_backoff_seconds: Mapped[float] = mapped_column(
         Float, default=3.0, comment="环境类失败重试基础退避秒数（指数递增）"
     )
+    # ---------- 执行方式：立即 / 指定时间 / 每日 / 每周 ----------
+    schedule_type: Mapped[str] = mapped_column(
+        String(16), default="IMMEDIATE", comment="IMMEDIATE / SCHEDULED / DAILY / WEEKLY"
+    )
+    scheduled_at: Mapped[datetime | None] = mapped_column(
+        DateTime, comment="指定时间执行的一次性触发时间"
+    )
+    schedule_time: Mapped[str | None] = mapped_column(
+        String(5), comment="周期执行的时刻，HH:MM"
+    )
+    schedule_weekdays: Mapped[list | None] = mapped_column(
+        JSON, comment="每周执行的星期（1=周一 … 7=周日）"
+    )
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime, comment="下次触发时间")
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, comment="最近一次触发时间")
+    schedule_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, comment="定时计划是否继续触发"
+    )
+    schedule_source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("batch_task.id", ondelete="SET NULL"),
+        comment="由哪个定时计划触发（周期任务每次生成新任务）",
+    )
+
     created_by: Mapped[str | None] = mapped_column(String(64))
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
