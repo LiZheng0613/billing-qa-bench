@@ -38,9 +38,31 @@ EXCEL_COLUMNS: list[tuple[str, str]] = [
     ("judge_template_version", "裁判版本"),
     ("judge_strategy", "裁决策略(AVG/VETO)"),
     ("pass_threshold", "通过分数线"),
+    ("grading_mode", "判分方式(LEGACY/ANSWER_CONTRACT)"),
+    ("input_type", "输入形态"),
+    ("as_of", "冻结时间(账期/日期)"),
+    ("snapshot_id", "数据快照标识"),
+    ("answer_envelope", "答案包络(JSON)"),
+    ("response_contract", "响应契约(JSON)"),
+    ("plan_spec", "取数计划(JSON)"),
+    ("risk_level", "风险等级(LOW/HIGH)"),
+    ("owner", "用例负责人"),
+    ("review_status", "审核状态"),
+    ("dataset_version", "数据集版本"),
+    ("dedupe_hash", "去重指纹"),
+    ("terminate_conditions", "终止条件(JSON)"),
 ]
 
-JSON_FIELDS = {"expected_rules", "turns", "session_expected", "hidden_context", "terminate_conditions"}
+JSON_FIELDS = {
+    "expected_rules",
+    "turns",
+    "session_expected",
+    "hidden_context",
+    "terminate_conditions",
+    "answer_envelope",
+    "response_contract",
+    "plan_spec",
+}
 BOOL_FIELDS = {"fail_fast"}
 INT_FIELDS = {"max_turns"}
 FLOAT_FIELDS = {"pass_threshold", "simulator_template_version", "judge_template_version"}
@@ -109,30 +131,13 @@ def parse_excel(content: bytes) -> list[dict[str, Any]]:
 
 
 def parse_json(content: bytes) -> list[dict[str, Any]]:
-    try:
-        data = json.loads(content.decode("utf-8-sig"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise ValidationError(f"无法解析 JSON 文件: {exc}") from exc
-    if isinstance(data, dict):
-        data = data.get("items") or data.get("cases") or [data]
-    if not isinstance(data, list):
-        raise ValidationError("JSON 顶层必须是数组")
-    records: list[dict[str, Any]] = []
-    for index, item in enumerate(data, start=1):
-        if not isinstance(item, dict):
-            raise ValidationError(f"第 {index} 条记录不是对象")
-        record = dict(item)
-        # 导出文件里 tags 是逗号分隔字符串（Excel 与 JSON 共用同一份扁平结构），
-        # 直接回灌时需要还原成数组，否则 CaseUpdate 校验会失败
-        if not isinstance(record.get("tags"), (list, type(None))):
-            record["tags"] = [
-                part.strip()
-                for part in str(record["tags"]).replace("，", ",").split(",")
-                if part.strip()
-            ]
-        record.setdefault("__row__", index)
-        records.append(record)
-    return records
+    """兼容旧调用：委托给 ``case_json.parse_case_file``。
+
+    新代码请直接使用 ``case_json``，它支持版本化信封并返回文件级告警。
+    """
+    from billing_qa.services.io.case_json import parse_case_file
+
+    return parse_case_file(content).records
 
 
 def export_cases_xlsx(cases: list[dict[str, Any]]) -> bytes:
