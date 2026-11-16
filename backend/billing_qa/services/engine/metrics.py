@@ -79,7 +79,8 @@ async def compute_task_metrics(db: AsyncSession, task: BatchTask) -> TaskMetrics
 
     now = datetime.now()
     started = task.started_at or task.created_at or now
-    elapsed = max((now - started).total_seconds(), 0.0)
+    ended = task.finished_at or now
+    elapsed = max((ended - started).total_seconds(), 0.0)
     eta: float | None = None
     if task.status == "RUNNING" and finished > 0 and total > finished:
         eta = round(elapsed / finished * (total - finished), 1)

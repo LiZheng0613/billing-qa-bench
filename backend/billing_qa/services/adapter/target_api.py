@@ -43,6 +43,7 @@ class TargetResponse:
     generated_sql: str | None = None
     api_params: dict | None = None
     raw_db_data: Any = None
+    tool_calls: list | None = None
     status_code: int | None = None
     request_payload: dict[str, Any] = field(default_factory=dict)
     response_payload: dict[str, Any] = field(default_factory=dict)
@@ -260,6 +261,7 @@ class TargetApiAdapter:
                         generated_sql=extracted.get("generated_sql"),
                         api_params=extracted.get("api_params"),
                         raw_db_data=extracted.get("raw_db_data"),
+                        tool_calls=extracted.get("tool_calls"),
                         status_code=response.status_code,
                         request_payload=request_payload,
                         response_payload={
@@ -296,6 +298,7 @@ class TargetApiAdapter:
                     generated_sql=extracted.get("generated_sql"),
                     api_params=extracted.get("api_params"),
                     raw_db_data=extracted.get("raw_db_data"),
+                    tool_calls=extracted.get("tool_calls"),
                     status_code=response.status_code,
                     request_payload=request_payload,
                     response_payload={"mode": "json", "body": payload},

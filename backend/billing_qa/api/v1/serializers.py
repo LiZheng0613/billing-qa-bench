@@ -90,6 +90,9 @@ def execution_to_item(
         ttft_ms=record.ttft_ms,
         simulator_tokens=record.simulator_tokens,
         judge_tokens=record.judge_tokens,
+        grading_mode=record.grading_mode,
+        lucky_pass=record.lucky_pass,
+        root_cause=record.root_cause,
         started_at=record.started_at,
         finished_at=record.finished_at,
     )
@@ -127,11 +130,19 @@ async def build_execution_detail(
         trace_uid=record.trace_uid,
         turns=record.turns,
         judges=record.judges,
+        answer_grading=record.answer_grading,
+        fact_results=record.fact_results,
+        diagnostics=record.diagnostics,
+        grader_version=record.grader_version,
+        as_of=record.as_of,
         raw_request_response=raw_payloads,
     )
 
 
-def task_to_out(task: BatchTask, *, env_name: str | None = None) -> TaskOut:
+def task_to_out(
+    task: BatchTask, *, env_name: str | None = None, run_count: int = 0
+) -> TaskOut:
     data = TaskOut.model_validate(task)
     data.environment_name = env_name
+    data.run_count = run_count
     return data

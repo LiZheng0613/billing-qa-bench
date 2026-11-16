@@ -34,7 +34,6 @@ PLAN_TYPES = {TaskScheduleType.SCHEDULED.value, *PERIODIC_TYPES}
 IN_FLIGHT_STATUSES = {
     TaskStatus.PENDING.value,
     TaskStatus.RUNNING.value,
-    TaskStatus.PAUSED.value,
     TaskStatus.SCHEDULED.value,
 }
 

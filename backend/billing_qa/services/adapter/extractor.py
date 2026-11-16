@@ -18,6 +18,7 @@ DEFAULT_EXTRACTORS: dict[str, str] = {
     "generated_sql": "$.data.generated_sql",
     "api_params": "$.data.api_params",
     "raw_db_data": "$.data.raw_db_data",
+    "tool_calls": "$.data.tool_calls",
 }
 
 FALLBACK_ANSWER_PATHS: tuple[str, ...] = (

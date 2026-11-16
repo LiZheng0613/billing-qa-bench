@@ -16,6 +16,7 @@ from billing_qa.db.base import now
 from billing_qa.db.session import SessionLocal
 from billing_qa.models.enums import ExecutionSource, ExecutionStatus, TerminationStatus
 from billing_qa.models.execution import ExecutionRecord, JudgeResult, TurnTrace
+from billing_qa.models.gold_query import FactResult
 from billing_qa.services.adapter.renderer import format_history, render_prompt
 from billing_qa.services.adapter.target_api import TargetApiAdapter, TargetResponse
 from billing_qa.services.engine.context import ExecutionContext, load_execution_context
@@ -36,6 +37,18 @@ from billing_qa.services.llm.json_parser import parse_structured
 logger = get_logger(__name__)
 
 DEFAULT_PERSONA = "你是一名真实的企业财务人员，说话口语化，关注金额、笔数与账期明细。"
+
+
+def _json_value(value: Any) -> Any:
+    """把判分结果中的非 JSON 原生对象降级为字符串，避免落库失败。"""
+    if value is None or isinstance(value, dict | list | str | int | float | bool):
+        return value
+    return str(value)
+
+
+def _legacy_rules_enabled(snapshot: dict[str, Any]) -> bool:
+    """规则硬校验与答案契约判分互斥：仅 4 维评分（LEGACY）模式执行。"""
+    return str(snapshot.get("grading_mode") or "LEGACY") != "ANSWER_CONTRACT"
 
 
 @dataclass
@@ -62,6 +75,15 @@ class RunOutcome:
     judge_result: dict[str, Any] | None
     judges: list[JudgeOutcome]
     error_message: str | None = None
+    # ---- 答案契约判分（仅 ANSWER_CONTRACT 填充）----
+    grading_mode: str | None = None
+    answer_grading: dict[str, Any] | None = None
+    fact_results: list[dict[str, Any]] | None = None
+    diagnostics: dict[str, Any] | None = None
+    lucky_pass: bool | None = None
+    root_cause: str | None = None
+    grader_version: str | None = None
+    as_of: str | None = None
 
 
 class CaseExecutor:
@@ -128,13 +150,17 @@ class CaseExecutor:
         if not query:
             raise ValidationError("单轮用例缺少 query")
         response = await adapter.chat(query)
-        rule = evaluate_rules(response.final_answer, snapshot.get("expected_rules"))
+        rule = (
+            evaluate_rules(response.final_answer, snapshot.get("expected_rules"))
+            if _legacy_rules_enabled(snapshot)
+            else None
+        )
         record = self._build_record(1, query, "STATIC", response, rule)
         await self._save_turn(execution_id, record)
         return ConversationResult(
             records=[record],
             termination=TerminationStatus.COMPLETED,
-            rule_result=rule.to_dict(),
+            rule_result=rule.to_dict() if rule else None,
         )
 
     async def _run_static(
@@ -144,6 +170,7 @@ class CaseExecutor:
         if not turns:
             raise ValidationError("静态多轮用例缺少 turns")
         fail_fast = bool(snapshot.get("fail_fast"))
+        rules_enabled = _legacy_rules_enabled(snapshot)
         history: list[dict[str, str]] = []
         session_id: str | None = None
         records: list[dict[str, Any]] = []
@@ -156,22 +183,27 @@ class CaseExecutor:
                 raise ValidationError(f"第 {index} 轮缺少 query")
             response = await adapter.chat(query, session_id=session_id, history=history)
             session_id = response.session_id or session_id
-            rule = evaluate_rules(response.final_answer, turn.get("expected_rules"))
+            rule = (
+                evaluate_rules(response.final_answer, turn.get("expected_rules"))
+                if rules_enabled
+                else None
+            )
             record = self._build_record(index, query, "STATIC", response, rule)
             await self._save_turn(execution_id, record)
             records.append(record)
-            rules.append(rule)
+            if rule is not None:
+                rules.append(rule)
             history.append({"role": "user", "content": query})
             history.append({"role": "assistant", "content": response.final_answer})
-            if fail_fast and rule.checks and not rule.passed:
+            if rules_enabled and fail_fast and rule and rule.checks and not rule.passed:
                 notes.append(f"第 {index} 轮规则校验失败，触发 fail_fast 中断")
                 break
 
-        merged = merge_rule_results(rules)
+        merged = merge_rule_results(rules) if rules_enabled else None
         return ConversationResult(
             records=records,
             termination=TerminationStatus.COMPLETED,
-            rule_result=merged.to_dict(),
+            rule_result=merged.to_dict() if merged else None,
             notes=notes,
         )
 
@@ -190,6 +222,7 @@ class CaseExecutor:
         session_id: str | None = None
         records: list[dict[str, Any]] = []
         rules: list[RuleResult] = []
+        rules_enabled = _legacy_rules_enabled(snapshot)
         simulator_tokens = 0
         termination: str | None = None
         previous_query: str | None = None
@@ -277,7 +310,11 @@ class CaseExecutor:
                     query, session_id=session_id, history=history
                 )
                 session_id = response.session_id or session_id
-                rule = evaluate_rules(response.final_answer, snapshot.get("expected_rules"))
+                rule = (
+                    evaluate_rules(response.final_answer, snapshot.get("expected_rules"))
+                    if rules_enabled
+                    else None
+                )
                 record = self._build_record(turn_index, query, input_source, response, rule)
                 record.update(
                     {
@@ -291,7 +328,8 @@ class CaseExecutor:
                 )
                 await self._save_turn(execution_id, record)
                 records.append(record)
-                rules.append(rule)
+                if rule is not None:
+                    rules.append(rule)
                 history.append({"role": "user", "content": query})
                 history.append({"role": "assistant", "content": response.final_answer})
                 previous_query = query
@@ -307,12 +345,12 @@ class CaseExecutor:
             termination = TerminationStatus.MAX_TURNS_EXCEEDED
             notes.append(f"达到最大轮次 {max_turns} 仍未达成目标")
 
-        merged = merge_rule_results(rules)
+        merged = merge_rule_results(rules) if rules_enabled else None
         return ConversationResult(
             records=records,
             termination=termination,
             # 动态多轮的规则期望针对最终回复，这里以最后一轮校验结果作为硬校验结论
-            rule_result=rules[-1].to_dict() if rules else merged.to_dict(),
+            rule_result=(rules[-1].to_dict() if rules else merged.to_dict()) if merged else None,
             simulator_tokens=simulator_tokens,
             notes=notes,
         )
@@ -349,6 +387,11 @@ class CaseExecutor:
         )
         if conversation.notes:
             base.judge_result = {"notes": conversation.notes}
+
+        grading_mode = str(snapshot.get("grading_mode") or "LEGACY")
+        base.grading_mode = grading_mode
+        if grading_mode == "ANSWER_CONTRACT":
+            return await self._complete_contract(ctx, snapshot, conversation, base)
 
         if not conversation.records:
             base.error_message = "未产生任何有效对话轮次：" + "; ".join(conversation.notes)
@@ -400,6 +443,101 @@ class CaseExecutor:
             base.termination_status = conversation.termination
         return base
 
+    async def _complete_contract(
+        self,
+        ctx: ExecutionContext,
+        snapshot: dict[str, Any],
+        conversation: ConversationResult,
+        base: RunOutcome,
+    ) -> RunOutcome:
+        """答案契约判分：正确性只看最终答案，四维裁判降级为质量分。"""
+        from billing_qa.services.grading import grade_answer
+
+        # 契约模式与规则硬校验互斥：不落库、不展示规则校验结果。
+        base.rule_result = None
+
+        if not conversation.records:
+            base.error_message = "未产生任何有效对话轮次：" + "; ".join(conversation.notes)
+            base.answer_grading = {
+                "passed": False,
+                "gates": {"safety": False, "behavior": False, "facts": False, "extras": False},
+                "notes": conversation.notes,
+            }
+            return base
+
+        grading = await grade_answer(
+            snapshot=snapshot,
+            turn_records=conversation.records,
+            judge_model=ctx.judge_models[0] if ctx.judge_models else None,
+            pass_threshold=ctx.pass_threshold,
+        )
+
+        quality: dict[str, Any] | None = None
+        outcomes: list[JudgeOutcome] = []
+        try:
+            variables = build_judge_variables(
+                snapshot, conversation.records, conversation.termination
+            )
+            quality, outcomes = await run_judges(
+                models=ctx.judge_models,
+                prompt_template=ctx.judge_prompt,
+                variables=variables,
+                strategy=ctx.judge_strategy,
+                threshold=ctx.pass_threshold,
+                termination_status=conversation.termination,
+            )
+        except Exception as exc:
+            logger.warning("契约模式质量分裁判不可用: %s", exc)
+            quality = {
+                "error": f"{type(exc).__name__}: {exc}",
+                "notes": ["质量分裁判不可用，已跳过（不影响正确性）"],
+            }
+
+        passed = grading.passed
+        if conversation.termination in {
+            TerminationStatus.MAX_TURNS_EXCEEDED,
+            TerminationStatus.REPETITION_ABORT,
+        }:
+            passed = False
+        if conversation.termination == TerminationStatus.MAX_TURNS_EXCEEDED:
+            status = ExecutionStatus.MAX_TURNS_EXCEEDED
+        elif conversation.termination == TerminationStatus.REPETITION_ABORT:
+            status = ExecutionStatus.REPETITION_ABORT
+        else:
+            status = ExecutionStatus.PASS if passed else ExecutionStatus.FAIL
+
+        notes = list(grading.notes) + list(conversation.notes)
+        base.status = status
+        base.pass_flag = passed
+        base.total_score = grading.total_score
+        base.answer_grading = grading.to_dict()
+        base.fact_results = grading.fact_dicts()
+        base.diagnostics = grading.diagnostics
+        base.lucky_pass = grading.lucky_pass
+        base.root_cause = grading.root_cause
+        base.grader_version = grading.grader_version
+        base.as_of = str(snapshot.get("as_of") or "") or None
+        base.judge_tokens = int((quality or {}).get("judge_tokens") or 0)
+        base.judges = outcomes
+        base.judge_result = {
+            "mode": "ANSWER_CONTRACT",
+            "passed": grading.passed,
+            "gates": grading.gates,
+            "scorecard": grading.scorecard,
+            "root_cause": grading.root_cause,
+            "lucky_pass": grading.lucky_pass,
+            "grader_version": grading.grader_version,
+            "notes": notes,
+            # 四维裁判仅作质量分参考，不参与 pass
+            "quality": quality,
+        }
+        if conversation.termination in {
+            TerminationStatus.GOAL_ACHIEVED,
+            TerminationStatus.GIVE_UP,
+        }:
+            base.termination_status = conversation.termination
+        return base
+
     # ------------------------------------------------------------------ #
     # 持久化
     # ------------------------------------------------------------------ #
@@ -424,6 +562,7 @@ class CaseExecutor:
                 environment_id=environment_id or snapshot.get("environment_id"),
                 source=source,
                 status="RUNNING",
+                grading_mode=str(snapshot.get("grading_mode") or "LEGACY"),
                 attempt_no=max(1, int(attempt_no)),
                 started_at=now(),
             )
@@ -467,7 +606,34 @@ class CaseExecutor:
             record.simulator_template_version = ctx.simulator_prompt_version
             record.judge_template_version = ctx.judge_prompt_version
             record.error_message = outcome.error_message
+            record.grading_mode = outcome.grading_mode
+            record.answer_grading = outcome.answer_grading
+            record.fact_results = outcome.fact_results
+            record.diagnostics = outcome.diagnostics
+            record.lucky_pass = outcome.lucky_pass
+            record.root_cause = outcome.root_cause
+            record.grader_version = outcome.grader_version
+            record.as_of = outcome.as_of
             record.finished_at = now()
+            for item in outcome.fact_results or []:
+                db.add(
+                    FactResult(
+                        execution_id=execution_id,
+                        fact_id=str(item.get("fact_id") or "")[:64],
+                        kind=str(item.get("kind") or "scalar")[:16],
+                        label=(str(item.get("label"))[:200] if item.get("label") else None),
+                        expected=_json_value(item.get("expected")),
+                        actual=_json_value(item.get("actual")),
+                        passed=bool(item.get("passed")),
+                        reason=(str(item.get("reason"))[:512] if item.get("reason") else None),
+                        evidence_ref=(
+                            str(item.get("evidence_ref"))[:256]
+                            if item.get("evidence_ref")
+                            else None
+                        ),
+                        is_gate=bool(item.get("is_gate", True)),
+                    )
+                )
             for judge in outcome.judges:
                 db.add(
                     JudgeResult(
@@ -520,7 +686,7 @@ class CaseExecutor:
         query: str,
         input_source: str,
         response: TargetResponse,
-        rule: RuleResult,
+        rule: RuleResult | None,
     ) -> dict[str, Any]:
         return {
             "turn_index": turn_index,
@@ -534,9 +700,10 @@ class CaseExecutor:
             "generated_sql": response.generated_sql,
             "api_params": response.api_params,
             "raw_db_data": response.raw_db_data,
+            "tool_calls": response.tool_calls,
             "ttft_ms": response.ttft_ms,
             "latency_ms": response.latency_ms,
-            "rule_check": rule.to_dict(),
+            "rule_check": rule.to_dict() if rule else None,
         }
 
     @staticmethod

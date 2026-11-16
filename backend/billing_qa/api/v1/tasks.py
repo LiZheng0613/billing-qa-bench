@@ -19,7 +19,14 @@ from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.case import CaseExecutionItem
 from billing_qa.schemas.common import MessageResponse, Page
-from billing_qa.schemas.task import TaskCreate, TaskMetrics, TaskOut, TaskScheduleUpdate
+from billing_qa.schemas.task import (
+    TaskCreate,
+    TaskMetrics,
+    TaskOut,
+    TaskRunsPage,
+    TaskRunSummary,
+    TaskScheduleUpdate,
+)
 from billing_qa.services.engine.metrics import apply_metrics_to_task, compute_task_metrics
 from billing_qa.services.engine.schedule import (
     clone_for_run,
@@ -57,6 +64,9 @@ async def list_tasks(
     status: TaskStatus | None = None,
     schedule_type: TaskScheduleType | None = None,
     keyword: str | None = None,
+    include_runs: bool = Query(
+        default=False, description="是否包含周期计划派生出的执行任务（默认只列顶层任务）"
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -69,14 +79,25 @@ async def list_tasks(
     if keyword:
         like = f"%{keyword}%"
         conditions.append(BatchTask.name.ilike(like) | BatchTask.code.ilike(like))
+    if not include_runs:
+        # 周期计划每次触发派生的子任务不再平铺在列表里，统一到计划详情的“历次执行”。
+        conditions.append(BatchTask.schedule_source_id.is_(None))
     total = (
         await db.execute(select(func.count()).select_from(BatchTask).where(*conditions))
     ).scalar_one()
+    if include_runs:
+        order_by = (BatchTask.id.desc(),)
+    else:
+        # 最近触发过的计划置顶；从未触发的按创建时间排。
+        order_by = (
+            func.coalesce(BatchTask.last_run_at, BatchTask.created_at).desc(),
+            BatchTask.id.desc(),
+        )
     rows = (
         await db.execute(
             select(BatchTask)
             .where(*conditions)
-            .order_by(BatchTask.id.desc())
+            .order_by(*order_by)
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -85,8 +106,30 @@ async def list_tasks(
         env_id: name
         for env_id, name in (await db.execute(select(Environment.id, Environment.name))).all()
     }
+    run_counts: dict[int, int] = {}
+    plan_ids = [item.id for item in rows if item.schedule_type != TaskScheduleType.IMMEDIATE.value]
+    if plan_ids:
+        count_rows = (
+            await db.execute(
+                select(BatchTask.schedule_source_id, func.count())
+                .where(BatchTask.schedule_source_id.in_(plan_ids))
+                .group_by(BatchTask.schedule_source_id)
+            )
+        ).all()
+        run_counts = {
+            int(source_id): int(count)
+            for source_id, count in count_rows
+            if source_id is not None
+        }
     return Page[TaskOut](
-        items=[task_to_out(item, env_name=env_names.get(item.environment_id or 0)) for item in rows],
+        items=[
+            task_to_out(
+                item,
+                env_name=env_names.get(item.environment_id or 0),
+                run_count=run_counts.get(item.id, 0),
+            )
+            for item in rows
+        ],
         total=int(total),
         page=page,
         page_size=page_size,
@@ -192,8 +235,13 @@ def _is_plan(task: BatchTask) -> bool:
 
 async def _trigger_plan(db: AsyncSession, task: BatchTask) -> BatchTask:
     """立即执行一次计划：一次性计划用自身，周期计划克隆新任务。"""
+    # 计划被停止后必须先重新启用，任何类型都不能绕过。
+    if not task.schedule_active or task.status == TaskStatus.ABORTED:
+        raise ConflictError("计划已停止，请先启用计划再立即执行")
+
     if task.schedule_type == TaskScheduleType.SCHEDULED.value:
-        if not task.schedule_active and task.status not in {
+        # 已跑完的一次性计划不允许重复执行。
+        if task.started_at is not None and task.status not in {
             TaskStatus.PENDING,
             TaskStatus.RUNNING,
         }:
@@ -318,24 +366,6 @@ async def update_schedule(
     return task_to_out(task, env_name=await _env_name(db, task.environment_id))
 
 
-@router.post("/{task_id}/pause", response_model=MessageResponse, summary="暂停任务")
-async def pause_task(task_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
-    task = await _get_task(db, task_id)
-    if task.status != TaskStatus.RUNNING:
-        raise ConflictError("仅运行中的任务可以暂停")
-    await scheduler.pause(task_id)
-    return MessageResponse(message="任务已暂停")
-
-
-@router.post("/{task_id}/resume", response_model=MessageResponse, summary="恢复任务")
-async def resume_task(task_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
-    task = await _get_task(db, task_id)
-    if task.status not in {TaskStatus.PAUSED, TaskStatus.RUNNING}:
-        raise ConflictError("仅暂停中的任务可以恢复")
-    await scheduler.resume(task_id)
-    return MessageResponse(message="任务已恢复")
-
-
 @router.post("/{task_id}/abort", response_model=MessageResponse, summary="终止任务")
 async def abort_task(task_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
     task = await _get_task(db, task_id)
@@ -382,6 +412,88 @@ async def retry_failed(task_id: int, db: AsyncSession = Depends(get_db)) -> Mess
     await db.commit()
     await scheduler.start(task_id, retry_failed=True)
     return MessageResponse(message=f"已提交 {failed} 条历史失败记录的重跑（按用例取最新一次）")
+
+
+@router.get(
+    "/{task_id}/runs",
+    response_model=TaskRunsPage,
+    summary="周期计划历次执行",
+)
+async def list_task_runs(
+    task_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+) -> TaskRunsPage:
+    """返回周期计划每次触发克隆出的批量任务，并附带全量聚合统计。"""
+    await _get_task(db, task_id)
+    conditions = [BatchTask.schedule_source_id == task_id]
+
+    total = (
+        await db.execute(select(func.count()).select_from(BatchTask).where(*conditions))
+    ).scalar_one()
+    rows = (
+        (
+            await db.execute(
+                select(BatchTask)
+                .where(*conditions)
+                .order_by(BatchTask.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    env_names = {
+        env_id: name
+        for env_id, name in (await db.execute(select(Environment.id, Environment.name))).all()
+    }
+
+    status_rows = (
+        await db.execute(
+            select(
+                BatchTask.status,
+                func.count(),
+                func.coalesce(func.sum(BatchTask.pass_count), 0),
+                func.coalesce(func.sum(BatchTask.finished_cases), 0),
+                func.coalesce(func.sum(BatchTask.total_cases), 0),
+            )
+            .where(*conditions)
+            .group_by(BatchTask.status)
+        )
+    ).all()
+    summary = TaskRunSummary(total_runs=int(total))
+    for status, count, pass_count, finished_cases, total_cases in status_rows:
+        key = str(status).upper()
+        if key == "COMPLETED":
+            summary.completed += int(count)
+        elif key == "FAILED":
+            summary.failed += int(count)
+        elif key == "ABORTED":
+            summary.aborted += int(count)
+        elif key == "RUNNING":
+            summary.running += int(count)
+        elif key == "PENDING":
+            summary.pending += int(count)
+        summary.pass_count += int(pass_count)
+        summary.finished_cases += int(finished_cases)
+        summary.total_cases += int(total_cases)
+    if summary.finished_cases:
+        summary.pass_rate = round(
+            summary.pass_count / summary.finished_cases * 100, 2
+        )
+
+    return TaskRunsPage(
+        items=[
+            task_to_out(item, env_name=env_names.get(item.environment_id or 0))
+            for item in rows
+        ],
+        total=int(total),
+        page=page,
+        page_size=page_size,
+        summary=summary,
+    )
 
 
 @router.get("/{task_id}/metrics", response_model=TaskMetrics, summary="任务实时指标")

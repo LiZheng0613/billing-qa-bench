@@ -259,6 +259,7 @@ async def test_executor_marks_env_error() -> None:
             assert record is not None
             assert record.status == "ERROR"
             assert record.error_kind == "ENV"
+            assert record.grading_mode == "LEGACY"
             assert record.attempt_no == 1
             assert "超时" in (record.error_message or "") or "HTTP" in (
                 record.error_message or ""

@@ -1,4 +1,4 @@
-"""批量任务调度器：并发控制、QPS 限流、暂停/恢复/终止、断点重跑。"""
+"""批量任务调度器：并发控制、QPS 限流、终止、断点重跑。"""
 
 from __future__ import annotations
 
@@ -68,31 +68,6 @@ class BatchScheduler:
             self._workers[task_id] = worker
         return True
 
-    async def pause(self, task_id: int) -> None:
-        await control_store.set_state(task_id, "PAUSED")
-        async with SessionLocal() as db:
-            task = await db.get(BatchTask, task_id)
-            if task is not None and task.status == TaskStatus.RUNNING:
-                task.status = TaskStatus.PAUSED
-                task.control_state = "PAUSED"
-                await db.commit()
-                await self._publish_status(task)
-        logger.info("任务已暂停 task=%s", task_id)
-
-    async def resume(self, task_id: int) -> None:
-        await control_store.set_state(task_id, "RUNNING")
-        async with SessionLocal() as db:
-            task = await db.get(BatchTask, task_id)
-            if task is None:
-                return
-            task.status = TaskStatus.RUNNING
-            task.control_state = "RUNNING"
-            if task.started_at is None:
-                task.started_at = now()
-            await db.commit()
-        await self.start(task_id)
-        logger.info("任务已恢复 task=%s", task_id)
-
     async def abort(self, task_id: int) -> None:
         await control_store.set_state(task_id, "ABORTING")
         if not self.is_running(task_id):
@@ -118,20 +93,35 @@ class BatchScheduler:
         self._workers.clear()
 
     async def recover_interrupted_tasks(self) -> int:
-        """服务重启后把中断的 RUNNING 任务转为 PAUSED，等待人工恢复。"""
+        """服务重启后把中断的任务收口为已终止。
+
+        进程退出后 worker 已不存在，任务不可能自行继续；这里直接标记为
+        ABORTED，不留下无人推进的中间态。已完成的用例结果保留，可点击
+        「失败重跑」从断点继续。
+        """
         async with SessionLocal() as db:
             rows = await db.execute(
-                select(BatchTask).where(BatchTask.status == TaskStatus.RUNNING)
+                select(BatchTask).where(
+                    # "PAUSED" 仅用于清理历史数据：该状态已从产品中移除
+                    BatchTask.status.in_([TaskStatus.RUNNING.value, "PAUSED"])
+                )
             )
             tasks = list(rows.scalars().all())
             for task in tasks:
-                task.status = TaskStatus.PAUSED
-                task.control_state = "PAUSED"
-                task.error_message = "服务重启导致任务中断，可点击恢复继续执行"
-                await control_store.set_state(task.id, "PAUSED")
+                task.status = TaskStatus.ABORTED
+                task.control_state = "ABORTED"
+                task.finished_at = task.finished_at or now()
+                task.error_message = "服务重启导致任务中断，已自动终止，可点击失败重跑继续"
+                await control_store.set_state(task.id, "ABORTED")
+                await self._close_running_executions(
+                    db, task.id, "服务重启导致任务中断"
+                )
+                # 收口后重算进度/通过率，避免任务显示「7/55 已完成」但执行记录已全部终止
+                metrics = await compute_task_metrics(db, task)
+                apply_metrics_to_task(task, metrics)
             await db.commit()
         if tasks:
-            logger.warning("已恢复 %d 个中断任务为 PAUSED", len(tasks))
+            logger.warning("已把 %d 个中断任务标记为已终止", len(tasks))
         return len(tasks)
 
     # ------------------------------------------------------------------ #
@@ -191,8 +181,8 @@ class BatchScheduler:
                 async with semaphore:
                     attempt = 0
                     while True:
-                        # 每一轮尝试都重新检查暂停/终止，避免重试绕过控制
-                        if not await self._wait_until_runnable(task_id):
+                        # 每一轮尝试都重新检查终止指令，避免重试绕过控制
+                        if not await self._not_aborted(task_id):
                             return
                         await limiter.acquire()
                         snapshot, version = await self._load_case_snapshot(case_id)
@@ -309,29 +299,20 @@ class BatchScheduler:
             return record.error_kind if record is not None else None
 
     @staticmethod
-    async def _wait_until_runnable(task_id: int) -> bool:
-        """等待任务恢复；返回 False 表示任务已进入终止流程。"""
-        while True:
-            state = await control_store.get_state(task_id)
-            if state in {"ABORTING", "ABORTED"}:
-                return False
-            if state != "PAUSED":
-                return True
-            await asyncio.sleep(0.4)
+    async def _not_aborted(task_id: int) -> bool:
+        """返回 False 表示任务已进入终止流程。"""
+        state = await control_store.get_state(task_id)
+        return state not in {"ABORTING", "ABORTED"}
 
     @staticmethod
     async def _interruptible_sleep(task_id: int, seconds: float) -> bool:
-        """可被暂停/终止打断的退避等待；暂停期间不消耗退避时间。"""
+        """可被终止打断的退避等待。"""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, seconds)
         while True:
             state = await control_store.get_state(task_id)
             if state in {"ABORTING", "ABORTED"}:
                 return False
-            if state == "PAUSED":
-                await asyncio.sleep(0.4)
-                deadline += 0.4
-                continue
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return True
@@ -448,17 +429,24 @@ class BatchScheduler:
                 await self._publish_status(task)
 
     @staticmethod
-    async def _close_running_executions(db: AsyncSession, task_id: int) -> None:
+    async def _close_running_executions(
+        db: AsyncSession, task_id: int, message: str = "任务被终止"
+    ) -> None:
+        """把未完成的执行记录（执行中/排队中）一并收口为已终止。
+
+        否则终止或重启后这些记录会永远停在 RUNNING/PENDING，
+        且「失败重跑」不会选中它们。
+        """
         await db.execute(
             update(ExecutionRecord)
             .where(
                 ExecutionRecord.task_id == task_id,
-                ExecutionRecord.status == "RUNNING",
+                ExecutionRecord.status.in_(["RUNNING", "PENDING"]),
             )
             .values(
                 status=ExecutionStatus.ABORTED,
                 pass_flag=False,
-                error_message="任务被终止",
+                error_message=message,
                 finished_at=now(),
             )
         )
