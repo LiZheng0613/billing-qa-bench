@@ -5,6 +5,7 @@ import { api } from '../api'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
+import ScheduleField from '../components/ScheduleField.vue'
 import StatusPill from '../components/StatusPill.vue'
 import TestCaseDrawer from './components/TestCaseDrawer.vue'
 import CaseRevisionPanel from './components/CaseRevisionPanel.vue'
@@ -24,6 +25,13 @@ import {
   statusLabel,
   truncate,
 } from '../utils/format'
+import {
+  defaultSchedule,
+  normalizeSchedule,
+  schedulePayload,
+  scheduleSummary,
+  scheduleValidationError,
+} from '../utils/schedule'
 import { useToastStore } from '../stores/toast'
 
 const router = useRouter()
@@ -70,6 +78,7 @@ const batchForm = reactive({
   max_env_retries: 2,
   retry_backoff_seconds: 3,
   auto_start: true,
+  schedule: defaultSchedule(),
 })
 
 const batchScopeCount = computed(() =>
@@ -345,6 +354,7 @@ function openBatch(): void {
   batchForm.max_env_retries = 2
   batchForm.retry_backoff_seconds = 3
   batchForm.auto_start = true
+  batchForm.schedule = defaultSchedule()
   batchOpen.value = true
   void loadAllActiveCount()
 }
@@ -362,6 +372,11 @@ async function submitBatch(): Promise<void> {
     toast.error('用例库中没有启用用例，无法批量执行')
     return
   }
+  const scheduleError = scheduleValidationError(batchForm.schedule)
+  if (scheduleError) {
+    toast.error(scheduleError)
+    return
+  }
   batchCreating.value = true
   try {
     const created = await api.tasks.create({
@@ -374,9 +389,15 @@ async function submitBatch(): Promise<void> {
       retry_on_env_error: batchForm.retry_on_env_error,
       max_env_retries: batchForm.max_env_retries,
       retry_backoff_seconds: batchForm.retry_backoff_seconds,
-      auto_start: batchForm.auto_start,
+      ...schedulePayload(normalizeSchedule(batchForm.schedule)),
+      auto_start: batchForm.schedule.type === 'IMMEDIATE' && batchForm.auto_start,
     })
-    toast.success(`批量任务 ${created.code} 已创建，共 ${created.total_cases} 条用例`)
+    const scheduled = created.schedule_type !== 'IMMEDIATE'
+    toast.success(
+      scheduled
+        ? `定时任务 ${created.code} 已登记：${scheduleSummary(normalizeSchedule(batchForm.schedule))}，共 ${created.total_cases} 条用例`
+        : `批量任务 ${created.code} 已创建，共 ${created.total_cases} 条用例`,
+    )
     batchOpen.value = false
     selectedIds.value = []
     await router.push({ name: 'dashboard', query: { task: String(created.id) } })
@@ -585,7 +606,7 @@ onMounted(() => {
     <BaseModal
       v-model="batchOpen"
       title="批量执行用例"
-      subtitle="设置并发、QPS 与环境失败自动重试策略"
+      subtitle="选择执行方式（立即 / 指定时间 / 每天 / 每周）并设置并发、QPS 与重试策略"
       width="lg"
     >
       <div class="space-y-4">
@@ -652,6 +673,7 @@ onMounted(() => {
             </select>
           </div>
         </div>
+        <ScheduleField v-model="batchForm.schedule" :disabled="batchCreating" />
         <div class="grid gap-3 sm:grid-cols-2">
           <div>
             <label class="label">并发数</label>
@@ -707,7 +729,10 @@ onMounted(() => {
             </div>
           </div>
         </div>
-        <label class="flex items-center gap-2 text-sm text-slate-700">
+        <label
+          v-if="batchForm.schedule.type === 'IMMEDIATE'"
+          class="flex items-center gap-2 text-sm text-slate-700"
+        >
           <input
             v-model="batchForm.auto_start"
             type="checkbox"
@@ -720,7 +745,13 @@ onMounted(() => {
       <template #footer>
         <button class="btn-ghost" @click="batchOpen = false">取消</button>
         <button class="btn-primary" :disabled="batchCreating" @click="submitBatch">
-          {{ batchCreating ? '创建中…' : `创建并执行（${batchScopeCount} 条）` }}
+          {{
+            batchCreating
+              ? '创建中…'
+              : batchForm.schedule.type === 'IMMEDIATE'
+                ? `创建并执行（${batchScopeCount} 条）`
+                : `创建定时任务（${batchScopeCount} 条）`
+          }}
         </button>
       </template>
     </BaseModal>

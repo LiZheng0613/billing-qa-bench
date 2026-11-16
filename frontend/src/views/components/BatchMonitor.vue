@@ -11,6 +11,7 @@ import {
   formatSeconds,
   formatScore,
 } from '../../utils/format'
+import { taskScheduleLabel } from '../../utils/schedule'
 
 const props = withDefaults(
   defineProps<{
@@ -31,6 +32,9 @@ const emit = defineEmits<{
   (e: 'resume'): void
   (e: 'abort'): void
   (e: 'retry'): void
+  (e: 'run-now'): void
+  (e: 'stop-plan'): void
+  (e: 'toggle-plan', active: boolean): void
   (e: 'select-execution', executionId: number): void
   (e: 'view-task-trace', taskId: number): void
   (e: 'page-change', page: number): void
@@ -56,13 +60,29 @@ const distributionTotal = computed(() =>
 )
 
 const hasTask = computed(() => Boolean(props.task))
-const canPause = computed(() => props.task?.status === 'RUNNING')
-const canResume = computed(() => props.task?.status === 'PAUSED')
+// 定时计划行：只保留配置与下次触发时间，历史执行都在克隆出的批量任务里
+const isPlan = computed(() => Boolean(props.task && props.task.schedule_type !== 'IMMEDIATE'))
+const isRecurringPlan = computed(() =>
+  Boolean(props.task && ['DAILY', 'WEEKLY'].includes(props.task.schedule_type)),
+)
+const planWaiting = computed(() =>
+  Boolean(props.task && isPlan.value && ['SCHEDULED', 'ABORTED'].includes(props.task.status)),
+)
+const canPause = computed(() => !planWaiting.value && props.task?.status === 'RUNNING')
+const canResume = computed(() => !planWaiting.value && props.task?.status === 'PAUSED')
 const canAbort = computed(() =>
+  !planWaiting.value &&
   Boolean(props.task && ['RUNNING', 'PAUSED', 'PENDING'].includes(props.task.status)),
 )
 const canRetry = computed(() =>
+  !planWaiting.value &&
   Boolean(props.task && ['COMPLETED', 'ABORTED', 'FAILED'].includes(props.task.status)),
+)
+const canRunNow = computed(() => planWaiting.value)
+const canStopPlan = computed(() => planWaiting.value)
+const canTogglePlan = computed(() => isRecurringPlan.value && planWaiting.value)
+const planActive = computed(
+  () => Boolean(props.task?.schedule_active && props.task.status === 'SCHEDULED'),
 )
 
 const progress = computed(() => props.metrics?.progress ?? 0)
@@ -140,17 +160,38 @@ const stats = computed(() => [
           <span>
             {{ task.retry_on_env_error ? `环境失败自动重试 ${task.max_env_retries} 次` : '环境失败不重试' }}
           </span>
+          <template v-if="isPlan">
+            <span>·</span>
+            <span class="text-sky-700">{{ taskScheduleLabel(task) }}</span>
+            <template v-if="planWaiting">
+              <span>·</span>
+              <span>{{ planActive ? `下次触发 ${formatDateTime(task.next_run_at)}` : '计划已停止' }}</span>
+            </template>
+          </template>
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <StatusPill v-if="task" :status="task.status" />
         <button class="btn-ghost btn-xs" :disabled="!hasTask" @click="emit('refresh')">刷新</button>
+        <button v-if="canRunNow" class="btn-primary btn-xs" @click="emit('run-now')">
+          立即执行一次
+        </button>
+        <button
+          v-if="canTogglePlan"
+          class="btn-ghost btn-xs"
+          @click="emit('toggle-plan', !planActive)"
+        >
+          {{ planActive ? '暂停计划' : '启用计划' }}
+        </button>
+        <button v-if="canStopPlan && planActive" class="btn-danger btn-xs" @click="emit('stop-plan')">
+          停止计划
+        </button>
         <button v-if="canPause" class="btn-ghost btn-xs" @click="emit('pause')">暂停</button>
         <button v-if="canResume" class="btn-primary btn-xs" @click="emit('resume')">恢复</button>
         <button v-if="canAbort" class="btn-danger btn-xs" @click="emit('abort')">终止</button>
         <button v-if="canRetry" class="btn-ghost btn-xs" @click="emit('retry')">失败重跑</button>
         <button
-          v-if="task"
+          v-if="task && !planWaiting"
           class="btn-ghost btn-xs"
           @click="emit('view-task-trace', task.id)"
         >
@@ -164,6 +205,55 @@ const stats = computed(() => [
     </div>
 
     <template v-else>
+      <div v-if="planWaiting" class="space-y-4 px-5 py-5">
+        <div class="rounded-xl border border-sky-200 bg-sky-50/70 p-4">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="text-xs font-medium text-sky-800">定时计划</p>
+              <p class="mt-1 text-sm font-semibold text-slate-900">{{ taskScheduleLabel(task) }}</p>
+              <p class="mt-1 text-[11px] text-slate-600">
+                {{
+                  planActive
+                    ? '计划生效中，到点会自动生成新的批量任务执行。'
+                    : '计划已停止，不再自动触发；已生成的历史任务不受影响。'
+                }}
+              </p>
+            </div>
+            <button v-if="canRunNow" class="btn-primary btn-xs" @click="emit('run-now')">
+              立即执行一次
+            </button>
+          </div>
+          <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div>
+              <p class="text-[10px] uppercase tracking-wider text-slate-500">下次触发</p>
+              <p class="mt-0.5 text-sm font-medium tabular-nums text-slate-900">
+                {{ planActive ? formatDateTime(task.next_run_at) : '—' }}
+              </p>
+            </div>
+            <div>
+              <p class="text-[10px] uppercase tracking-wider text-slate-500">上次触发</p>
+              <p class="mt-0.5 text-sm font-medium tabular-nums text-slate-900">
+                {{ formatDateTime(task.last_run_at) }}
+              </p>
+            </div>
+            <div>
+              <p class="text-[10px] uppercase tracking-wider text-slate-500">用例数</p>
+              <p class="mt-0.5 text-sm font-medium tabular-nums text-slate-900">
+                {{ task.total_cases }}
+              </p>
+            </div>
+            <div>
+              <p class="text-[10px] uppercase tracking-wider text-slate-500">触发后</p>
+              <p class="mt-0.5 text-sm font-medium text-slate-900">克隆新任务执行</p>
+            </div>
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-500">
+          每次触发都会生成一条独立批量任务，进度、指标与失败重跑互不影响；可在左侧任务列表中查看历史执行。
+        </p>
+      </div>
+
+      <template v-else>
       <div class="border-b border-slate-200 px-5 py-4">
         <div class="flex items-center justify-between text-xs text-slate-600">
           <span>
@@ -284,6 +374,7 @@ const stats = computed(() => [
           </div>
         </div>
       </div>
+      </template>
     </template>
   </section>
 </template>

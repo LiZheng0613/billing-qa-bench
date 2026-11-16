@@ -32,6 +32,7 @@ import type {
   SandboxRequest,
   SandboxResponse,
   TaskMetrics,
+  TaskScheduleType,
   TemplateStrategy,
   TestCase,
   UserInfo,
@@ -181,9 +182,24 @@ export const api = {
       retry_on_env_error?: boolean
       max_env_retries?: number
       retry_backoff_seconds?: number
+      schedule_type?: TaskScheduleType
+      scheduled_at?: string | null
+      schedule_time?: string | null
+      schedule_weekdays?: number[]
       auto_start?: boolean
     }) => http.post<BatchTask>('/tasks', payload),
     start: (id: number) => http.post<MessageResponse>(`/tasks/${id}/start`),
+    runNow: (id: number) => http.post<BatchTask>(`/tasks/${id}/run-now`),
+    updateSchedule: (
+      id: number,
+      payload: {
+        schedule_type?: TaskScheduleType
+        scheduled_at?: string | null
+        schedule_time?: string | null
+        schedule_weekdays?: number[]
+        active?: boolean
+      },
+    ) => http.put<BatchTask>(`/tasks/${id}/schedule`, payload),
     pause: (id: number) => http.post<MessageResponse>(`/tasks/${id}/pause`),
     resume: (id: number) => http.post<MessageResponse>(`/tasks/${id}/resume`),
     abort: (id: number) => http.post<MessageResponse>(`/tasks/${id}/abort`),

@@ -6,6 +6,7 @@ import { buildWebSocketUrl } from '../api/client'
 import BaseModal from '../components/BaseModal.vue'
 import MetricCard from '../components/MetricCard.vue'
 import PageHeader from '../components/PageHeader.vue'
+import ScheduleField from '../components/ScheduleField.vue'
 import StatusPill from '../components/StatusPill.vue'
 import EmptyState from '../components/EmptyState.vue'
 import BatchMonitor from './components/BatchMonitor.vue'
@@ -18,7 +19,15 @@ import type {
   TestCase,
 } from '../types'
 import { errorMessage } from '../utils/errors'
-import { caseTypeLabel, formatDateTime, formatPercent } from '../utils/format'
+import { caseTypeLabel, formatDateTime, formatPercent, statusLabel } from '../utils/format'
+import {
+  defaultSchedule,
+  isPlanTask,
+  normalizeSchedule,
+  schedulePayload,
+  scheduleSummary,
+  scheduleValidationError,
+} from '../utils/schedule'
 import { useToastStore } from '../stores/toast'
 
 const router = useRouter()
@@ -53,6 +62,7 @@ const form = reactive({
   case_scope: 'SELECTED' as 'SELECTED' | 'ALL_ACTIVE',
   case_ids: [] as number[],
   auto_start: true,
+  schedule: defaultSchedule(),
 })
 
 const activeCaseCount = computed(
@@ -370,6 +380,7 @@ function openCreate(): void {
   form.case_scope = 'SELECTED'
   form.case_ids = []
   form.auto_start = true
+  form.schedule = defaultSchedule()
   caseKeyword.value = ''
   showCreate.value = true
 }
@@ -405,6 +416,11 @@ async function submitCreate(): Promise<void> {
     toast.error('用例库中没有启用用例，无法批量执行')
     return
   }
+  const scheduleError = scheduleValidationError(form.schedule)
+  if (scheduleError) {
+    toast.error(scheduleError)
+    return
+  }
   creating.value = true
   try {
     const created = await api.tasks.create({
@@ -418,9 +434,15 @@ async function submitCreate(): Promise<void> {
       retry_on_env_error: form.retry_on_env_error,
       max_env_retries: form.max_env_retries,
       retry_backoff_seconds: form.retry_backoff_seconds,
-      auto_start: form.auto_start,
+      ...schedulePayload(normalizeSchedule(form.schedule)),
+      auto_start: form.schedule.type === 'IMMEDIATE' && form.auto_start,
     })
-    toast.success(`任务 ${created.code} 已创建，共 ${created.total_cases} 条用例`)
+    const scheduled = created.schedule_type !== 'IMMEDIATE'
+    toast.success(
+      scheduled
+        ? `定时任务 ${created.code} 已登记：${scheduleSummary(normalizeSchedule(form.schedule))}`
+        : `任务 ${created.code} 已创建，共 ${created.total_cases} 条用例`,
+    )
     showCreate.value = false
     await refreshTasks()
     await selectTask(created.id)
@@ -428,6 +450,47 @@ async function submitCreate(): Promise<void> {
     reportError(exc)
   } finally {
     creating.value = false
+  }
+}
+
+async function runTaskNow(): Promise<void> {
+  if (!task.value) return
+  const plan = isPlanTask(task.value)
+  const oneOff = task.value.schedule_type === 'SCHEDULED'
+  try {
+    const run = await api.tasks.runNow(task.value.id)
+    toast.success(plan ? `已按计划立即执行一次：${run.code}` : '任务已启动')
+    await refreshCurrent()
+    // 周期计划会克隆出新任务，直接切到这次执行
+    if (plan && !oneOff) {
+      await selectTask(run.id)
+      void router.replace({ name: 'dashboard', query: { task: String(run.id) } })
+    }
+  } catch (exc) {
+    reportError(exc)
+  }
+}
+
+async function stopPlan(): Promise<void> {
+  if (!task.value) return
+  if (!window.confirm('确认停止该定时计划？已生成的历史任务不会删除。')) return
+  try {
+    await api.tasks.abort(task.value.id)
+    toast.success('定时计划已停止')
+    await refreshCurrent()
+  } catch (exc) {
+    reportError(exc)
+  }
+}
+
+async function togglePlan(active: boolean): Promise<void> {
+  if (!task.value) return
+  try {
+    await api.tasks.updateSchedule(task.value.id, { active })
+    toast.success(active ? '定时计划已启用' : '定时计划已暂停')
+    await refreshCurrent()
+  } catch (exc) {
+    reportError(exc)
   }
 }
 
@@ -495,6 +558,9 @@ onBeforeUnmount(() => {
           @resume="resumeTask"
           @abort="abortTask"
           @retry="retryFailed"
+          @run-now="runTaskNow"
+          @stop-plan="stopPlan"
+          @toggle-plan="togglePlan"
           @select-execution="openExecution"
           @view-task-trace="openTaskTrace"
           @page-change="changeExecutionPage"
@@ -524,6 +590,30 @@ onBeforeUnmount(() => {
               <StatusPill :status="item.status" size="sm" />
             </div>
             <p class="mt-1 font-mono text-[10px] text-slate-600">{{ item.code }}</p>
+            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+              <span
+                class="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-slate-600"
+              >
+                {{ statusLabel(item.schedule_type) }}
+              </span>
+              <span
+                v-if="item.schedule_type !== 'IMMEDIATE'"
+                class="truncate"
+                :class="
+                  item.status === 'SCHEDULED' && item.next_run_at ? 'text-sky-700' : 'text-slate-500'
+                "
+              >
+                {{
+                  item.status === 'SCHEDULED'
+                    ? item.next_run_at
+                      ? `下次 ${formatDateTime(item.next_run_at)}`
+                      : '等待触发'
+                    : item.schedule_type === 'SCHEDULED'
+                      ? formatDateTime(item.scheduled_at)
+                      : '计划已停止'
+                }}
+              </span>
+            </div>
             <div class="mt-2 flex items-center gap-2">
               <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
                 <div
@@ -549,7 +639,7 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <BaseModal v-model="showCreate" title="新建批量任务" subtitle="选择用例并设置并发、限速与失败重试策略" width="xl">
+    <BaseModal v-model="showCreate" title="新建批量任务" subtitle="选择用例与执行方式（立即 / 指定时间 / 每天 / 每周），并设置并发、限速与失败重试策略" width="xl">
       <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div class="space-y-4">
           <div class="grid gap-3 sm:grid-cols-2">
@@ -571,6 +661,7 @@ onBeforeUnmount(() => {
             <label class="label">任务描述</label>
             <textarea v-model="form.description" class="input" rows="2" placeholder="可选，用于标记本次回归目的" />
           </div>
+          <ScheduleField v-model="form.schedule" :disabled="creating" />
           <div class="grid gap-3 sm:grid-cols-2">
             <div>
               <label class="label">并发数</label>
@@ -627,7 +718,10 @@ onBeforeUnmount(() => {
               第 n 次重试前等待 = 基础退避 × 2^(n-1)，重试同样受并发数与 QPS 限制，暂停/终止会立即生效。
             </p>
           </div>
-          <label class="flex items-center gap-2 text-sm text-slate-700">
+          <label
+            v-if="form.schedule.type === 'IMMEDIATE'"
+            class="flex items-center gap-2 text-sm text-slate-700"
+          >
             <input v-model="form.auto_start" type="checkbox" class="h-4 w-4 rounded border-slate-300 bg-white" />
             创建后立即启动
           </label>
@@ -724,7 +818,13 @@ onBeforeUnmount(() => {
       <template #footer>
         <button class="btn-ghost" @click="showCreate = false">取消</button>
         <button class="btn-primary" :disabled="creating" @click="submitCreate">
-          {{ creating ? '创建中…' : `创建并执行（${scopeCount} 条）` }}
+          {{
+            creating
+              ? '创建中…'
+              : form.schedule.type === 'IMMEDIATE'
+                ? `创建并执行（${scopeCount} 条）`
+                : `创建定时任务（${scopeCount} 条）`
+          }}
         </button>
       </template>
     </BaseModal>

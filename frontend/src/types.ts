@@ -529,6 +529,8 @@ export interface RunCompare {
 }
 
 // ------------------------------------------------------------------ 任务与执行
+export type TaskScheduleType = 'IMMEDIATE' | 'SCHEDULED' | 'DAILY' | 'WEEKLY'
+
 export interface BatchTask {
   id: number
   code: string
@@ -549,6 +551,14 @@ export interface BatchTask {
   retry_on_env_error: boolean
   max_env_retries: number
   retry_backoff_seconds: number
+  schedule_type: TaskScheduleType
+  scheduled_at: string | null
+  schedule_time: string | null
+  schedule_weekdays: number[] | null
+  next_run_at: string | null
+  last_run_at: string | null
+  schedule_active: boolean
+  schedule_source_id: number | null
   created_by: string | null
   created_at: string
   started_at: string | null
