@@ -31,7 +31,7 @@ def _fact_id() -> str:
 # ---------------------------------------------------------------------- #
 _REQUEST_VARIABLE_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # 运行时由执行器注入，用例自定义同名变量会被无条件覆盖，因此直接拒绝以免静默失效
-_RESERVED_REQUEST_VARIABLES = {"query", "history", "history_text", "turn"}
+_RESERVED_REQUEST_VARIABLES = {"query", "history", "history_text", "turn", "timestamp_iso"}
 _REQUEST_VARIABLES_LIMIT = 16 * 1024
 
 

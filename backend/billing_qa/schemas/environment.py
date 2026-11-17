@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Literal
 
@@ -34,16 +35,43 @@ class EnvVariableOut(BaseModel):
 
 
 class PreHookConfig(BaseModel):
-    """前置鉴权接口配置。"""
+    """前置接口配置：执行一次，提取变量供主请求与后续轮次复用。"""
 
     enabled: bool = False
     method: str = "POST"
     path: str = "/api/auth/token"
     headers: dict[str, str] = Field(default_factory=dict)
     body: dict | None = None
+    # 多字段提取：变量名 -> JSONPath。配置后优先于下面的 token_jsonpath / token_var
+    extract: dict[str, str] | None = None
     token_jsonpath: str = "$.data.token"
     token_var: str = "auth_token"
     cache_seconds: int = 300
+
+    @field_validator("extract")
+    @classmethod
+    def _check_extract(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+        for key, path in value.items():
+            if not pattern.match(str(key)):
+                raise ValueError(f"前置接口提取变量名不合法: {key!r}")
+            if not str(path or "").strip():
+                raise ValueError(f"前置接口提取变量 {key} 缺少 JSONPath")
+        return value
+
+
+class BasicAuthIn(BaseModel):
+    """环境级 Basic 鉴权：执行时生成 Authorization: Basic <base64(账号:密码)>。"""
+
+    username: str = Field(min_length=1, max_length=256)
+    password: str | None = Field(default=None, max_length=512)
+
+
+class BasicAuthOut(BaseModel):
+    username: str
+    password_set: bool = False
 
 
 DEFAULT_BODY_TEMPLATE: dict = {
@@ -75,6 +103,7 @@ class EnvironmentBase(BaseModel):
     is_stream: bool = False
     extractors: dict | None = Field(default_factory=lambda: dict(DEFAULT_EXTRACTORS))
     pre_hook: PreHookConfig | None = None
+    basic_auth: BasicAuthIn | None = None
     session_mode: Literal["SERVER_RETURNED", "CLIENT_GENERATED"] = "SERVER_RETURNED"
     timeout_seconds: float = 60.0
     verify_ssl: bool = True
@@ -112,6 +141,7 @@ class EnvironmentUpdate(BaseModel):
     is_stream: bool | None = None
     extractors: dict | None = None
     pre_hook: PreHookConfig | None = None
+    basic_auth: BasicAuthIn | None = None
     session_mode: Literal["SERVER_RETURNED", "CLIENT_GENERATED"] | None = None
     timeout_seconds: float | None = None
     verify_ssl: bool | None = None
@@ -132,6 +162,7 @@ class EnvironmentOut(ORMModel):
     is_stream: bool
     extractors: dict | None
     pre_hook: dict | None
+    basic_auth: BasicAuthOut | None = None
     session_mode: str
     timeout_seconds: float
     verify_ssl: bool

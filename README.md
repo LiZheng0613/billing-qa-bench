@@ -49,7 +49,7 @@ batch_test/
 │   ├── migrations/            # Alembic 迁移脚本
 │   ├── mock_servers/          # 内置 Mock：LLM(8001) 与被测客服系统(8002)
 │   ├── scripts/               # api_smoke.py / e2e_smoke.py / seed_demo_history.py / migrate_mysql_to_postgres.py
-│   ├── tests/                 # 235 项 pytest
+│   ├── tests/                 # 242 项 pytest
 │   ├── alembic.ini
 │   ├── pyproject.toml
 │   └── .env.example
@@ -212,7 +212,10 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 环境模板（`headers_template` / `body_template`）用 `{{variable}}` 占位，具体取值按用例注入：
 
 - **请求变量**：用例级 `request_variables`（key-value，值支持字符串 / 数字 / JSON），在用例抽屉「请求变量」中按行维护或直接编辑 JSON；不放敏感信息，明文保存。
-- **三层优先级**：运行时变量（`query` / `session_id` / `history` / `history_text` / `turn`）> 用例 `request_variables` > 环境变量池。运行时保留字不允许在用例变量中重复定义。
+- **三层优先级**：运行时变量（`query` / `session_id` / `history` / `history_text` / `turn` / `timestamp_iso`）> 用例 `request_variables` > 环境变量池。运行时保留字不允许在用例变量中重复定义。
+- **时间戳**：`timestamp_iso` 为请求时刻的 ISO 8601 字符串（如 `2026-11-17T18:00:00.123`），每轮请求刷新。
+- **Basic 鉴权**：环境可配置账号 + 密码（密码加密存储），执行时自动生成 `Authorization: Basic base64(账号:密码)`；请求头模板显式写了 `Authorization` 时以模板为准。
+- **前置接口钩子**：执行前调用一次，支持用环境变量池与用例变量渲染 headers / body，并用 `extract`（变量名 → JSONPath）提取 `conversationId`、Token 等字段，供主请求与后续轮次复用；旧的 `token_jsonpath` / `token_var` 配置继续兼容。
 - **会话绑定**：环境级 `session_mode` 二选一，用例可覆盖或跟随环境：
 
   | 模式 | 行为 |
@@ -222,9 +225,12 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
   | `INHERIT`（用例默认） | 跟随环境配置 |
   | `FIXED` | 用例 `request_variables` 中显式给出 `session_id`，优先级最高 |
 
-- **字段名由模板决定**：例如 `"conversationId": "{{session_id}}"`，不同接口可各自定义，平台不写死字段名。
-- **接口配置页**：环境编辑弹窗内提供「多轮会话绑定」、可用占位符清单与环境变量来源标注，并可选一条示例用例做**报文预览**（只读，不落库）。
+- **字段名由模板决定**：例如 `"conversationId": "{{session_id}}"` 或 `"sessionid": "{{session_id}}"`，不同接口可各自定义，平台不写死字段名；首轮渲染为空字符串，由目标接口按「首轮对话」处理。
+- **接口配置页**：环境编辑弹窗内提供「Basic 鉴权」「前置接口钩子」「多轮会话绑定」、可用占位符清单与变量来源标注，并可选一条示例用例做**报文预览**（只读，不落库）。
 - **执行结果**：对话轮次页展示每轮会话徽标、会话连续性小结、用例变量来源标记；不一致时会提示「上下文可能未延续」。
+
+真实 Agent 报文（前置取 `conversationId`、Basic 鉴权、首轮回填空 `sessionid`）的完整配置示例见
+[`docs/AGENT_INTEGRATION_GUIDE.md`](docs/AGENT_INTEGRATION_GUIDE.md)。
 
 相关接口：`POST /environments/{id}/preview`（body `{"case_id": 123}`，返回渲染后的 `headers` / `body` / `origins` / `session_mode_resolved`）。
 
@@ -426,7 +432,7 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 
 ```powershell
 cd backend
-python -m pytest -q          # 235 passed（Mock / PostgreSQL 依赖不可用时自动 skip）
+python -m pytest -q          # 242 passed（Mock / PostgreSQL 依赖不可用时自动 skip）
 python -m ruff check billing_qa scripts tests
 ```
 

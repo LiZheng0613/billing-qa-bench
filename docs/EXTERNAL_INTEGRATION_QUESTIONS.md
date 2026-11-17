@@ -158,13 +158,28 @@
 
 - 报文格式由环境模板固定：`headers_template` / `body_template` 中使用 `{{variable}}` 占位符；
   具体取值按用例不同，由用例级 `request_variables`（key-value，值支持字符串 / 数字 / JSON）注入。
-- 变量合并优先级：运行时变量（`query` / `session_id` / `history` / `history_text` / `turn`）
+- 变量合并优先级：运行时变量（`query` / `session_id` / `history` / `history_text` / `turn` / `timestamp_iso`）
   \> 用例 `request_variables` > 环境变量池。
+- `timestamp_iso` 为请求时刻的 ISO 8601 字符串（每轮刷新），可直接用于 `metadata.timestampe` 等字段。
+- **Basic 鉴权**：环境配置账号 + 密码（密码加密存储），执行时自动生成
+  `Authorization: Basic base64(账号:密码)`；请求头模板显式配置 `Authorization` 时以模板为准。
+- **前置接口钩子**：执行前调用一次，可用环境变量池与用例变量渲染请求，并用
+  `extract`（变量名 → JSONPath，如 `{"conversationId": "$.data.conversationId"}`）提取变量，
+  供主请求与后续轮次复用；旧的 `token_jsonpath` / `token_var` 配置继续兼容。
 - 对接方只需确认「哪些字段需要按用例变化」，平台即可在用例中配置，无需为新参数改代码。
 - 接口配置页提供**报文预览**（选一条示例用例，只读渲染 headers/body 并标注每个变量的来源），
   可用于与 Agent 平台逐字段核对。
 
 ### 5.2 多轮会话绑定（两种模式均保留，可配置）
+
+> **已确认（2026-11-17，当前对接的 Agent 平台）**：
+> 1. 会话由 Agent 服务端生成：首轮 `message.sessionid` 传空字符串即视为首轮对话，
+>    服务端在响应中返回新的 `sessionid`，后续轮次携带同一值；
+> 2. 会话字段位于 `message.sessionid`，`conversationId` 由前置接口单独签发；
+> 3. Agent 接口使用 Basic 鉴权（`Authorization: Basic base64(账号:密码)`）；
+> 4. `metadata.timestampe` 为 ISO 8601 时间戳字符串，由平台 `{{timestamp_iso}}` 运行时变量提供。
+>
+> 配置示例见 [`AGENT_INTEGRATION_GUIDE.md`](AGENT_INTEGRATION_GUIDE.md)。
 
 会话值的**生成方尚未确定**，因此平台同时支持两种模式，环境级默认 + 用例级可覆盖：
 
@@ -214,6 +229,8 @@
    - 同一请求重复调用是否幂等？
 5. **鉴权**
    - 使用 Bearer Token、Cookie、AK/SK、OAuth2 还是网关注入？
+   - **已确认**：当前 Agent 接口使用 Basic 鉴权（账号:密码 base64），由环境配置托管；
+     前置 conversationId 接口同样走该 Basic 头。
    - Pre-Hook 获取 Token 的接口、返回结构、缓存时长是否与 Mock 一致？
 6. **Agent 平台侧限制**
    - 单租户 QPS / 并发 / 日调用量上限？
@@ -316,8 +333,8 @@
 | Q-13 | 数据集评审人与豁免审批人 | 业务方 | 冻结数据集前 | 待确认 |
 | Q-14 | 金额含税 / 账期 / 退款口径 | 业务方 | 需求评审 | 待确认 |
 | Q-15 | 历史数据回溯窗口 | 数据平台 | 冻结数据集前 | 待确认 |
-| Q-16 | 会话由谁生成、是否随响应返回 | Agent 平台 | 联调前 | 待确认 |
-| Q-17 | 会话字段名 / 位置与超时、并发隔离规则 | Agent 平台 | 联调前 | 待确认 |
+| Q-16 | 会话由谁生成、是否随响应返回 | Agent 平台 | 联调前 | 已确认：服务端生成，首轮传空 `sessionid` |
+| Q-17 | 会话字段名 / 位置与超时、并发隔离规则 | Agent 平台 | 联调前 | 已确认：`message.sessionid`；超时/并发待补充 |
 
 ---
 

@@ -82,8 +82,8 @@ export interface EnvVariableInput {
 // ------------------------------------------------------- 多轮会话绑定
 export type SessionMode = 'SERVER_RETURNED' | 'CLIENT_GENERATED'
 export type CaseSessionMode = 'INHERIT' | 'SERVER_RETURNED' | 'CLIENT_GENERATED'
-/** 变量来源标注：运行时 / 用例 / 环境变量池 / 会话 / 缺失 */
-export type VariableOrigin = 'RUNTIME' | 'CASE' | 'ENV' | 'SESSION' | 'MISSING'
+/** 变量来源标注：运行时 / 用例 / 环境变量池 / 会话 / 前置接口 / 缺失 */
+export type VariableOrigin = 'RUNTIME' | 'CASE' | 'ENV' | 'SESSION' | 'PREHOOK' | 'MISSING'
 
 export interface EnvPreviewPayload {
   case_id: number
@@ -105,9 +105,21 @@ export interface PreHookConfig {
   path: string
   headers: Record<string, string>
   body: Record<string, unknown> | null
+  /** 多字段提取：变量名 -> JSONPath（配置后优先于 token_jsonpath/token_var） */
+  extract?: Record<string, string> | null
   token_jsonpath: string
   token_var: string
   cache_seconds: number
+}
+
+export interface BasicAuthOut {
+  username: string
+  password_set: boolean
+}
+
+export interface BasicAuthInput {
+  username: string
+  password?: string | null
 }
 
 export interface Environment {
@@ -124,6 +136,7 @@ export interface Environment {
   is_stream: boolean
   extractors: Record<string, string> | null
   pre_hook: PreHookConfig | null
+  basic_auth: BasicAuthOut | null
   session_mode: SessionMode
   timeout_seconds: number
   verify_ssl: boolean
@@ -150,6 +163,7 @@ export interface EnvironmentPayload {
   is_stream?: boolean
   extractors?: Record<string, string> | null
   pre_hook?: PreHookConfig | null
+  basic_auth?: BasicAuthInput | null
   session_mode?: SessionMode
   timeout_seconds?: number
   verify_ssl?: boolean

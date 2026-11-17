@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from billing_qa.api.v1.serializers import env_to_out, env_variable_to_out
 from billing_qa.core.crypto import encrypt_value
-from billing_qa.core.exceptions import ConflictError, NotFoundError
+from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.security import get_current_operator
 from billing_qa.db.session import get_db
 from billing_qa.models.environment import Environment, EnvironmentVariable
@@ -21,6 +21,7 @@ from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.common import MessageResponse, Page
 from billing_qa.schemas.environment import (
     DEFAULT_BODY_TEMPLATE,
+    BasicAuthIn,
     EnvironmentCreate,
     EnvironmentOut,
     EnvironmentUpdate,
@@ -37,6 +38,8 @@ from billing_qa.services.adapter.target_api import (
     EnvContext,
     TargetApiAdapter,
     _sanitize_headers,
+    basic_auth_header,
+    now_iso,
 )
 
 router = APIRouter(
@@ -57,6 +60,20 @@ async def _get_env(db: AsyncSession, env_id: int) -> Environment:
     if env is None:
         raise NotFoundError("环境不存在")
     return env
+
+
+def _encode_basic_auth(config: BasicAuthIn | None, existing: dict | None) -> dict | None:
+    """把 Basic 鉴权配置转为存储结构（密码加密；留空表示沿用旧密码）。"""
+    if config is None:
+        return None
+    password = (config.password or "").strip()
+    if password:
+        encrypted = encrypt_value(password)
+    else:
+        encrypted = (existing or {}).get("password_encrypted")
+        if not encrypted:
+            raise ValidationError("Basic 鉴权密码不能为空")
+    return {"username": config.username, "password_encrypted": encrypted}
 
 
 @router.get("", response_model=Page[EnvironmentOut], summary="环境列表")
@@ -105,8 +122,9 @@ async def create_environment(
     ).scalar_one_or_none()
     if exists:
         raise ConflictError(f"环境编码 {payload.code} 已存在")
-    data = payload.model_dump(exclude={"variables"})
+    data = payload.model_dump(exclude={"variables", "basic_auth"})
     data["pre_hook"] = payload.pre_hook.model_dump() if payload.pre_hook else None
+    data["basic_auth"] = _encode_basic_auth(payload.basic_auth, None)
     env = Environment(**data)
     for item in payload.variables:
         env.variables.append(
@@ -139,6 +157,8 @@ async def update_environment(
         data["pre_hook"] = (
             payload.pre_hook.model_dump() if payload.pre_hook is not None else None
         )
+    if "basic_auth" in data:
+        data["basic_auth"] = _encode_basic_auth(payload.basic_auth, env.basic_auth)
     for key, value in data.items():
         setattr(env, key, value)
     await db.commit()
@@ -246,7 +266,18 @@ async def environment_usage(
 # ---------------------------------------------------------------------- #
 # 请求报文预览（接口配置页使用）
 # ---------------------------------------------------------------------- #
-_RUNTIME_VARIABLES = {"query", "session_id", "history", "history_text", "turn"}
+_RUNTIME_VARIABLES = {"query", "session_id", "history", "history_text", "turn", "timestamp_iso"}
+
+
+def _prehook_variables(ctx: EnvContext) -> list[str]:
+    """前置接口执行后会注入的变量名。"""
+    hook = ctx.pre_hook or {}
+    if not hook.get("enabled"):
+        return []
+    extract = hook.get("extract") or {}
+    if extract:
+        return [str(key) for key in extract]
+    return [str(hook.get("token_var") or "auth_token")]
 
 
 def _preview_query(case: TestCase) -> str:
@@ -273,6 +304,7 @@ def _variable_origins(
             if name not in names:
                 names.append(name)
     origins: dict[str, str] = {}
+    prehook_names = _prehook_variables(ctx)
     for name in names:
         if name == "session_id":
             origins[name] = "CASE" if mode == "FIXED" else "SESSION"
@@ -280,6 +312,8 @@ def _variable_origins(
             origins[name] = "RUNTIME"
         elif name in case_vars:
             origins[name] = "CASE"
+        elif name in prehook_names:
+            origins[name] = "PREHOOK"
         elif name in ctx.variables:
             origins[name] = "ENV"
         else:
@@ -311,6 +345,9 @@ async def preview_request(
 
     variables: dict[str, Any] = dict(ctx.variables)
     variables.update(case_vars)
+    for name in _prehook_variables(ctx):
+        # 预览不发起真实前置请求，用占位值让模板可完整渲染
+        variables.setdefault(name, f"<前置接口注入:{name}>")
     variables.update(
         {
             "query": query,
@@ -318,11 +355,18 @@ async def preview_request(
             "history": format_history([], style="messages"),
             "history_text": format_history([], style="text"),
             "turn": 1,
+            "timestamp_iso": now_iso(),
         }
     )
 
     header_missing: list[str] = []
     headers = render_structure(ctx.headers_template or {}, variables, header_missing)
+    # 与真实执行一致：配置了 Basic 鉴权且模板未显式覆盖时，补充 Authorization 头
+    if not any(str(key).lower() == "authorization" for key in (headers or {})):
+        auth_header = basic_auth_header(ctx.basic_username, ctx.basic_password)
+        if auth_header:
+            headers = dict(headers or {})
+            headers["Authorization"] = auth_header
     missing: list[str] = list(header_missing)
     body = render_structure(
         ctx.body_template or dict(DEFAULT_BODY_TEMPLATE), variables, missing
@@ -332,6 +376,8 @@ async def preview_request(
     unique_missing = list(dict.fromkeys(missing))
     if unique_missing:
         warnings.append(f"模板占位符缺少变量：{', '.join(unique_missing)}")
+    if ctx.basic_username:
+        warnings.append("已启用 Basic 鉴权，预览中 Authorization 头已掩码显示")
 
     return EnvPreviewResponse(
         headers=_sanitize_headers({str(k): str(v) for k, v in (headers or {}).items()}),

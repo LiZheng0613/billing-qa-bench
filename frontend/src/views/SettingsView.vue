@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import type {
+  BasicAuthInput,
   Environment,
   EnvironmentPayload,
   EnvPreviewResult,
@@ -62,6 +63,9 @@ const envForm = reactive({
   extractorsText: '',
   preHookEnabled: false,
   preHookText: '',
+  basicAuthEnabled: false,
+  basicAuthUsername: '',
+  basicAuthPassword: '',
   session_mode: 'SERVER_RETURNED' as SessionMode,
 })
 
@@ -91,6 +95,7 @@ const RUNTIME_VARIABLES: Array<{ name: string; desc: string }> = [
   { name: 'history', desc: '历史消息数组（role/content）' },
   { name: 'history_text', desc: '历史消息拼接文本' },
   { name: 'turn', desc: '当前轮次序号，从 1 开始' },
+  { name: 'timestamp_iso', desc: '当前请求时间（ISO 8601 字符串，每轮刷新）' },
 ]
 
 const ORIGIN_META: Record<VariableOrigin, { label: string; cls: string }> = {
@@ -98,6 +103,7 @@ const ORIGIN_META: Record<VariableOrigin, { label: string; cls: string }> = {
   CASE: { label: '用例', cls: 'bg-indigo-50 text-indigo-700 border-indigo-100' },
   ENV: { label: '环境变量', cls: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
   SESSION: { label: '会话', cls: 'bg-sky-50 text-sky-700 border-sky-100' },
+  PREHOOK: { label: '前置接口', cls: 'bg-amber-50 text-amber-700 border-amber-100' },
   MISSING: { label: '缺失', cls: 'bg-rose-50 text-rose-700 border-rose-100' },
 }
 
@@ -118,6 +124,23 @@ const templatePlaceholders = computed(() => {
 
 const envVariableKeys = computed(() => (editingEnv.value?.variables ?? []).map((v) => v.key))
 
+const prehookVariableKeys = computed(() => {
+  const text = envForm.preHookText.trim()
+  if (!envForm.preHookEnabled || !text) return [] as string[]
+  try {
+    const parsed = JSON.parse(text) as {
+      extract?: Record<string, string> | null
+      token_var?: string
+    }
+    if (parsed.extract && typeof parsed.extract === 'object') {
+      return Object.keys(parsed.extract)
+    }
+    return parsed.token_var ? [parsed.token_var] : []
+  } catch {
+    return [] as string[]
+  }
+})
+
 const previewBodyText = computed(() =>
   previewResult.value ? prettyJson(previewResult.value.body) : '',
 )
@@ -125,6 +148,7 @@ const previewBodyText = computed(() =>
 function placeholderSource(name: string): VariableOrigin {
   if (name === 'session_id') return 'SESSION'
   if (RUNTIME_VARIABLES.some((item) => item.name === name)) return 'RUNTIME'
+  if (prehookVariableKeys.value.includes(name)) return 'PREHOOK'
   if (envVariableKeys.value.includes(name)) return 'ENV'
   return 'CASE'
 }
@@ -189,6 +213,9 @@ function resetEnvForm(): void {
   envForm.extractorsText = prettyJson(source?.extractors)
   envForm.preHookEnabled = Boolean(source?.pre_hook?.enabled)
   envForm.preHookText = source?.pre_hook ? prettyJson(source.pre_hook) : ''
+  envForm.basicAuthEnabled = Boolean(source?.basic_auth)
+  envForm.basicAuthUsername = source?.basic_auth?.username ?? ''
+  envForm.basicAuthPassword = ''
   envForm.session_mode = (source?.session_mode ?? 'SERVER_RETURNED') as SessionMode
   previewCases.value = []
   previewCaseId.value = null
@@ -255,6 +282,21 @@ async function submitEnv(): Promise<void> {
   let body: Record<string, unknown> | null = null
   let extractors: Record<string, string> | null = null
   let preHook: PreHookConfig | null = null
+  let basicAuth: BasicAuthInput | null = null
+  if (envForm.basicAuthEnabled) {
+    if (!envForm.basicAuthUsername.trim()) {
+      toast.error('请填写 Basic 鉴权账号')
+      return
+    }
+    if (!envForm.basicAuthPassword && !editingEnv.value?.basic_auth?.password_set) {
+      toast.error('请填写 Basic 鉴权密码')
+      return
+    }
+    basicAuth = {
+      username: envForm.basicAuthUsername.trim(),
+      password: envForm.basicAuthPassword || '',
+    }
+  }
   try {
     const parsedHeaders = parseOptionalObject(envForm.headersText, '请求头模板')
     if (parsedHeaders) {
@@ -276,7 +318,7 @@ async function submitEnv(): Promise<void> {
       )
     }
     if (envForm.preHookEnabled) {
-      const parsedPreHook = parseOptionalObject(envForm.preHookText, '前置鉴权钩子')
+      const parsedPreHook = parseOptionalObject(envForm.preHookText, '前置接口钩子')
       preHook = {
         enabled: true,
         method: 'POST',
@@ -316,6 +358,7 @@ async function submitEnv(): Promise<void> {
     body_template: body,
     extractors,
     pre_hook: preHook,
+    basic_auth: basicAuth,
     session_mode: envForm.session_mode,
   }
   if (!editingEnv.value) {
@@ -871,7 +914,8 @@ onMounted(() => {
                 <p class="mt-0.5 truncate font-mono text-slate-500">探活 {{ item.health_path }}</p>
                 <p class="mt-0.5 text-slate-500">
                   超时 {{ item.timeout_seconds }}s · SSL {{ item.verify_ssl ? '校验' : '忽略' }}
-                  <span v-if="item.pre_hook?.enabled" class="text-amber-700"> · 前置鉴权</span>
+                  <span v-if="item.pre_hook?.enabled" class="text-amber-700"> · 前置接口</span>
+                  <span v-if="item.basic_auth" class="text-emerald-700"> · Basic 鉴权</span>
                 </p>
                 <p class="mt-1">
                   <span
@@ -1284,20 +1328,55 @@ onMounted(() => {
           <div class="flex flex-wrap items-center justify-between gap-2">
             <label class="flex items-center gap-2 text-sm text-slate-700">
               <input
+                v-model="envForm.basicAuthEnabled"
+                type="checkbox"
+                class="h-4 w-4 rounded border-slate-300 bg-white"
+              />
+              启用 Basic 鉴权
+            </label>
+            <span class="text-[11px] text-slate-500">
+              执行时自动生成 Authorization: Basic base64(账号:密码)
+            </span>
+          </div>
+          <div v-if="envForm.basicAuthEnabled" class="mt-2 grid gap-2 sm:grid-cols-2">
+            <input
+              v-model="envForm.basicAuthUsername"
+              class="input text-sm"
+              placeholder="账号"
+              autocomplete="off"
+            />
+            <input
+              v-model="envForm.basicAuthPassword"
+              class="input text-sm"
+              type="password"
+              :placeholder="
+                editingEnv?.basic_auth?.password_set ? '已配置，留空表示不修改' : '密码'
+              "
+              autocomplete="new-password"
+            />
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <label class="flex items-center gap-2 text-sm text-slate-700">
+              <input
                 v-model="envForm.preHookEnabled"
                 type="checkbox"
                 class="h-4 w-4 rounded border-slate-300 bg-white"
               />
-              启用前置鉴权钩子
+              启用前置接口钩子
             </label>
-            <span class="text-[11px] text-slate-500">用于先获取 token 并写入环境变量，再调用对话接口</span>
+            <span class="text-[11px] text-slate-500">
+              执行一次获取 conversationId / token 等变量，再调用对话接口
+            </span>
           </div>
           <textarea
             v-if="envForm.preHookEnabled"
             v-model="envForm.preHookText"
             class="input mt-2 font-mono text-xs"
             rows="6"
-            placeholder='{"method":"POST","path":"/api/auth/token","body":{"username":"demo"},"token_jsonpath":"$.data.token","token_var":"auth_token"}'
+            placeholder='{"method":"POST","path":"/api/v1/conversation","body":{"userid":"{{userid}}"},"extract":{"conversationId":"$.data.conversationId"}}'
           />
         </div>
 

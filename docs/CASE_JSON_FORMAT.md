@@ -162,15 +162,17 @@
 执行器渲染请求报文时按三层优先级合并变量：
 
 ```
-运行时变量（query / session_id / history / history_text / turn）
+运行时变量（query / session_id / history / history_text / turn / timestamp_iso）
   > 用例 request_variables
     > 环境变量池
 ```
 
 - 占位符写法为 `{{variable}}`，可出现在环境 `headers_template` 与 `body_template` 的任意位置；
-- 会话字段名由模板决定（如 `"conversationId": "{{session_id}}"`），不同接口可各自定义；
+- `timestamp_iso` 为请求时刻的 ISO 8601 字符串（`2026-11-17T18:00:00.123`），每轮刷新；
+- 会话字段名由模板决定（如 `"conversationId": "{{session_id}}"`、`"sessionid": "{{session_id}}"`），
+  不同接口可各自定义；`SERVER_RETURNED` 首轮渲染为空字符串，由目标接口按首轮对话处理；
 - `request_variables` 的 key 需匹配 `[A-Za-z_][A-Za-z0-9_]*`，且不能使用运行时保留字
-  （`query` / `history` / `history_text` / `turn`），否则校验失败；总量上限 16KB。
+  （`query` / `history` / `history_text` / `turn` / `timestamp_iso`），否则校验失败；总量上限 16KB。
 
 会话模式解析优先级：
 

@@ -41,7 +41,10 @@ class Environment(Base, TimestampMixin):
     body_template: Mapped[dict | None] = mapped_column(JSON, comment="请求体模板，支持变量占位符")
     is_stream: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否 SSE 流式")
     extractors: Mapped[dict | None] = mapped_column(JSON, comment="JSONPath 白盒提取映射")
-    pre_hook: Mapped[dict | None] = mapped_column(JSON, comment="前置鉴权钩子配置")
+    pre_hook: Mapped[dict | None] = mapped_column(JSON, comment="前置接口钩子配置")
+    basic_auth: Mapped[dict | None] = mapped_column(
+        JSON, comment="Basic 鉴权配置（username + password_encrypted）"
+    )
     session_mode: Mapped[str] = mapped_column(
         String(24),
         default="SERVER_RETURNED",

@@ -559,8 +559,8 @@ function removeFact(section: 'must' | 'may', index: number): void {
 }
 
 // ---- 请求变量与会话绑定 ----
-const RESERVED_REQUEST_VARIABLES = ['query', 'history', 'history_text', 'turn']
-const RUNTIME_PLACEHOLDERS = ['query', 'session_id', 'history', 'history_text', 'turn']
+const RESERVED_REQUEST_VARIABLES = ['query', 'history', 'history_text', 'turn', 'timestamp_iso']
+const RUNTIME_PLACEHOLDERS = ['query', 'session_id', 'history', 'history_text', 'turn', 'timestamp_iso']
 const SESSION_FIELD_EXAMPLE = '"conversationId": "{{session_id}}"'
 
 const CASE_SESSION_OPTIONS: Array<{
@@ -2748,7 +2748,7 @@ function openDraftResult(): void {
                   </code>
                 </p>
                 <p class="mt-1 text-slate-500">
-                  query / session_id / history / turn 由运行时自动注入，无需在此填写；需要固定会话值时添加
+                  query / session_id / history / turn / timestamp_iso 由运行时自动注入，无需在此填写；需要固定会话值时添加
                   key 为 session_id 的变量即可（优先级最高）。
                 </p>
                 <p v-if="missingEnvPlaceholders.length" class="mt-1 text-amber-700">

@@ -13,7 +13,7 @@ from billing_qa.models.model_config import ModelConfig
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.case import CaseOut
-from billing_qa.schemas.environment import EnvironmentOut, EnvVariableOut
+from billing_qa.schemas.environment import BasicAuthOut, EnvironmentOut, EnvVariableOut
 from billing_qa.schemas.model_config import ModelConfigOut
 from billing_qa.schemas.task import ExecutionDetail, ExecutionListItem, TaskOut
 
@@ -31,13 +31,26 @@ def env_variable_to_out(variable: Any) -> EnvVariableOut:
 
 
 def env_to_out(env: Environment) -> EnvironmentOut:
-    # 显式组装：variables 需要按掩码规则转换，不能直接走 ORM 校验
+    # 显式组装：variables 需要按掩码规则转换，basic_auth 需要屏蔽密码
     fields = {
         name: getattr(env, name)
         for name in EnvironmentOut.model_fields
-        if name != "variables" and hasattr(env, name)
+        if name not in {"variables", "basic_auth"} and hasattr(env, name)
     }
-    return EnvironmentOut(**fields, variables=[env_variable_to_out(item) for item in env.variables])
+    basic = env.basic_auth or {}
+    basic_out = (
+        BasicAuthOut(
+            username=str(basic.get("username") or ""),
+            password_set=bool(basic.get("password_encrypted")),
+        )
+        if basic.get("username")
+        else None
+    )
+    return EnvironmentOut(
+        **fields,
+        basic_auth=basic_out,
+        variables=[env_variable_to_out(item) for item in env.variables],
+    )
 
 
 def model_to_out(model: ModelConfig) -> ModelConfigOut:

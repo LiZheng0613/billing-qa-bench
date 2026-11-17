@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import re
 import uuid
@@ -458,6 +459,8 @@ _QUESTION_WORDS = (
     "合约",
 )
 _SESSIONS: dict[str, str] = {}
+# 真实 Agent 对接流（前置取 conversationId → agent/chat）的轮次计数
+_AGENT_TURNS: dict[str, int] = {}
 
 _INTENT_LABELS = {
     "BILL": "账单查询",
@@ -1234,3 +1237,114 @@ async def chat(request: Request):
         {"code": 0, "message": "success", "data": result},
         headers={"X-Mock-Session": session_id},
     )
+
+
+# ---------------------------------------------------------------------- #
+# 真实 Agent 对接流模拟：Basic 鉴权 + 前置取 conversationId + 首轮回填 sessionid
+# ---------------------------------------------------------------------- #
+def _require_basic_auth(request: Request) -> None:
+    """模拟 Agent 网关：Authorization: Basic <base64(账号:密码)> 缺失即 401。"""
+    header = request.headers.get("authorization") or ""
+    if not header.lower().startswith("basic "):
+        raise HTTPException(status_code=401, detail="basic auth required")
+
+
+def _basic_user(request: Request) -> str | None:
+    header = request.headers.get("authorization") or ""
+    if not header.lower().startswith("basic "):
+        return None
+    try:
+        raw = base64.b64decode(header[6:].strip()).decode("utf-8")
+    except Exception:
+        return None
+    return raw.split(":", 1)[0] or None
+
+
+@app.post("/api/v1/conversation")
+async def create_conversation(request: Request) -> JSONResponse:
+    """前置接口：签发 conversationId（要求 Basic 鉴权）。"""
+    _require_basic_auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    conversation_id = f"conv-{uuid.uuid4().hex[:12]}"
+    return JSONResponse(
+        {
+            "code": 0,
+            "message": "success",
+            "data": {
+                "conversationId": conversation_id,
+                "expires_in": 3600,
+                "received_params": dict(body),
+            },
+        }
+    )
+
+
+@app.post("/api/v1/agent/chat")
+async def agent_chat(request: Request) -> JSONResponse:
+    """按真实 Agent 报文形状对话：conversationId + message.{content, sessionid, metadata}。
+
+    - sessionid 为空字符串视为首轮，由服务端生成并回填；
+    - 后续轮次携带同一 sessionid 即延续会话；
+    - 回显 conversationId / message / metadata，便于断言变量注入是否生效。
+    """
+    _require_basic_auth(request)
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+
+    conversation_id = str(body.get("conversationId") or "").strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversationId required")
+    message = body.get("message") if isinstance(body.get("message"), dict) else {}
+    query = str(message.get("content") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="message.content required")
+
+    incoming_session = str(message.get("sessionid") or "").strip()
+    first_round = not incoming_session
+    session_id = incoming_session or f"sess-{uuid.uuid4().hex[:12]}"
+    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    history = message.get("history") or []
+    if isinstance(history, dict):
+        history = [history]
+
+    if "模拟崩溃" in query or "触发异常" in query:
+        raise HTTPException(status_code=500, detail="mock internal error injected")
+
+    subscriber = _resolve_subscriber(query, history, session_id)
+    order = _resolve_order(query, history, session_id)
+    if subscriber is not None:
+        _SESSIONS[session_id] = subscriber["phone"]
+        result = _resolve_result(query, history, session_id, subscriber)
+    elif order is not None:
+        _SESSIONS[session_id] = order["order_no"]
+        result = _build_order_answer(query, order)
+    else:
+        result = _resolve_result(query, history, session_id, None)
+
+    turn_no = _AGENT_TURNS.get(conversation_id, 0) + 1
+    _AGENT_TURNS[conversation_id] = turn_no
+    result = dict(result)
+    result["sessionid"] = session_id
+    result["conversationId"] = conversation_id
+    result["turn"] = turn_no
+    result["first_round"] = first_round
+    result["received"] = {
+        "conversationId": conversation_id,
+        "message": {
+            key: message.get(key)
+            for key in ("content", "type", "agent", "model", "sessionid")
+        },
+        "metadata": metadata,
+        "basic_auth_user": _basic_user(request),
+    }
+    await asyncio.sleep(0.05)
+    return JSONResponse({"code": 0, "message": "success", "data": result})
