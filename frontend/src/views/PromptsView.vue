@@ -9,6 +9,7 @@ import StatusPill from '../components/StatusPill.vue'
 import PromptAssetCenter from './components/PromptAssetCenter.vue'
 import type {
   ModelConfig,
+  ModelRole,
   PromptListItem,
   PromptTemplate,
   PromptUsage,
@@ -58,8 +59,18 @@ const metaForm = reactive({ name: '', description: '', is_active: true })
 const sandboxOpen = ref(false)
 const runningSandbox = ref(false)
 const sandboxResult = ref<SandboxResponse | null>(null)
+
+type SandboxMode = 'SIMULATOR' | 'JUDGE' | 'CASE_AUTHOR'
+
+// 沙盒试跑模式与模型角色一一对应，切换模式时只展示同角色模型。
+const SANDBOX_MODE_ROLE: Record<SandboxMode, ModelRole> = {
+  SIMULATOR: 'SIMULATOR',
+  JUDGE: 'JUDGE',
+  CASE_AUTHOR: 'CASE_AUTHOR',
+}
+
 const sandboxForm = reactive({
-  mode: 'SIMULATOR' as 'SIMULATOR' | 'JUDGE',
+  mode: 'SIMULATOR' as SandboxMode,
   execution_id: null as number | null,
   model_id: null as number | null,
   variablesText: '',
@@ -80,9 +91,7 @@ const filteredTemplates = computed(() => {
 const sandboxModels = computed(() =>
   models.value
     .filter(
-      (item) =>
-        item.is_active &&
-        item.role === (sandboxForm.mode === 'SIMULATOR' ? 'SIMULATOR' : 'JUDGE'),
+      (item) => item.is_active && item.role === SANDBOX_MODE_ROLE[sandboxForm.mode],
     )
     .slice()
     .sort((a, b) => a.id - b.id),
@@ -98,7 +107,7 @@ watch(
   () => pickSandboxModel(),
 )
 
-function defaultVariables(mode: 'SIMULATOR' | 'JUDGE'): string {
+function defaultVariables(mode: SandboxMode): string {
   if (mode === 'SIMULATOR') {
     return JSON.stringify(
       {
@@ -108,6 +117,19 @@ function defaultVariables(mode: 'SIMULATOR' | 'JUDGE'): string {
         current_turn: 1,
         max_turns: 5,
         chat_history: '（暂无对话）',
+      },
+      null,
+      2,
+    )
+  }
+  if (mode === 'CASE_AUTHOR') {
+    return JSON.stringify(
+      {
+        user_request: '帮我生成一条本月账单金额核对的测试用例',
+        mode: 'CREATE',
+        count: '1',
+        calibers: '（暂无业务口径资产）',
+        similar_cases: '（暂无相似历史用例）',
       },
       null,
       2,
@@ -326,13 +348,19 @@ async function removeTemplate(): Promise<void> {
   }
 }
 
+function sandboxModeOfTemplate(type?: string | null): SandboxMode {
+  if (type === 'USER_SIMULATOR') return 'SIMULATOR'
+  if (type === 'CASE_AUTHOR') return 'CASE_AUTHOR'
+  return 'JUDGE'
+}
+
 function openSandbox(version?: number): void {
   if (!detail.value) return
   const target =
     detail.value.versions.find((item) => item.version === version) ??
     detail.value.versions.find((item) => item.version === detail.value?.current_version) ??
     detail.value.versions[0]
-  sandboxForm.mode = detail.value.template_type === 'USER_SIMULATOR' ? 'SIMULATOR' : 'JUDGE'
+  sandboxForm.mode = sandboxModeOfTemplate(detail.value.template_type)
   sandboxForm.execution_id = null
   pickSandboxModel()
   sandboxForm.contentOverride = target?.content ?? ''
@@ -382,7 +410,7 @@ onMounted(() => {
     <PageHeader
       eyebrow="Assets · 提示词"
       title="Prompt 资产"
-      description="用户模拟器与 LLM 裁判模板的版本管理、引用影响分析与沙盒试跑。"
+      description="用户模拟器、LLM 裁判与 AI 用例编写模板的版本管理、引用影响分析与沙盒试跑。"
     >
       <template #actions>
         <button class="btn-primary" @click="openCreate">
@@ -592,7 +620,7 @@ onMounted(() => {
     <BaseModal
       v-model="sandboxOpen"
       :title="detail ? `沙盒试用 · ${detail.code}` : '沙盒试用'"
-      subtitle="先渲染模板变量，再调用模拟器/裁判模型，验证输出结构与兜底"
+      subtitle="先渲染模板变量，再调用模拟器/裁判/用例编写模型，验证输出结构与兜底"
       width="xl"
     >
       <div class="grid gap-4 lg:grid-cols-2">
@@ -604,6 +632,7 @@ onMounted(() => {
                 <button><selectedcontent></selectedcontent></button>
                 <option value="SIMULATOR">用户模拟器</option>
                 <option value="JUDGE">LLM 裁判</option>
+                <option value="CASE_AUTHOR">AI 用例编写</option>
               </select>
             </div>
             <div>
@@ -618,7 +647,7 @@ onMounted(() => {
             </div>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
-            <div>
+            <div v-if="sandboxForm.mode !== 'CASE_AUTHOR'">
               <label class="label">历史执行 ID（可选）</label>
               <input v-model.number="sandboxForm.execution_id" class="input" type="number" min="1" placeholder="从历史执行继承变量" />
             </div>
@@ -630,7 +659,13 @@ onMounted(() => {
           <div>
             <label class="label">变量 JSON</label>
             <textarea v-model="sandboxForm.variablesText" class="input font-mono text-xs" rows="9" />
-            <p class="hint">留空则使用平台默认变量；填写历史执行 ID 时，会先按该次执行快照构建变量。</p>
+            <p class="hint">
+              {{
+                sandboxForm.mode === 'CASE_AUTHOR'
+                  ? '留空则使用平台默认变量：用户需求、编写模式、业务口径与相似历史用例。'
+                  : '留空则使用平台默认变量；填写历史执行 ID 时，会先按该次执行快照构建变量。'
+              }}
+            </p>
           </div>
           <div>
             <label class="label">模板内容（可临时覆盖）</label>

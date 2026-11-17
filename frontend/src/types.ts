@@ -348,7 +348,7 @@ export interface PromptUsage {
 }
 
 export interface SandboxRequest {
-  mode: 'SIMULATOR' | 'JUDGE'
+  mode: 'SIMULATOR' | 'JUDGE' | 'CASE_AUTHOR'
   execution_id?: number | null
   variables?: Record<string, unknown> | null
   model_id?: number | null

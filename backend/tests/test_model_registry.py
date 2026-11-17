@@ -11,11 +11,12 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.models import _ensure_single_active
-from billing_qa.api.v1.prompts import _pick_model
+from billing_qa.api.v1.prompts import _build_sandbox_variables, _pick_model
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.db.session import SessionLocal
 from billing_qa.models.enums import ModelRole
 from billing_qa.models.model_config import ModelConfig
+from billing_qa.schemas.prompt import SandboxRequest
 from billing_qa.services.author.service import select_author_model
 from billing_qa.services.llm.registry import (
     get_model,
@@ -172,6 +173,19 @@ async def test_sandbox_rejects_cross_role_model() -> None:
             await _pick_model(db, simulator.id, "JUDGE")
         picked = await _pick_model(db, simulator.id, "SIMULATOR")
         assert picked.id == simulator.id
+        picked_author = await _pick_model(db, author.id, "CASE_AUTHOR")
+        assert picked_author.id == author.id
+
+
+async def test_sandbox_case_author_default_variables() -> None:
+    variables = await _build_sandbox_variables(
+        None,  # type: ignore[arg-type]  # 编写模式不访问执行快照，无需 DB
+        SandboxRequest(mode="CASE_AUTHOR"),
+    )
+    assert variables["mode"] == "CREATE"
+    assert variables["user_request"]
+    for key in ("count", "calibers", "similar_cases"):
+        assert variables[key]
 
 
 async def test_author_model_requires_unique_active_case_author() -> None:

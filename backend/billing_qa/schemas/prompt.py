@@ -89,7 +89,7 @@ class PromptUsage(BaseModel):
 
 
 class SandboxRequest(BaseModel):
-    mode: Literal["SIMULATOR", "JUDGE"]
+    mode: Literal["SIMULATOR", "JUDGE", "CASE_AUTHOR"]
     execution_id: int | None = Field(default=None, description="历史执行快照 id")
     variables: dict[str, Any] | None = Field(default=None, description="额外/覆盖变量")
     model_id: int | None = Field(default=None, description="指定模型；缺省用角色默认模型")

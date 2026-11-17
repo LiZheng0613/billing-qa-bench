@@ -36,6 +36,19 @@ from billing_qa.services.llm.client import LLMClient, ModelContext
 from billing_qa.services.llm.json_parser import parse_json_object
 from billing_qa.services.llm.registry import resolve_context
 
+# 沙盒试跑模式 → 模板类型 / 模型角色：三种 Prompt 资产各自只允许对应角色试跑，
+# 避免把模拟器模板当裁判（或编写助手）模板跑出误导性结果。
+_SANDBOX_TEMPLATE_TYPES: dict[str, TemplateType] = {
+    "SIMULATOR": TemplateType.USER_SIMULATOR,
+    "JUDGE": TemplateType.LLM_JUDGE,
+    "CASE_AUTHOR": TemplateType.CASE_AUTHOR,
+}
+_SANDBOX_MODEL_ROLES: dict[str, ModelRole] = {
+    "SIMULATOR": ModelRole.SIMULATOR,
+    "JUDGE": ModelRole.JUDGE,
+    "CASE_AUTHOR": ModelRole.CASE_AUTHOR,
+}
+
 router = APIRouter(
     prefix="/prompts", tags=["Prompt 资产"], dependencies=[Depends(get_current_operator)]
 )
@@ -296,11 +309,7 @@ async def sandbox_run(
     db: AsyncSession = Depends(get_db),
 ) -> SandboxResponse:
     template = await _get_template(db, template_id)
-    expected_type = (
-        TemplateType.USER_SIMULATOR
-        if payload.mode == "SIMULATOR"
-        else TemplateType.LLM_JUDGE
-    )
+    expected_type = _SANDBOX_TEMPLATE_TYPES[payload.mode]
     if template.template_type != expected_type:
         raise ValidationError(
             f"模板类型 {template.template_type} 与试跑模式 {payload.mode} 不匹配"
@@ -345,15 +354,29 @@ async def sandbox_run(
 
 async def _pick_model(db: AsyncSession, model_id: int | None, mode: str) -> ModelContext:
     """统一走模型注册表：显式 id 优先，缺省取该模式的角色默认模型。"""
-    role = ModelRole.SIMULATOR if mode == "SIMULATOR" else ModelRole.JUDGE
+    role = _SANDBOX_MODEL_ROLES[mode]
     return await resolve_context(db, model_id=model_id, roles=(role,))
+
+
+def _author_sandbox_variables() -> dict[str, Any]:
+    """AI 用例编写模板的默认变量：与作者服务渲染 Prompt 时的变量口径一致。"""
+    return {
+        "user_request": "帮我生成一条本月账单金额核对的测试用例",
+        "mode": "CREATE",
+        "count": "1",
+        "calibers": "（暂无业务口径资产）",
+        "similar_cases": "（暂无相似历史用例）",
+    }
 
 
 async def _build_sandbox_variables(
     db: AsyncSession, payload: SandboxRequest
 ) -> dict[str, Any]:
     variables: dict[str, Any]
-    if payload.execution_id:
+    if payload.mode == "CASE_AUTHOR":
+        # 用例编写模板不依赖执行快照，历史执行 ID 在该模式下忽略。
+        variables = _author_sandbox_variables()
+    elif payload.execution_id:
         record = await db.get(ExecutionRecord, payload.execution_id)
         if record is None:
             raise NotFoundError("历史执行快照不存在")
