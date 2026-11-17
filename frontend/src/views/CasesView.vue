@@ -335,8 +335,14 @@ async function confirmImport(): Promise<void> {
 
 async function exportCases(): Promise<void> {
   try {
-    await api.cases.export('json')
-    toast.success('已导出 JSON 文件')
+    await api.cases.export('json', {
+      case_type: caseType.value || undefined,
+      status: status.value || undefined,
+      grading_mode: gradingMode.value || undefined,
+      review_status: reviewStatus.value || undefined,
+      keyword: keyword.value.trim() || undefined,
+    })
+    toast.success('已导出当前筛选结果')
   } catch (exc) {
     toast.error(errorMessage(exc))
   }

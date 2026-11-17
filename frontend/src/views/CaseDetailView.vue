@@ -495,7 +495,7 @@ async function exportCase(): Promise<void> {
   const current = item.value
   if (!current) return
   try {
-    await api.cases.export('json', [current.id])
+    await api.cases.export('json', { ids: [current.id] })
     toast.success(`已导出用例 ${current.code}`)
   } catch (exc) {
     toast.error(errorMessage(exc))

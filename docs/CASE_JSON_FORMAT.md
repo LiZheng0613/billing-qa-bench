@@ -339,8 +339,10 @@ dry-run 返回结构与真实导入完全一致，因此前端可以「先预览
 5. 点击「确认导入（N 新增 / M 更新）」才真正写库；
 6. 成功后自动刷新列表。
 
-「导出 JSON」直接下载当前筛选结果（含全部字段），文件名形如
-`test_cases_20261116_2130.json`。
+「导出 JSON」导出**当前筛选结果**（未设置筛选时导出全部未删除用例，含全部字段），
+文件名形如 `test_cases_20261116_2130.json`。支持的筛选参数与列表接口一致：
+`case_type` / `status` / `tag` / `environment_id` / `grading_mode` / `review_status` / `keyword`，
+也可用 `ids` 指定具体用例。
 
 ---
 
@@ -353,8 +355,10 @@ dry-run 返回结构与真实导入完全一致，因此前端可以「先预览
 | 单个 JSON 对象 | 可导入 |
 | Excel `.xlsx` | 仅后端兼容：`GET /cases/export?format=xlsx` 与 `.xlsx` 上传仍可用；前端不再提供入口 |
 
-Excel 兼容路径只覆盖扁平字段，**不保留** `answer_envelope` / `response_contract` /
-`judge_model_codes` 等嵌套或引用字段，因此不要用 Excel 搬运契约用例。
+Excel 兼容路径的列集合已与 JSON 字段对齐：包含 `description`、`status`、`request_variables`、
+`prompt_overrides`、`judge_model_codes` 等最终字段；嵌套对象按 JSON 文本读写，
+`environment_code` / 模板编码 / 裁判模型编码同样会在导入时解析为数据库引用。
+会话方式 `session_mode` 由执行环境统一决定，JSON 与 Excel 均不再收该字段。
 
 ---
 

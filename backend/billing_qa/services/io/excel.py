@@ -15,10 +15,13 @@ from billing_qa.core.exceptions import ValidationError
 EXCEL_COLUMNS: list[tuple[str, str]] = [
     ("code", "用例编号"),
     ("name", "用例名称"),
+    ("description", "用例描述"),
     ("case_type", "用例类型(SINGLE/STATIC_MULTI/DYNAMIC_MULTI)"),
+    ("status", "用例状态(ACTIVE/DISABLED/DRAFT)"),
     ("priority", "优先级"),
     ("tags", "业务域标签(逗号分隔)"),
     ("environment_code", "环境编码"),
+    ("request_variables", "请求变量(JSON)"),
     ("query", "固定输入"),
     ("expected_answer", "预期口径/数值"),
     ("expected_rules", "规则校验配置(JSON)"),
@@ -30,12 +33,15 @@ EXCEL_COLUMNS: list[tuple[str, str]] = [
     ("persona_description", "用户画像"),
     ("hidden_context", "隐藏信息(JSON)"),
     ("max_turns", "最大轮次"),
+    ("terminate_conditions", "终止条件(JSON)"),
     ("simulator_template_code", "模拟器模板编码"),
-    ("judge_template_code", "裁判模板编码"),
     ("simulator_template_strategy", "模拟器策略(LATEST/PINNED)"),
     ("simulator_template_version", "模拟器版本"),
+    ("judge_template_code", "裁判模板编码"),
     ("judge_template_strategy", "裁判策略(LATEST/PINNED)"),
     ("judge_template_version", "裁判版本"),
+    ("prompt_overrides", "Prompt 覆写(JSON)"),
+    ("judge_model_codes", "裁判模型编码(逗号分隔)"),
     ("judge_strategy", "裁决策略(AVG/VETO)"),
     ("pass_threshold", "通过分数线"),
     ("grading_mode", "判分方式(LEGACY/ANSWER_CONTRACT)"),
@@ -50,19 +56,21 @@ EXCEL_COLUMNS: list[tuple[str, str]] = [
     ("review_status", "审核状态"),
     ("dataset_version", "数据集版本"),
     ("dedupe_hash", "去重指纹"),
-    ("terminate_conditions", "终止条件(JSON)"),
 ]
 
 JSON_FIELDS = {
+    "request_variables",
     "expected_rules",
     "turns",
     "session_expected",
     "hidden_context",
     "terminate_conditions",
+    "prompt_overrides",
     "answer_envelope",
     "response_contract",
     "plan_spec",
 }
+LIST_FIELDS = {"tags", "judge_model_codes"}
 BOOL_FIELDS = {"fail_fast"}
 INT_FIELDS = {"max_turns"}
 FLOAT_FIELDS = {"pass_threshold", "simulator_template_version", "judge_template_version"}
@@ -86,10 +94,18 @@ def _parse_cell(key: str, value: Any) -> Any:
         return int(float(value))
     if key in FLOAT_FIELDS:
         return float(value)
-    if key == "tags":
+    if key in LIST_FIELDS:
         if isinstance(value, list):
             return value
-        return [item.strip() for item in str(value).replace("，", ",").split(",") if item.strip()]
+        text = str(value).strip()
+        if text.startswith("["):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        return [item.strip() for item in text.replace("，", ",").split(",") if item.strip()]
     return str(value).strip()
 
 

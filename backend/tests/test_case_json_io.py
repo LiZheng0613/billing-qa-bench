@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncIterator
+from io import BytesIO
 from typing import Any
 
 import httpx
 import pytest
+from openpyxl import load_workbook
 from sqlalchemy import text
 
 from billing_qa.core.exceptions import ValidationError
@@ -226,6 +228,109 @@ async def test_legacy_array_and_unknown_fields(client: httpx.AsyncClient) -> Non
         assert case["tags"] == ["账单", "回归"]
     finally:
         await client.delete(f"/cases/{case['id']}")
+
+
+async def test_export_filters_match_case_list(client: httpx.AsyncClient) -> None:
+    marker = f"EXPORT-FILTER-{uuid.uuid4().hex[:8]}"
+    active_code = f"{marker}-A"
+    disabled_code = f"{marker}-D"
+    active = await client.post(
+        "/cases",
+        json=_payload(active_code, name=f"{marker} 启用用例"),
+    )
+    assert active.status_code == 200, active.text
+    disabled = await client.post(
+        "/cases",
+        json=_payload(disabled_code, name=f"{marker} 停用用例", status="DISABLED"),
+    )
+    assert disabled.status_code == 200, disabled.text
+    active_id = active.json()["id"]
+    disabled_id = disabled.json()["id"]
+    try:
+        filtered = await client.get(
+            "/cases/export",
+            params={"format": "json", "keyword": marker, "status": "ACTIVE"},
+        )
+        assert filtered.status_code == 200, filtered.text
+        payload = filtered.json()
+        assert {item["code"] for item in payload["items"]} == {active_code}
+        assert payload["filters"]["keyword"] == marker
+        assert payload["filters"]["status"] == "ACTIVE"
+
+        unfiltered = await client.get(
+            "/cases/export", params={"format": "json", "keyword": marker}
+        )
+        assert {item["code"] for item in unfiltered.json()["items"]} == {
+            active_code,
+            disabled_code,
+        }
+
+        xlsx = await client.get(
+            "/cases/export", params={"format": "xlsx", "ids": active_id}
+        )
+        assert xlsx.status_code == 200, xlsx.text
+        sheet = load_workbook(BytesIO(xlsx.content)).active
+        headers = [cell.value for cell in sheet[1]]
+        assert "用例状态(ACTIVE/DISABLED/DRAFT)" in headers
+        assert sheet.cell(row=2, column=headers.index("用例编号") + 1).value == active_code
+        assert (
+            sheet.cell(
+                row=2, column=headers.index("用例状态(ACTIVE/DISABLED/DRAFT)") + 1
+            ).value
+            == "ACTIVE"
+        )
+    finally:
+        await client.delete(f"/cases/{active_id}")
+        await client.delete(f"/cases/{disabled_id}")
+
+
+async def test_excel_roundtrip_keeps_final_fields(client: httpx.AsyncClient) -> None:
+    code = f"EXCEL-ROUND-{uuid.uuid4().hex[:8]}"
+    created = await client.post(
+        "/cases",
+        json=_payload(
+            code,
+            status="DRAFT",
+            request_variables={"userid": "13800138000", "segment": 7},
+            prompt_overrides={"judge": "只关注金额", "simulator": "保持简洁"},
+        ),
+    )
+    assert created.status_code == 200, created.text
+    case_id = created.json()["id"]
+    try:
+        exported = await client.get(
+            "/cases/export", params={"format": "xlsx", "ids": case_id}
+        )
+        assert exported.status_code == 200, exported.text
+        imported = await client.post(
+            "/cases/import",
+            files={
+                "file": (
+                    "cases.xlsx",
+                    exported.content,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+        assert imported.status_code == 200, imported.text
+        result = imported.json()
+        assert result["failed"] == 0, result
+        assert result["updated"] == 1
+
+        detail = (await client.get(f"/cases/{case_id}")).json()
+        assert detail["status"] == "DRAFT"
+        assert detail["description"] == "覆盖嵌套字段与契约配置"
+        assert detail["request_variables"] == {
+            "userid": "13800138000",
+            "segment": 7,
+        }
+        assert detail["prompt_overrides"] == {
+            "judge": "只关注金额",
+            "simulator": "保持简洁",
+        }
+        assert detail["answer_envelope"]["must"][0]["id"] == "amount"
+    finally:
+        await client.delete(f"/cases/{case_id}")
 
 
 async def test_parse_case_file_rejects_unsupported_schema() -> None:

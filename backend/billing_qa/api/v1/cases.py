@@ -211,11 +211,8 @@ async def _enrich_cases(db: AsyncSession, cases: list[TestCase]) -> list[CaseOut
     ]
 
 
-# ---------------------------------------------------------------------- #
-# CRUD
-# ---------------------------------------------------------------------- #
-@router.get("", response_model=Page[CaseOut], summary="用例列表")
-async def list_cases(
+def _case_conditions(
+    *,
     case_type: CaseType | None = None,
     status: str | None = None,
     tag: str | None = None,
@@ -223,11 +220,9 @@ async def list_cases(
     grading_mode: GradingMode | None = None,
     review_status: str | None = None,
     keyword: str | None = None,
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=200),
-    db: AsyncSession = Depends(get_db),
-) -> Page[CaseOut]:
-    conditions = [TestCase.deleted_at.is_(None)]
+) -> list[Any]:
+    """列表与导出共用的筛选条件，避免两处口径漂移。"""
+    conditions: list[Any] = [TestCase.deleted_at.is_(None)]
     if case_type:
         conditions.append(TestCase.case_type == case_type)
     if status:
@@ -249,6 +244,34 @@ async def list_cases(
         # tags 为 JSON 数组：PostgreSQL 下用 JSONB 包含判断，
         # 避免依赖 json::text 的转义形式（中文在库里存为 \uXXXX，文本 LIKE 匹配不到）
         conditions.append(cast(TestCase.tags, JSONB).contains([tag]))
+    return conditions
+
+
+# ---------------------------------------------------------------------- #
+# CRUD
+# ---------------------------------------------------------------------- #
+@router.get("", response_model=Page[CaseOut], summary="用例列表")
+async def list_cases(
+    case_type: CaseType | None = None,
+    status: str | None = None,
+    tag: str | None = None,
+    environment_id: int | None = None,
+    grading_mode: GradingMode | None = None,
+    review_status: str | None = None,
+    keyword: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+) -> Page[CaseOut]:
+    conditions = _case_conditions(
+        case_type=case_type,
+        status=status,
+        tag=tag,
+        environment_id=environment_id,
+        grading_mode=grading_mode,
+        review_status=review_status,
+        keyword=keyword,
+    )
     total = (
         await db.execute(select(func.count()).select_from(TestCase).where(*conditions))
     ).scalar_one()
@@ -297,12 +320,13 @@ async def create_case(
     return enriched[0]
 
 
-def _build_legacy_rows(
+def _build_excel_rows(
     cases: list[TestCase],
     env_map: dict[int, str],
     template_map: dict[int, str],
+    model_map: dict[int, str],
 ) -> list[dict[str, Any]]:
-    """Excel 兼容行：只保留扁平列，字段集合与旧版导出保持一致。"""
+    """Excel 行：覆盖与 JSON 导出相同的业务字段，引用统一写编码。"""
     rows: list[dict[str, Any]] = []
     for case in cases:
         item: dict[str, Any] = {
@@ -314,6 +338,11 @@ def _build_legacy_rows(
         item["simulator_template_code"] = template_map.get(case.simulator_template_id or 0)
         item["judge_template_code"] = template_map.get(case.judge_template_id or 0)
         item["tags"] = ",".join(case.tags or [])
+        item["judge_model_codes"] = [
+            model_map[int(model_id)]
+            for model_id in (case.judge_model_ids or [])
+            if int(model_id) in model_map
+        ]
         rows.append(item)
     return rows
 
@@ -322,14 +351,26 @@ def _build_legacy_rows(
 async def export_cases(
     format: str = Query(default="json", pattern="^(json|xlsx)$"),
     case_type: CaseType | None = None,
+    status: str | None = None,
+    tag: str | None = None,
+    environment_id: int | None = None,
+    grading_mode: GradingMode | None = None,
+    review_status: str | None = None,
+    keyword: str | None = None,
     ids: str | None = Query(default=None, description="逗号分隔的用例 id"),
     db: AsyncSession = Depends(get_db),
     operator: str = Depends(get_current_operator),
 ) -> Response:
-    conditions = [TestCase.deleted_at.is_(None)]
+    conditions = _case_conditions(
+        case_type=case_type,
+        status=status,
+        tag=tag,
+        environment_id=environment_id,
+        grading_mode=grading_mode,
+        review_status=review_status,
+        keyword=keyword,
+    )
     id_list: list[int] = []
-    if case_type:
-        conditions.append(TestCase.case_type == case_type)
     if ids:
         id_list = [int(item) for item in ids.split(",") if item.strip().isdigit()]
         if id_list:
@@ -346,20 +387,21 @@ async def export_cases(
         row[0]: row[1]
         for row in (await db.execute(select(PromptTemplate.id, PromptTemplate.code))).all()
     }
+    model_map: dict[int, str] = {
+        row[0]: row[1]
+        for row in (await db.execute(select(ModelConfig.id, ModelConfig.code))).all()
+    }
 
     if format == "xlsx":
-        # 兼容保留：不作为主推格式，字段覆盖以 JSON 为准。
-        content = export_cases_xlsx(_build_legacy_rows(cases, env_map, template_map))
+        content = export_cases_xlsx(
+            _build_excel_rows(cases, env_map, template_map, model_map)
+        )
         return Response(
             content=content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": 'attachment; filename="test_cases.xlsx"'},
         )
 
-    model_map: dict[int, str] = {
-        row[0]: row[1]
-        for row in (await db.execute(select(ModelConfig.id, ModelConfig.code))).all()
-    }
     now = datetime.now()
     payload = build_export_payload(
         cases,
@@ -368,7 +410,16 @@ async def export_cases(
         model_map=model_map,
         exported_by=operator,
         exported_at=now.isoformat(timespec="seconds"),
-        filters={"case_type": case_type.value if case_type else None, "ids": id_list or None},
+        filters={
+            "case_type": case_type.value if case_type else None,
+            "status": status,
+            "tag": tag,
+            "environment_id": environment_id,
+            "grading_mode": grading_mode.value if grading_mode else None,
+            "review_status": review_status,
+            "keyword": keyword,
+            "ids": id_list or None,
+        },
     )
     body = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
     filename = f"test_cases_{now.strftime('%Y%m%d_%H%M')}.json"
@@ -394,7 +445,9 @@ async def import_cases(
     warnings: list[str] = []
     if filename.endswith((".xlsx", ".xlsm")):
         records = parse_excel(raw)
-        warnings.append("已按 Excel 兼容模式导入；推荐使用 JSON 格式以保留模型绑定等字段")
+        warnings.append(
+            "已按 Excel 兼容模式导入；推荐使用 JSON 格式以获得版本化信封与逐条告警"
+        )
     elif filename.endswith(".json"):
         parsed = parse_case_file(raw)
         records = parsed.records

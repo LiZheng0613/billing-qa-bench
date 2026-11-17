@@ -89,6 +89,17 @@ export interface CaseImportResult {
   case_ids: number[]
 }
 
+export interface CaseExportQuery {
+  ids?: number[]
+  case_type?: string
+  status?: string
+  tag?: string
+  environment_id?: number
+  grading_mode?: string
+  review_status?: string
+  keyword?: string
+}
+
 export const api = {
   // ---------------------------------------------------------------- 认证
   login: (username: string, password: string) =>
@@ -208,10 +219,17 @@ export const api = {
       http.post<TestCase>(`/cases/${id}/review`, payload),
     freeze: (id: number, payload: CaseFreezePayload) =>
       http.post<TestCase>(`/cases/${id}/freeze`, payload),
-    export: (format: 'json' | 'xlsx', ids?: number[]) =>
+    export: (format: 'json' | 'xlsx', query: CaseExportQuery = {}) =>
       downloadFile('/cases/export', `test_cases.${format}`, {
         format,
-        ids: ids?.length ? ids.join(',') : undefined,
+        ids: query.ids?.length ? query.ids.join(',') : undefined,
+        case_type: query.case_type,
+        status: query.status,
+        tag: query.tag,
+        environment_id: query.environment_id,
+        grading_mode: query.grading_mode,
+        review_status: query.review_status,
+        keyword: query.keyword,
       }),
     importFile: (file: File, options: { dryRun?: boolean; onConflict?: CaseImportConflict } = {}) => {
       const formData = new FormData()

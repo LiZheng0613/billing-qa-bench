@@ -504,7 +504,7 @@ npm run test:e2e    # 「AI 帮我填」主链路回归
 | 任务一直排队 | 检查任务并发/QPS 配置与 Mock 服务是否可达；查看后端日志与 `/tasks/{id}` 状态 |
 | 前端 401 自动退出 | JWT 过期（默认 12 小时），重新登录即可 |
 | 用例保存后版本未变 | 仅字段实际变更才会生成新版本；如需强制留痕可在变更说明中记录 |
-| 导入失败 | 仅支持 `.json`；先用页面「导入 JSON」走 dry-run 预览，逐条错误会列在弹窗中（格式见 [`docs/CASE_JSON_FORMAT.md`](docs/CASE_JSON_FORMAT.md)） |
+| 导入失败 | 页面入口仅支持 `.json`；先用页面「导入 JSON」走 dry-run 预览，逐条错误会列在弹窗中（格式见 [`docs/CASE_JSON_FORMAT.md`](docs/CASE_JSON_FORMAT.md)） |
 | 演示库出现 `PYTEST-*` / `BATCH20*` 用例或任务 | 运行测试脚本留下的临时数据；执行 `python -m billing_qa.db.init_db --demo --reset` 与 `python scripts/seed_demo_history.py` 恢复演示基线 |
 
 ---
