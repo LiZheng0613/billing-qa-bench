@@ -42,6 +42,11 @@ class Environment(Base, TimestampMixin):
     is_stream: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否 SSE 流式")
     extractors: Mapped[dict | None] = mapped_column(JSON, comment="JSONPath 白盒提取映射")
     pre_hook: Mapped[dict | None] = mapped_column(JSON, comment="前置鉴权钩子配置")
+    session_mode: Mapped[str] = mapped_column(
+        String(24),
+        default="SERVER_RETURNED",
+        comment="会话绑定方式：SERVER_RETURNED / CLIENT_GENERATED",
+    )
     timeout_seconds: Mapped[float] = mapped_column(Float, default=60.0, comment="接口超时")
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, comment="校验 TLS")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用")

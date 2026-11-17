@@ -5,6 +5,7 @@ import type {
   AnswerEnvelope,
   CaseAIDraft,
   CasePayload,
+  CaseSessionMode,
   CaseType,
   DraftFact,
   DraftMissing,
@@ -204,6 +205,10 @@ const form = reactive({
   partialFactsText: '',
   planCapabilitiesText: '',
   maxToolCalls: null as number | null,
+  requestVariables: [] as Array<{ key: string; value: string }>,
+  requestVariablesJson: '',
+  requestVariablesMode: 'rows' as 'rows' | 'json',
+  sessionMode: 'INHERIT' as CaseSessionMode,
   change_summary: '',
 })
 
@@ -553,6 +558,122 @@ function removeFact(section: 'must' | 'may', index: number): void {
   if (section === 'must' && !rows.length) rows.push(emptyFactRow())
 }
 
+// ---- 请求变量与会话绑定 ----
+const RESERVED_REQUEST_VARIABLES = ['query', 'history', 'history_text', 'turn']
+const RUNTIME_PLACEHOLDERS = ['query', 'session_id', 'history', 'history_text', 'turn']
+const SESSION_FIELD_EXAMPLE = '"conversationId": "{{session_id}}"'
+
+const CASE_SESSION_OPTIONS: Array<{
+  value: CaseSessionMode
+  label: string
+  desc: string
+}> = [
+  { value: 'INHERIT', label: '跟随环境', desc: '使用执行环境配置的会话模式' },
+  {
+    value: 'SERVER_RETURNED',
+    label: '服务端返回',
+    desc: '首轮不带会话值，由目标接口返回后回填，后续轮次沿用',
+  },
+  {
+    value: 'CLIENT_GENERATED',
+    label: '客户端生成',
+    desc: '执行开始时平台生成唯一会话值，全程各轮携带同一值',
+  },
+]
+
+const selectedEnvironment = computed(
+  () => props.environments.find((env) => env.id === form.environment_id) ?? null,
+)
+
+const envPlaceholders = computed(() => {
+  const names: string[] = []
+  const pattern = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g
+  const scan = (value: unknown) => {
+    pattern.lastIndex = 0
+    let match: RegExpExecArray | null
+    const text = JSON.stringify(value ?? {})
+    while ((match = pattern.exec(text))) {
+      if (!names.includes(match[1])) names.push(match[1])
+    }
+  }
+  scan(selectedEnvironment.value?.headers_template)
+  scan(selectedEnvironment.value?.body_template)
+  return names
+})
+
+const requestVariableKeys = computed(() => {
+  if (form.requestVariablesMode === 'json') {
+    try {
+      const parsed = JSON.parse(form.requestVariablesJson || '{}')
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? Object.keys(parsed as Record<string, unknown>)
+        : []
+    } catch {
+      return []
+    }
+  }
+  return form.requestVariables.map((row) => row.key.trim()).filter(Boolean)
+})
+
+const missingEnvPlaceholders = computed(() =>
+  envPlaceholders.value.filter(
+    (name) => !RUNTIME_PLACEHOLDERS.includes(name) && !requestVariableKeys.value.includes(name),
+  ),
+)
+
+function parseRequestVariableValue(raw: string): unknown {
+  const text = raw.trim()
+  if (!text) return ''
+  try {
+    return JSON.parse(text)
+  } catch {
+    return raw
+  }
+}
+
+function addRequestVariable(): void {
+  form.requestVariables.push({ key: '', value: '' })
+}
+
+function removeRequestVariable(index: number): void {
+  form.requestVariables.splice(index, 1)
+}
+
+function switchRequestVariablesMode(mode: 'rows' | 'json'): void {
+  if (mode === form.requestVariablesMode) return
+  if (mode === 'json') {
+    const data: Record<string, unknown> = {}
+    for (const row of form.requestVariables) {
+      const key = row.key.trim()
+      if (key) data[key] = parseRequestVariableValue(row.value)
+    }
+    form.requestVariablesJson = Object.keys(data).length ? JSON.stringify(data, null, 2) : ''
+    form.requestVariablesMode = 'json'
+    return
+  }
+  const text = form.requestVariablesJson.trim()
+  let data: Record<string, unknown> = {}
+  if (text) {
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        data = parsed as Record<string, unknown>
+      } else {
+        toast.error('请求变量 JSON 需为对象（key-value 映射）')
+        return
+      }
+    } catch {
+      toast.error('请求变量 JSON 格式不正确，修正后再切换回行编辑')
+      return
+    }
+  }
+  form.requestVariables = Object.entries(data).map(([key, value]) => ({
+    key,
+    value: typeof value === 'string' ? value : JSON.stringify(value),
+  }))
+  form.requestVariablesMode = 'rows'
+}
+
 function resetForm(): void {
   const source = props.caseData
   form.code = source?.code ?? ''
@@ -605,6 +726,15 @@ function resetForm(): void {
   form.riskLevel = (source?.risk_level as 'LOW' | 'HIGH') ?? 'LOW'
   form.owner = source?.owner ?? ''
   form.snapshotId = source?.snapshot_id ?? ''
+  form.requestVariables = Object.entries(source?.request_variables ?? {}).map(([key, value]) => ({
+    key,
+    value: typeof value === 'string' ? value : JSON.stringify(value),
+  }))
+  form.requestVariablesJson = form.requestVariables.length
+    ? JSON.stringify(source?.request_variables ?? {}, null, 2)
+    : ''
+  form.requestVariablesMode = 'rows'
+  form.sessionMode = (source?.session_mode as CaseSessionMode) ?? 'INHERIT'
   resetContractForm(source)
   form.change_summary = ''
   void loadVersions('simulator')
@@ -776,6 +906,59 @@ function parseTurnRules(text: string): RuleConfig | null {
   }
 }
 
+function buildRequestVariables(): Record<string, unknown> | null {
+  if (form.requestVariablesMode === 'json') {
+    const text = form.requestVariablesJson.trim()
+    if (!text) return {}
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch (exc) {
+      toast.error(`请求变量 JSON 格式不正确：${(exc as Error).message}`)
+      return null
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      toast.error('请求变量 JSON 需为对象（key-value 映射）')
+      return null
+    }
+    const invalid = Object.keys(parsed as Record<string, unknown>).find(
+      (key) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key),
+    )
+    if (invalid) {
+      toast.error(`请求变量名「${invalid}」不合法（字母/数字/下划线，且不以数字开头）`)
+      return null
+    }
+    const reserved = Object.keys(parsed as Record<string, unknown>).find((key) =>
+      RESERVED_REQUEST_VARIABLES.includes(key),
+    )
+    if (reserved) {
+      toast.error(`请求变量「${reserved}」由运行时自动注入，请勿自定义`)
+      return null
+    }
+    return parsed as Record<string, unknown>
+  }
+
+  const result: Record<string, unknown> = {}
+  for (const row of form.requestVariables) {
+    const key = row.key.trim()
+    if (!key) continue
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      toast.error(`请求变量名「${key}」不合法（字母/数字/下划线，且不以数字开头）`)
+      return null
+    }
+    if (RESERVED_REQUEST_VARIABLES.includes(key)) {
+      toast.error(`请求变量「${key}」由运行时自动注入，请勿自定义`)
+      return null
+    }
+    if (key in result) {
+      toast.error(`请求变量「${key}」重复`)
+      return null
+    }
+    result[key] = parseRequestVariableValue(row.value)
+  }
+  return result
+}
+
 function buildPayload(): CasePayload | null {
   if (!form.code.trim()) {
     toast.error('请填写用例编号')
@@ -797,6 +980,8 @@ function buildPayload(): CasePayload | null {
     toast.error('动态多轮必须填写用户目标')
     return null
   }
+  const requestVariables = buildRequestVariables()
+  if (requestVariables === null) return null
 
   const payload: CasePayload = {
     code: form.code.trim(),
@@ -807,6 +992,8 @@ function buildPayload(): CasePayload | null {
     priority: form.priority,
     tags: splitList(form.tagsText),
     environment_id: form.environment_id,
+    request_variables: requestVariables,
+    session_mode: form.sessionMode,
     max_turns: form.maxTurns,
     simulator_template_id: form.simulator_template_id,
     simulator_template_strategy: form.simulatorStrategy,
@@ -2484,6 +2671,137 @@ function openDraftResult(): void {
                   </option>
                 </select>
               </div>
+            </section>
+
+            <section class="space-y-3">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">请求变量</h3>
+                <div class="flex items-center gap-1">
+                  <button
+                    v-if="form.requestVariablesMode === 'rows'"
+                    class="btn-ghost btn-xs"
+                    @click="addRequestVariable"
+                  >
+                    ＋ 添加变量
+                  </button>
+                  <button
+                    class="btn-ghost btn-xs"
+                    @click="
+                      switchRequestVariablesMode(
+                        form.requestVariablesMode === 'rows' ? 'json' : 'rows',
+                      )
+                    "
+                  >
+                    {{ form.requestVariablesMode === 'rows' ? 'JSON 模式' : '行编辑' }}
+                  </button>
+                </div>
+              </div>
+              <p class="text-[11px] text-slate-500">
+                渲染进环境请求头 / 请求体模板；值支持字符串、数字与 JSON。优先级：运行时 &gt; 用例变量 &gt;
+                环境变量池。
+              </p>
+
+              <div v-if="form.requestVariablesMode === 'rows'" class="space-y-2">
+                <div
+                  v-if="!form.requestVariables.length"
+                  class="rounded-xl border border-dashed border-slate-300 px-3 py-3 text-center text-[11px] text-slate-500"
+                >
+                  暂无请求变量，点击「添加变量」按用例注入不同取值
+                </div>
+                <div
+                  v-for="(row, index) in form.requestVariables"
+                  :key="index"
+                  class="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-2 sm:grid-cols-[170px_minmax(0,1fr)_auto]"
+                >
+                  <input v-model="row.key" class="input font-mono text-xs" placeholder="key，如 user_id" />
+                  <input
+                    v-model="row.value"
+                    class="input font-mono text-xs"
+                    placeholder='value，如 13800138000 或 {"vip":true}'
+                  />
+                  <button class="btn-danger btn-xs" @click="removeRequestVariable(index)">删除</button>
+                </div>
+              </div>
+              <textarea
+                v-else
+                v-model="form.requestVariablesJson"
+                class="input font-mono text-xs"
+                rows="6"
+                placeholder='{"user_id": "13800138000", "channel": "app"}'
+              />
+
+              <div
+                v-if="envPlaceholders.length"
+                class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-slate-600"
+              >
+                <p>
+                  当前环境模板占位符：
+                  <code
+                    v-for="name in envPlaceholders"
+                    :key="name"
+                    class="mr-1 rounded bg-slate-100 px-1 py-0.5 font-mono text-[10px]"
+                    :class="
+                      RUNTIME_PLACEHOLDERS.includes(name) ? 'text-slate-400' : 'text-indigo-600'
+                    "
+                  >
+                    {{ name }}
+                  </code>
+                </p>
+                <p class="mt-1 text-slate-500">
+                  query / session_id / history / turn 由运行时自动注入，无需在此填写；需要固定会话值时添加
+                  key 为 session_id 的变量即可（优先级最高）。
+                </p>
+                <p v-if="missingEnvPlaceholders.length" class="mt-1 text-amber-700">
+                  尚未提供取值：{{ missingEnvPlaceholders.join('、') }}
+                </p>
+              </div>
+            </section>
+
+            <section class="space-y-3">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">
+                  多轮会话绑定
+                </h3>
+                <span class="text-[11px] text-slate-500">
+                  环境默认：{{
+                    selectedEnvironment
+                      ? selectedEnvironment.session_mode === 'CLIENT_GENERATED'
+                        ? '客户端生成'
+                        : '服务端返回'
+                      : '未绑定环境'
+                  }}
+                </span>
+              </div>
+              <div class="grid gap-2 sm:grid-cols-3">
+                <label
+                  v-for="option in CASE_SESSION_OPTIONS"
+                  :key="option.value"
+                  class="flex cursor-pointer items-start gap-2 rounded-xl border p-2.5 transition"
+                  :class="
+                    form.sessionMode === option.value
+                      ? 'border-indigo-300 bg-indigo-50/70'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  "
+                >
+                  <input
+                    v-model="form.sessionMode"
+                    type="radio"
+                    :value="option.value"
+                    class="mt-0.5 h-4 w-4 border-slate-300 text-indigo-600"
+                  />
+                  <span>
+                    <span class="block text-xs font-medium text-slate-800">{{ option.label }}</span>
+                    <span class="block text-[11px] leading-relaxed text-slate-500">
+                      {{ option.desc }}
+                    </span>
+                  </span>
+                </label>
+              </div>
+              <p class="text-[11px] text-slate-500">
+                请求报文中的会话字段名由环境模板占位符决定，例如
+                <code class="font-mono text-[10px] text-slate-700">{{ SESSION_FIELD_EXAMPLE }}</code>
+                ，不同接口可各自定义字段名。
+              </p>
             </section>
 
             <section class="space-y-3">

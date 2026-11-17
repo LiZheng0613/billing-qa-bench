@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from billing_qa.models.enums import (
+    CaseSessionMode,
     CaseType,
     FactKind,
     GradingMode,
@@ -21,6 +24,34 @@ from billing_qa.schemas.common import ORMModel
 
 def _fact_id() -> str:
     return f"f{uuid.uuid4().hex[:10]}"
+
+
+# ---------------------------------------------------------------------- #
+# 用例级请求变量校验
+# ---------------------------------------------------------------------- #
+_REQUEST_VARIABLE_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# 运行时由执行器注入，用例自定义同名变量会被无条件覆盖，因此直接拒绝以免静默失效
+_RESERVED_REQUEST_VARIABLES = {"query", "history", "history_text", "turn"}
+_REQUEST_VARIABLES_LIMIT = 16 * 1024
+
+
+def validate_request_variables(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    """校验用例级请求变量：命名合法、避开运行时保留字、体积可控。"""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("请求变量必须是对象（key-value 映射）")
+    for key in value:
+        if not isinstance(key, str) or not _REQUEST_VARIABLE_KEY.match(key):
+            raise ValueError(f"请求变量名不合法: {key!r}（需匹配字母/数字/下划线且不以数字开头）")
+        if key in _RESERVED_REQUEST_VARIABLES:
+            raise ValueError(
+                f"请求变量名 {key} 由执行器运行时注入，请勿自定义（可用运行时变量清单见帮助）"
+            )
+    serialized = json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")
+    if len(serialized) > _REQUEST_VARIABLES_LIMIT:
+        raise ValueError("请求变量体积超过 16KB，请精简取值")
+    return value
 
 
 class NumericExpectation(BaseModel):
@@ -217,6 +248,16 @@ class CaseBase(BaseModel):
     tags: list[str] = Field(default_factory=list)
     environment_id: int | None = None
 
+    # ---- 请求变量与会话绑定 ----
+    request_variables: dict[str, Any] = Field(
+        default_factory=dict,
+        description="渲染进请求头/请求体模板的用例级变量，值支持任意 JSON 类型",
+    )
+    session_mode: CaseSessionMode = Field(
+        default=CaseSessionMode.INHERIT,
+        description="会话绑定方式：INHERIT 跟随环境；FIXED 由 request_variables.session_id 表达",
+    )
+
     query: str | None = None
     expected_answer: str | None = None
     expected_rules: RuleConfig | None = None
@@ -258,6 +299,11 @@ class CaseBase(BaseModel):
     review_status: str = "NOT_REQUIRED"
     dataset_version: str | None = "v1"
     dedupe_hash: str | None = None
+
+    @field_validator("request_variables")
+    @classmethod
+    def _check_request_variables(cls, value: dict[str, Any] | None) -> dict[str, Any]:
+        return validate_request_variables(value) or {}
 
     @model_validator(mode="after")
     def _validate_by_type(self) -> CaseBase:
@@ -310,6 +356,8 @@ class CaseUpdate(BaseModel):
     priority: str | None = None
     tags: list[str] | None = None
     environment_id: int | None = None
+    request_variables: dict[str, Any] | None = None
+    session_mode: CaseSessionMode | None = None
     query: str | None = None
     expected_answer: str | None = None
     expected_rules: RuleConfig | None = None
@@ -347,6 +395,11 @@ class CaseUpdate(BaseModel):
     dedupe_hash: str | None = None
     change_summary: str | None = Field(default=None, max_length=512)
 
+    @field_validator("request_variables")
+    @classmethod
+    def _check_request_variables(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return validate_request_variables(value)
+
 
 class FactVerifyRequest(BaseModel):
     """单条事实的取证结论。"""
@@ -380,6 +433,8 @@ class CaseOut(ORMModel):
     priority: str
     tags: list | None
     environment_id: int | None
+    request_variables: dict | None = None
+    session_mode: str | None = None
     query: str | None
     expected_answer: str | None
     expected_rules: dict | None

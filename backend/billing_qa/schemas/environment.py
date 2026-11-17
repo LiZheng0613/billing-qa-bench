@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -74,6 +75,7 @@ class EnvironmentBase(BaseModel):
     is_stream: bool = False
     extractors: dict | None = Field(default_factory=lambda: dict(DEFAULT_EXTRACTORS))
     pre_hook: PreHookConfig | None = None
+    session_mode: Literal["SERVER_RETURNED", "CLIENT_GENERATED"] = "SERVER_RETURNED"
     timeout_seconds: float = 60.0
     verify_ssl: bool = True
     is_active: bool = True
@@ -110,6 +112,7 @@ class EnvironmentUpdate(BaseModel):
     is_stream: bool | None = None
     extractors: dict | None = None
     pre_hook: PreHookConfig | None = None
+    session_mode: Literal["SERVER_RETURNED", "CLIENT_GENERATED"] | None = None
     timeout_seconds: float | None = None
     verify_ssl: bool | None = None
     is_active: bool | None = None
@@ -129,6 +132,7 @@ class EnvironmentOut(ORMModel):
     is_stream: bool
     extractors: dict | None
     pre_hook: dict | None
+    session_mode: str
     timeout_seconds: float
     verify_ssl: bool
     is_active: bool
@@ -166,3 +170,21 @@ class VariableBatchUpdate(BaseModel):
         if len(keys) != len(set(keys)):
             raise ValueError("变量名重复")
         return self
+
+
+class EnvPreviewRequest(BaseModel):
+    """请求报文预览：选一条示例用例，带入其请求变量与会话绑定配置。"""
+
+    case_id: int = Field(ge=1, description="示例用例 id")
+
+
+class EnvPreviewResponse(BaseModel):
+    """渲染后的请求报文与占位符来源标注（只读，不落库）。"""
+
+    headers: dict[str, Any] = Field(default_factory=dict)
+    body: Any = None
+    origins: dict[str, str] = Field(default_factory=dict)
+    session_mode_resolved: str
+    session_id: str | None = None
+    query: str | None = None
+    warnings: list[str] = Field(default_factory=list)

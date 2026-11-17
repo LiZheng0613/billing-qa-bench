@@ -22,6 +22,7 @@ import type {
   Environment,
   EnvironmentPayload,
   EnvironmentUsage,
+  EnvPreviewResult,
   EnvVariable,
   EnvVariableInput,
   ExecutionDetail,
@@ -109,6 +110,8 @@ export const api = {
     healthCheck: (id: number) =>
       http.post<HealthCheckResult>(`/environments/${id}/health-check`),
     usage: (id: number) => http.get<EnvironmentUsage>(`/environments/${id}/usage`),
+    preview: (id: number, caseId: number) =>
+      http.post<EnvPreviewResult>(`/environments/${id}/preview`, { case_id: caseId }),
   },
 
   // ---------------------------------------------------------------- 模型

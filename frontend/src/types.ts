@@ -79,6 +79,26 @@ export interface EnvVariableInput {
   description: string | null
 }
 
+// ------------------------------------------------------- 多轮会话绑定
+export type SessionMode = 'SERVER_RETURNED' | 'CLIENT_GENERATED'
+export type CaseSessionMode = 'INHERIT' | 'SERVER_RETURNED' | 'CLIENT_GENERATED'
+/** 变量来源标注：运行时 / 用例 / 环境变量池 / 会话 / 缺失 */
+export type VariableOrigin = 'RUNTIME' | 'CASE' | 'ENV' | 'SESSION' | 'MISSING'
+
+export interface EnvPreviewPayload {
+  case_id: number
+}
+
+export interface EnvPreviewResult {
+  headers: Record<string, string>
+  body: unknown
+  origins: Record<string, VariableOrigin>
+  session_mode_resolved: string
+  session_id: string | null
+  query: string | null
+  warnings: string[]
+}
+
 export interface PreHookConfig {
   enabled: boolean
   method: string
@@ -104,6 +124,7 @@ export interface Environment {
   is_stream: boolean
   extractors: Record<string, string> | null
   pre_hook: PreHookConfig | null
+  session_mode: SessionMode
   timeout_seconds: number
   verify_ssl: boolean
   is_active: boolean
@@ -129,6 +150,7 @@ export interface EnvironmentPayload {
   is_stream?: boolean
   extractors?: Record<string, string> | null
   pre_hook?: PreHookConfig | null
+  session_mode?: SessionMode
   timeout_seconds?: number
   verify_ssl?: boolean
   is_active?: boolean
@@ -475,6 +497,8 @@ export interface TestCase {
   priority: string
   tags: string[] | null
   environment_id: number | null
+  request_variables: Record<string, unknown> | null
+  session_mode: string | null
   query: string | null
   expected_answer: string | null
   expected_rules: RuleConfig | null
@@ -530,6 +554,8 @@ export interface CasePayload {
   priority?: string
   tags?: string[]
   environment_id?: number | null
+  request_variables?: Record<string, unknown> | null
+  session_mode?: CaseSessionMode
   query?: string | null
   expected_answer?: string | null
   expected_rules?: RuleConfig | null

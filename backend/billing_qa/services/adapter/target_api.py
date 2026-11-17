@@ -66,6 +66,7 @@ class EnvContext:
     timeout_seconds: float
     verify_ssl: bool
     variables: dict[str, str] = field(default_factory=dict)
+    session_mode: str = "SERVER_RETURNED"
 
     @classmethod
     def from_orm(cls, env: Environment) -> EnvContext:
@@ -86,6 +87,7 @@ class EnvContext:
             timeout_seconds=env.timeout_seconds or 60.0,
             verify_ssl=env.verify_ssl,
             variables=variables,
+            session_mode=env.session_mode or "SERVER_RETURNED",
         )
 
     @property
@@ -178,11 +180,14 @@ class TargetApiAdapter:
         query: str,
         session_id: str | None = None,
         history: list[dict[str, str]] | None = None,
+        extra_variables: dict[str, Any] | None = None,
     ) -> TargetResponse:
         history = history or []
         async with self._client() as client:
             await self._ensure_token(client)
+            # 变量合并优先级：运行时 > 用例级 > 环境变量池
             variables: dict[str, Any] = dict(self.env.variables)
+            variables.update(extra_variables or {})
             variables.update(
                 {
                     "query": query,

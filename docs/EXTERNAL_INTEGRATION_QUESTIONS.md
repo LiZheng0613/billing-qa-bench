@@ -154,6 +154,50 @@
 平台已支持环境级 `base_url`、`api_path`、`headers_template`、`body_template`、
 `extractors`（JSONPath）、流式 / 非流式与 Pre-Hook 鉴权。需要确认：
 
+### 5.1 报文模板与用例级参数注入（平台已实现）
+
+- 报文格式由环境模板固定：`headers_template` / `body_template` 中使用 `{{variable}}` 占位符；
+  具体取值按用例不同，由用例级 `request_variables`（key-value，值支持字符串 / 数字 / JSON）注入。
+- 变量合并优先级：运行时变量（`query` / `session_id` / `history` / `history_text` / `turn`）
+  \> 用例 `request_variables` > 环境变量池。
+- 对接方只需确认「哪些字段需要按用例变化」，平台即可在用例中配置，无需为新参数改代码。
+- 接口配置页提供**报文预览**（选一条示例用例，只读渲染 headers/body 并标注每个变量的来源），
+  可用于与 Agent 平台逐字段核对。
+
+### 5.2 多轮会话绑定（两种模式均保留，可配置）
+
+会话值的**生成方尚未确定**，因此平台同时支持两种模式，环境级默认 + 用例级可覆盖：
+
+| 模式 | 配置位置 | 行为 |
+| --- | --- | --- |
+| `SERVER_RETURNED` | 环境 `session_mode`（默认） | 首轮不传会话值，平台从响应中提取并回填，后续轮次沿用 |
+| `CLIENT_GENERATED` | 环境 `session_mode` | 执行开始时由平台生成唯一值（`exec-{execution_id}-xxxxxxxx`），全程各轮携带 |
+| `INHERIT` | 用例 `session_mode`（默认） | 跟随环境配置 |
+| `FIXED` | 用例 `request_variables.session_id` | 使用显式固定值，优先级最高（用于复现特定会话 / 调试） |
+
+会话字段名**由模板占位符位置决定**，平台不写死字段名。例如：
+
+```json
+{
+  "query": "{{query}}",
+  "conversationId": "{{session_id}}",
+  "history": "{{history}}"
+}
+```
+
+对接时需确认：
+
+1. **会话由谁生成**：目标接口是否在响应中返回会话值？字段路径是什么（`$.data.session_id` 等）？
+   若不返回，应切换为 `CLIENT_GENERATED`。
+2. **字段名与位置**：会话值放在 body 哪个字段（`session_id` / `sessionId` / `conversationId` / 嵌套对象），
+   还是放在 Header / Query？请给出完整示例报文。
+3. **多轮上下文**：目标接口是依赖会话值维护上下文，还是要求每轮显式传 `history`？两者是否可混用？
+4. **会话生命周期**：超时时间、最大轮次、并发隔离规则；同一会话值被并发复用时是否互相污染？
+5. **固定会话**：是否允许平台指定会话值（`FIXED` 模式）？是否有格式校验或白名单？
+6. **错误信号**：会话缺失 / 过期 / 非法时返回什么状态码与错误体？平台据此区分 `ENV` 与 `BUSINESS` 失败。
+
+### 5.3 其余待确认项
+
 1. **请求契约**
    - 最终请求方法、路径、Header、Body 模板是否与 Mock 一致？
    - `session_id`、`history`、`query` 的字段名与嵌套结构？
@@ -272,6 +316,8 @@
 | Q-13 | 数据集评审人与豁免审批人 | 业务方 | 冻结数据集前 | 待确认 |
 | Q-14 | 金额含税 / 账期 / 退款口径 | 业务方 | 需求评审 | 待确认 |
 | Q-15 | 历史数据回溯窗口 | 数据平台 | 冻结数据集前 | 待确认 |
+| Q-16 | 会话由谁生成、是否随响应返回 | Agent 平台 | 联调前 | 待确认 |
+| Q-17 | 会话字段名 / 位置与超时、并发隔离规则 | Agent 平台 | 联调前 | 待确认 |
 
 ---
 

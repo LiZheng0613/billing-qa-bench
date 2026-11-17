@@ -103,6 +103,21 @@ class GradingMode(StrEnum):
     ANSWER_CONTRACT = "ANSWER_CONTRACT"
 
 
+class SessionMode(StrEnum):
+    """环境级多轮会话绑定方式。"""
+
+    SERVER_RETURNED = "SERVER_RETURNED"
+    CLIENT_GENERATED = "CLIENT_GENERATED"
+
+
+class CaseSessionMode(StrEnum):
+    """用例级多轮会话绑定方式；INHERIT 表示跟随环境配置。"""
+
+    INHERIT = "INHERIT"
+    SERVER_RETURNED = "SERVER_RETURNED"
+    CLIENT_GENERATED = "CLIENT_GENERATED"
+
+
 class InputType(StrEnum):
     """用户输入形态，决定需要判定的是「事实」还是「行为」。"""
 

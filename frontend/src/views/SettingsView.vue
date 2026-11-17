@@ -8,6 +8,7 @@ import StatusPill from '../components/StatusPill.vue'
 import type {
   Environment,
   EnvironmentPayload,
+  EnvPreviewResult,
   EnvVariableInput,
   ModelConfig,
   ModelConnectionType,
@@ -17,6 +18,9 @@ import type {
   OpenCodeCatalogAgent,
   OpenCodeCatalogModel,
   PreHookConfig,
+  SessionMode,
+  TestCase,
+  VariableOrigin,
 } from '../types'
 import { errorMessage } from '../utils/errors'
 import {
@@ -58,7 +62,72 @@ const envForm = reactive({
   extractorsText: '',
   preHookEnabled: false,
   preHookText: '',
+  session_mode: 'SERVER_RETURNED' as SessionMode,
 })
+
+// ---- 报文预览（选一条示例用例带入其请求变量与会话绑定）----
+const previewCases = ref<TestCase[]>([])
+const previewCaseId = ref<number | null>(null)
+const previewLoading = ref(false)
+const previewResult = ref<EnvPreviewResult | null>(null)
+const previewError = ref('')
+
+const SESSION_MODE_OPTIONS: Array<{ value: SessionMode; label: string; desc: string }> = [
+  {
+    value: 'SERVER_RETURNED',
+    label: '服务端返回会话',
+    desc: '首轮不传会话值，由目标接口在响应中返回，平台回填后用于后续轮次。',
+  },
+  {
+    value: 'CLIENT_GENERATED',
+    label: '客户端生成会话',
+    desc: '每次执行开始时由平台生成唯一会话值，通过模板占位符注入并贯穿所有轮次。',
+  },
+]
+
+const RUNTIME_VARIABLES: Array<{ name: string; desc: string }> = [
+  { name: 'query', desc: '当前轮用户提问（动态多轮为模拟器生成）' },
+  { name: 'session_id', desc: '会话值，按会话绑定方式解析' },
+  { name: 'history', desc: '历史消息数组（role/content）' },
+  { name: 'history_text', desc: '历史消息拼接文本' },
+  { name: 'turn', desc: '当前轮次序号，从 1 开始' },
+]
+
+const ORIGIN_META: Record<VariableOrigin, { label: string; cls: string }> = {
+  RUNTIME: { label: '运行时', cls: 'bg-slate-100 text-slate-600 border-slate-200' },
+  CASE: { label: '用例', cls: 'bg-indigo-50 text-indigo-700 border-indigo-100' },
+  ENV: { label: '环境变量', cls: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+  SESSION: { label: '会话', cls: 'bg-sky-50 text-sky-700 border-sky-100' },
+  MISSING: { label: '缺失', cls: 'bg-rose-50 text-rose-700 border-rose-100' },
+}
+
+const templatePlaceholders = computed(() => {
+  const names: string[] = []
+  const pattern = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g
+  const scan = (text: string) => {
+    pattern.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(text))) {
+      if (!names.includes(match[1])) names.push(match[1])
+    }
+  }
+  scan(envForm.headersText)
+  scan(envForm.bodyText)
+  return names
+})
+
+const envVariableKeys = computed(() => (editingEnv.value?.variables ?? []).map((v) => v.key))
+
+const previewBodyText = computed(() =>
+  previewResult.value ? prettyJson(previewResult.value.body) : '',
+)
+
+function placeholderSource(name: string): VariableOrigin {
+  if (name === 'session_id') return 'SESSION'
+  if (RUNTIME_VARIABLES.some((item) => item.name === name)) return 'RUNTIME'
+  if (envVariableKeys.value.includes(name)) return 'ENV'
+  return 'CASE'
+}
 
 const variablesOpen = ref(false)
 const variablesSaving = ref(false)
@@ -120,6 +189,39 @@ function resetEnvForm(): void {
   envForm.extractorsText = prettyJson(source?.extractors)
   envForm.preHookEnabled = Boolean(source?.pre_hook?.enabled)
   envForm.preHookText = source?.pre_hook ? prettyJson(source.pre_hook) : ''
+  envForm.session_mode = (source?.session_mode ?? 'SERVER_RETURNED') as SessionMode
+  previewCases.value = []
+  previewCaseId.value = null
+  previewResult.value = null
+  previewError.value = ''
+}
+
+async function loadPreviewCases(envId: number): Promise<void> {
+  try {
+    const page = await api.cases.list({ environment_id: envId, page_size: 200 })
+    previewCases.value = [...page.items].sort((a, b) => b.id - a.id)
+    previewCaseId.value = previewCases.value[0]?.id ?? null
+    if (previewCaseId.value) await runPreview()
+  } catch {
+    previewCases.value = []
+  }
+}
+
+async function runPreview(): Promise<void> {
+  if (!editingEnv.value || !previewCaseId.value) return
+  previewLoading.value = true
+  previewError.value = ''
+  try {
+    previewResult.value = await api.environments.preview(
+      editingEnv.value.id,
+      previewCaseId.value,
+    )
+  } catch (exc) {
+    previewResult.value = null
+    previewError.value = errorMessage(exc)
+  } finally {
+    previewLoading.value = false
+  }
 }
 
 function openCreateEnv(): void {
@@ -132,6 +234,7 @@ function openEditEnv(item: Environment): void {
   editingEnv.value = item
   resetEnvForm()
   envModalOpen.value = true
+  void loadPreviewCases(item.id)
 }
 
 async function submitEnv(): Promise<void> {
@@ -213,6 +316,7 @@ async function submitEnv(): Promise<void> {
     body_template: body,
     extractors,
     pre_hook: preHook,
+    session_mode: envForm.session_mode,
   }
   if (!editingEnv.value) {
     if (!body) delete payload.body_template
@@ -769,6 +873,13 @@ onMounted(() => {
                   超时 {{ item.timeout_seconds }}s · SSL {{ item.verify_ssl ? '校验' : '忽略' }}
                   <span v-if="item.pre_hook?.enabled" class="text-amber-700"> · 前置鉴权</span>
                 </p>
+                <p class="mt-1">
+                  <span
+                    class="inline-flex items-center rounded-full border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-600"
+                  >
+                    会话 {{ item.session_mode === 'CLIENT_GENERATED' ? '客户端生成' : '服务端返回' }}
+                  </span>
+                </p>
               </td>
               <td class="td">
                 <span
@@ -1000,6 +1111,173 @@ onMounted(() => {
             <label class="label">字段提取器（JSONPath，可选）</label>
             <textarea v-model="envForm.extractorsText" class="input font-mono text-xs" rows="6" />
           </div>
+        </div>
+
+        <div class="grid gap-3 lg:grid-cols-2">
+          <div class="space-y-2">
+            <div class="flex items-baseline justify-between gap-2">
+              <label class="label !mb-0">多轮会话绑定</label>
+              <span class="text-[11px] text-slate-500">用例可在用例抽屉中覆盖</span>
+            </div>
+            <label
+              v-for="option in SESSION_MODE_OPTIONS"
+              :key="option.value"
+              class="flex cursor-pointer items-start gap-2 rounded-xl border p-3 transition"
+              :class="
+                envForm.session_mode === option.value
+                  ? 'border-indigo-300 bg-indigo-50/70'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              "
+            >
+              <input
+                v-model="envForm.session_mode"
+                type="radio"
+                :value="option.value"
+                class="mt-0.5 h-4 w-4 border-slate-300 text-indigo-600"
+              />
+              <span class="space-y-0.5">
+                <span class="block text-sm font-medium text-slate-800">{{ option.label }}</span>
+                <span class="block text-[11px] leading-relaxed text-slate-500">{{ option.desc }}</span>
+              </span>
+            </label>
+          </div>
+          <div class="space-y-2">
+            <div class="flex items-baseline justify-between gap-2">
+              <label class="label !mb-0">可用占位符（{{ templatePlaceholders.length }}）</label>
+              <span class="text-[11px] text-slate-500">从请求头/请求体模板自动识别</span>
+            </div>
+            <div class="max-h-48 space-y-1 overflow-auto rounded-xl border border-slate-200 bg-slate-50/80 p-2">
+              <div
+                v-if="!templatePlaceholders.length"
+                class="px-1 py-2 text-[11px] text-slate-500"
+              >
+                模板中暂无 <code v-pre>{{ }}</code> 占位符
+              </div>
+              <div
+                v-for="name in templatePlaceholders"
+                :key="name"
+                class="flex items-center justify-between gap-2 rounded-lg bg-white px-2 py-1"
+              >
+                <span class="font-mono text-[11px] text-slate-700">{{ name }}</span>
+                <span
+                  class="rounded-full border px-1.5 py-0.5 text-[10px]"
+                  :class="ORIGIN_META[placeholderSource(name)].cls"
+                >
+                  {{ ORIGIN_META[placeholderSource(name)].label }}
+                </span>
+              </div>
+            </div>
+            <details class="rounded-xl border border-slate-200 bg-white p-2">
+              <summary class="cursor-pointer text-[11px] font-medium text-slate-600">
+                运行时可用变量
+              </summary>
+              <ul class="mt-1 space-y-1">
+                <li
+                  v-for="item in RUNTIME_VARIABLES"
+                  :key="item.name"
+                  class="flex gap-2 text-[11px] leading-relaxed"
+                >
+                  <span class="shrink-0 font-mono text-indigo-600">{{ item.name }}</span>
+                  <span class="text-slate-500">{{ item.desc }}</span>
+                </li>
+              </ul>
+            </details>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-medium text-slate-800">报文预览</div>
+              <div class="text-[11px] text-slate-500">
+                选一条示例用例，带入其请求变量与会话配置；基于已保存的环境配置渲染
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <select
+                v-if="previewCases.length"
+                v-model.number="previewCaseId"
+                class="input h-8 max-w-[240px] text-xs"
+                @change="runPreview"
+              >
+                <option v-for="item in previewCases" :key="item.id" :value="item.id">
+                  {{ item.code }} · {{ item.name }}
+                </option>
+              </select>
+              <button
+                class="btn-ghost btn-xs"
+                :disabled="previewLoading || !previewCaseId"
+                @click="runPreview"
+              >
+                {{ previewLoading ? '渲染中…' : '刷新预览' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="!editingEnv" class="mt-2 rounded-lg bg-white px-3 py-2 text-[11px] text-slate-500">
+            保存环境后可预览实际请求报文。
+          </div>
+          <div
+            v-else-if="!previewCases.length"
+            class="mt-2 rounded-lg bg-white px-3 py-2 text-[11px] text-slate-500"
+          >
+            该环境暂无绑定用例，可在用例抽屉中指定环境后回来预览。
+          </div>
+          <div
+            v-else-if="previewError"
+            class="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-[11px] text-rose-700"
+          >
+            {{ previewError }}
+          </div>
+          <template v-else-if="previewResult">
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+              <span
+                class="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 font-mono text-[10px] text-indigo-600"
+              >
+                会话模式 {{ previewResult.session_mode_resolved }}
+              </span>
+              <span
+                v-if="previewResult.session_id"
+                class="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-mono text-[10px] text-slate-600"
+              >
+                session_id {{ previewResult.session_id }}
+              </span>
+            </div>
+            <div
+              v-if="previewResult.warnings.length"
+              class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700"
+            >
+              {{ previewResult.warnings.join('；') }}
+            </div>
+            <div class="mt-2 grid gap-2 lg:grid-cols-2">
+              <div>
+                <div class="mb-1 text-[11px] font-medium text-slate-500">请求头</div>
+                <pre
+                  class="max-h-48 overflow-auto rounded-lg bg-slate-900 p-2 font-mono text-[11px] leading-relaxed text-slate-100"
+                >{{ prettyJson(previewResult.headers) }}</pre>
+              </div>
+              <div>
+                <div class="mb-1 text-[11px] font-medium text-slate-500">请求体</div>
+                <pre
+                  class="max-h-48 overflow-auto rounded-lg bg-slate-900 p-2 font-mono text-[11px] leading-relaxed text-slate-100"
+                >{{ previewBodyText }}</pre>
+              </div>
+            </div>
+            <div
+              v-if="Object.keys(previewResult.origins).length"
+              class="mt-2 flex flex-wrap gap-1.5"
+            >
+              <span
+                v-for="(origin, name) in previewResult.origins"
+                :key="name"
+                class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px]"
+                :class="ORIGIN_META[origin].cls"
+              >
+                <span class="font-mono">{{ name }}</span>
+                <span class="opacity-70">{{ ORIGIN_META[origin].label }}</span>
+              </span>
+            </div>
+          </template>
         </div>
 
         <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-3">

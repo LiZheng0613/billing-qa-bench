@@ -429,6 +429,64 @@ async function copyTraceUid(): Promise<void> {
     toast.error('复制失败')
   }
 }
+
+// ---- 多轮会话绑定：执行期会话链与用例变量来源 ----
+const caseSnapshotExtra = computed(() => {
+  const snap = (props.detail?.case_snapshot ?? {}) as Record<string, unknown>
+  const requestVariables = (snap.request_variables ?? {}) as Record<string, unknown>
+  return {
+    mode: typeof snap.session_mode === 'string' ? snap.session_mode : '',
+    requestVariables,
+  }
+})
+
+const sessionModeText = computed(() => {
+  switch (caseSnapshotExtra.value.mode) {
+    case 'CLIENT_GENERATED':
+      return '客户端生成'
+    case 'SERVER_RETURNED':
+      return '服务端返回'
+    case 'FIXED':
+      return '固定值'
+    case 'INHERIT':
+      return '跟随环境'
+    default:
+      return '—'
+  }
+})
+
+const sessionChain = computed(() => {
+  const ids = (props.detail?.turns ?? [])
+    .map((turn) => turn.session_id)
+    .filter((value): value is string => Boolean(value))
+  const unique = [...new Set(ids)]
+  return { ids, unique, consistent: unique.length <= 1 }
+})
+
+function shortSession(value: string | null): string {
+  if (!value) return '—'
+  return value.length > 18 ? `${value.slice(0, 16)}…` : value
+}
+
+function variableText(value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  return typeof value === 'string' ? value : safeJson(value, 0)
+}
+
+/** 本轮请求报文中实际携带的用例级变量 key（body 或 header）。 */
+function turnRequestKeys(turn: TurnTrace): string[] {
+  const payload = turn.request_payload as Record<string, unknown> | null
+  if (!payload || typeof payload !== 'object') return []
+  const body = (payload.body ?? {}) as Record<string, unknown>
+  const headers = (payload.headers ?? {}) as Record<string, unknown>
+  // 字段名由模板决定（如 tenant_id 可能落在 X-Tenant-Id），按归一化名称匹配
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const payloadKeys = [...Object.keys(body), ...Object.keys(headers)].map(normalize)
+  return Object.keys(caseSnapshotExtra.value.requestVariables).filter((key) => {
+    const target = normalize(key)
+    return target.length >= 3 && payloadKeys.some((item) => item.endsWith(target))
+  })
+}
 </script>
 
 <template>
@@ -548,6 +606,57 @@ async function copyTraceUid(): Promise<void> {
             <EmptyState compact title="没有对话轮次" description="该执行未产生有效对话。" />
           </div>
           <div v-else class="space-y-3">
+            <div class="rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2">
+              <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                <span class="font-medium text-slate-800">会话绑定</span>
+                <span
+                  class="rounded-full border border-indigo-100 bg-white px-2 py-0.5 font-mono text-[10px] text-indigo-600"
+                >
+                  {{ sessionModeText }}
+                </span>
+                <span
+                  v-if="sessionChain.unique.length"
+                  class="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-mono text-[10px] text-slate-600"
+                  :title="sessionChain.ids.join('\n')"
+                >
+                  {{ shortSession(sessionChain.unique[0]) }}
+                </span>
+                <span
+                  v-if="sessionChain.unique.length > 1"
+                  class="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700"
+                >
+                  ⚠ 检测到 {{ sessionChain.unique.length }} 个不同会话值，上下文可能未延续
+                </span>
+                <span
+                  v-else-if="sessionChain.unique.length === 1"
+                  class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700"
+                >
+                  各轮会话一致
+                </span>
+                <span v-else class="text-[10px] text-slate-500">
+                  未携带会话值（服务端新建会话）
+                </span>
+                <span
+                  v-if="caseSnapshotExtra.requestVariables.session_id"
+                  class="text-[10px] text-slate-500"
+                >
+                  固定会话：{{ variableText(caseSnapshotExtra.requestVariables.session_id) }}
+                </span>
+              </div>
+              <div
+                v-if="Object.keys(caseSnapshotExtra.requestVariables).length"
+                class="mt-1 flex flex-wrap items-center gap-1"
+              >
+                <span class="text-[10px] text-slate-500">用例变量：</span>
+                <span
+                  v-for="(value, key) in caseSnapshotExtra.requestVariables"
+                  :key="key"
+                  class="rounded-md border border-indigo-100 bg-white px-1.5 py-0.5 font-mono text-[10px] text-indigo-600"
+                >
+                  {{ key }}={{ variableText(value) }}
+                </span>
+              </div>
+            </div>
             <article
               v-for="turn in detail.turns"
               :key="turn.id"
@@ -561,6 +670,21 @@ async function copyTraceUid(): Promise<void> {
                   </span>
                   <span v-if="turn.simulator_status" class="tag">{{ statusLabel(turn.simulator_status) }}</span>
                   <span v-if="turn.intent" class="tag">意图：{{ turn.intent }}</span>
+                  <span
+                    v-if="turn.session_id"
+                    class="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 font-mono text-[10px] text-indigo-600"
+                    :title="turn.session_id"
+                  >
+                    会话 {{ shortSession(turn.session_id) }}
+                  </span>
+                  <span
+                    v-for="key in turnRequestKeys(turn)"
+                    :key="key"
+                    class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-[10px] text-emerald-700"
+                    title="该请求体字段来自用例请求变量"
+                  >
+                    用例变量 {{ key }}
+                  </span>
                 </div>
                 <div class="flex items-center gap-3 text-[10px] text-slate-500">
                   <span>TTFT {{ formatMs(turn.ttft_ms) }}</span>

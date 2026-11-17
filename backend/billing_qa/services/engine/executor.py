@@ -18,6 +18,11 @@ from billing_qa.models.enums import ExecutionSource, ExecutionStatus, Terminatio
 from billing_qa.models.execution import ExecutionRecord, JudgeResult, TurnTrace
 from billing_qa.models.gold_query import FactResult
 from billing_qa.services.adapter.renderer import format_history, render_prompt
+from billing_qa.services.adapter.session import (
+    init_session_id,
+    resolve_session_mode,
+    session_updates_from_response,
+)
 from billing_qa.services.adapter.target_api import TargetApiAdapter, TargetResponse
 from billing_qa.services.engine.context import ExecutionContext, load_execution_context
 from billing_qa.services.engine.error_policy import classify_exception
@@ -149,13 +154,25 @@ class CaseExecutor:
         query = (snapshot.get("query") or "").strip()
         if not query:
             raise ValidationError("单轮用例缺少 query")
-        response = await adapter.chat(query)
+        case_vars = snapshot.get("request_variables") or {}
+        mode = resolve_session_mode(
+            snapshot.get("session_mode"), adapter.env.session_mode, case_vars
+        )
+        session_id = init_session_id(mode, case_vars, execution_id)
+        response = await adapter.chat(
+            query, session_id=session_id, extra_variables=case_vars
+        )
+        effective_session = session_updates_from_response(
+            mode, session_id, response.session_id
+        )
         rule = (
             evaluate_rules(response.final_answer, snapshot.get("expected_rules"))
             if _legacy_rules_enabled(snapshot)
             else None
         )
-        record = self._build_record(1, query, "STATIC", response, rule)
+        record = self._build_record(
+            1, query, "STATIC", response, rule, session_id=effective_session
+        )
         await self._save_turn(execution_id, record)
         return ConversationResult(
             records=[record],
@@ -172,7 +189,11 @@ class CaseExecutor:
         fail_fast = bool(snapshot.get("fail_fast"))
         rules_enabled = _legacy_rules_enabled(snapshot)
         history: list[dict[str, str]] = []
-        session_id: str | None = None
+        case_vars = snapshot.get("request_variables") or {}
+        session_mode = resolve_session_mode(
+            snapshot.get("session_mode"), adapter.env.session_mode, case_vars
+        )
+        session_id: str | None = init_session_id(session_mode, case_vars, execution_id)
         records: list[dict[str, Any]] = []
         rules: list[RuleResult] = []
         notes: list[str] = []
@@ -181,14 +202,23 @@ class CaseExecutor:
             query = (turn.get("query") or "").strip()
             if not query:
                 raise ValidationError(f"第 {index} 轮缺少 query")
-            response = await adapter.chat(query, session_id=session_id, history=history)
-            session_id = response.session_id or session_id
+            response = await adapter.chat(
+                query,
+                session_id=session_id,
+                history=history,
+                extra_variables=case_vars,
+            )
+            session_id = session_updates_from_response(
+                session_mode, session_id, response.session_id
+            )
             rule = (
                 evaluate_rules(response.final_answer, turn.get("expected_rules"))
                 if rules_enabled
                 else None
             )
-            record = self._build_record(index, query, "STATIC", response, rule)
+            record = self._build_record(
+                index, query, "STATIC", response, rule, session_id=session_id
+            )
             await self._save_turn(execution_id, record)
             records.append(record)
             if rule is not None:
@@ -219,7 +249,11 @@ class CaseExecutor:
         hidden_items: list[dict[str, Any]] = snapshot.get("hidden_context") or []
         released_keys: set[str] = set()
         history: list[dict[str, str]] = []
-        session_id: str | None = None
+        case_vars = snapshot.get("request_variables") or {}
+        session_mode = resolve_session_mode(
+            snapshot.get("session_mode"), adapter.env.session_mode, case_vars
+        )
+        session_id: str | None = init_session_id(session_mode, case_vars, execution_id)
         records: list[dict[str, Any]] = []
         rules: list[RuleResult] = []
         rules_enabled = _legacy_rules_enabled(snapshot)
@@ -307,15 +341,22 @@ class CaseExecutor:
 
                 simulator_tokens += sim_prompt_tokens + sim_completion_tokens
                 response = await adapter.chat(
-                    query, session_id=session_id, history=history
+                    query,
+                    session_id=session_id,
+                    history=history,
+                    extra_variables=case_vars,
                 )
-                session_id = response.session_id or session_id
+                session_id = session_updates_from_response(
+                    session_mode, session_id, response.session_id
+                )
                 rule = (
                     evaluate_rules(response.final_answer, snapshot.get("expected_rules"))
                     if rules_enabled
                     else None
                 )
-                record = self._build_record(turn_index, query, input_source, response, rule)
+                record = self._build_record(
+                    turn_index, query, input_source, response, rule, session_id=session_id
+                )
                 record.update(
                     {
                         "simulator_thought": thought,
@@ -687,7 +728,10 @@ class CaseExecutor:
         input_source: str,
         response: TargetResponse,
         rule: RuleResult | None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
+        # 会话痕迹记录的是「本轮实际生效的会话值」：
+        # CLIENT_GENERATED / FIXED 为请求侧生成值，SERVER_RETURNED 采纳响应回填值。
         return {
             "turn_index": turn_index,
             "query": query,
@@ -695,7 +739,7 @@ class CaseExecutor:
             "request_payload": response.request_payload,
             "response_raw": response.response_payload,
             "final_answer": response.final_answer,
-            "session_id": response.session_id,
+            "session_id": session_id if session_id is not None else response.session_id,
             "intent": response.intent,
             "generated_sql": response.generated_sql,
             "api_params": response.api_params,

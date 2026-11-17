@@ -49,7 +49,7 @@ batch_test/
 │   ├── migrations/            # Alembic 迁移脚本
 │   ├── mock_servers/          # 内置 Mock：LLM(8001) 与被测客服系统(8002)
 │   ├── scripts/               # api_smoke.py / e2e_smoke.py / seed_demo_history.py / migrate_mysql_to_postgres.py
-│   ├── tests/                 # 225 项 pytest
+│   ├── tests/                 # 235 项 pytest
 │   ├── alembic.ini
 │   ├── pyproject.toml
 │   └── .env.example
@@ -207,6 +207,27 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 - **单笔执行结果**（`/trace?execution=<id>`）：聚焦一次执行，展示对话轮次、裁判明细、规则校验、用例快照与原始报文；可返回所属批量任务详情，或跳转该用例全部历史。批量详情点击用例行、用例调试完成、趋势面板「查看 Trace」均复用此页面。
 - **用例历史**（`/trace?case=<id>`，或用例资产行内「历史」）：列出该用例全部批量 / 调试 / 重跑记录并分页；批量任务的「全部执行记录（含重试）」按任务列出每次尝试。用例级汇总统一取最新一次尝试，避免重试重复计数。
 
+### 请求变量与多轮会话绑定
+
+环境模板（`headers_template` / `body_template`）用 `{{variable}}` 占位，具体取值按用例注入：
+
+- **请求变量**：用例级 `request_variables`（key-value，值支持字符串 / 数字 / JSON），在用例抽屉「请求变量」中按行维护或直接编辑 JSON；不放敏感信息，明文保存。
+- **三层优先级**：运行时变量（`query` / `session_id` / `history` / `history_text` / `turn`）> 用例 `request_variables` > 环境变量池。运行时保留字不允许在用例变量中重复定义。
+- **会话绑定**：环境级 `session_mode` 二选一，用例可覆盖或跟随环境：
+
+  | 模式 | 行为 |
+  | --- | --- |
+  | `SERVER_RETURNED`（环境默认） | 首轮不传会话值，由被测接口返回后回填，后续轮次沿用 |
+  | `CLIENT_GENERATED` | 执行开始时生成唯一值（`exec-{execution_id}-xxxxxxxx`），全程各轮一致 |
+  | `INHERIT`（用例默认） | 跟随环境配置 |
+  | `FIXED` | 用例 `request_variables` 中显式给出 `session_id`，优先级最高 |
+
+- **字段名由模板决定**：例如 `"conversationId": "{{session_id}}"`，不同接口可各自定义，平台不写死字段名。
+- **接口配置页**：环境编辑弹窗内提供「多轮会话绑定」、可用占位符清单与环境变量来源标注，并可选一条示例用例做**报文预览**（只读，不落库）。
+- **执行结果**：对话轮次页展示每轮会话徽标、会话连续性小结、用例变量来源标记；不一致时会提示「上下文可能未延续」。
+
+相关接口：`POST /environments/{id}/preview`（body `{"case_id": 123}`，返回渲染后的 `headers` / `body` / `origins` / `session_mode_resolved`）。
+
 ### 环境类失败自动重试
 
 任务级配置：
@@ -298,8 +319,12 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 - `[MOCK:MAXTURNS]`：模拟器持续追问，触发轮次熔断
 - `[MOCK:REPEAT]`：被测系统复读，触发复读熔断
 - `[MOCK:GIVEUP]`：模拟器主动放弃
+- `[MOCK:REQUIRE_SESSION]`：请求未携带 `session_id` / `sessionId` / `conversationId` 时返回 400，用于验证会话绑定
 - `错误金额`：Mock 被测系统返回错误账单金额，验证规则硬校验
 - `模拟崩溃` / `触发异常`：Mock 被测系统返回 HTTP 500，验证异常分类与重试
+
+`python scripts/e2e_smoke.py` 除校验演示用例状态分布外，还会额外跑一轮「请求变量 + 客户端生成会话」检查：
+校验 headers/body 注入、用例变量覆盖环境变量池、会话值贯穿第二轮，以及 Mock 的 `received_params` 回显。
 
 ---
 
@@ -339,12 +364,12 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 
 | 表 | 作用 |
 | --- | --- |
-| `environment` | 被测系统环境（Base URL、方法、路径、流式开关、超时、SSL、请求头/体模板、提取器、前置鉴权钩子） |
+| `environment` | 被测系统环境（Base URL、方法、路径、流式开关、超时、SSL、请求头/体模板、提取器、前置鉴权钩子、多轮会话绑定方式） |
 | `environment_variable` | 环境变量池，敏感值 Fernet 加密、接口返回掩码 |
 | `model_config` | 模型注册（模拟器 / 裁判、OpenAI 兼容参数、限流与重试、加密 Key） |
 | `prompt_template` | Prompt 模板主表（类型、当前版本、引用计数、是否内置） |
 | `prompt_template_version` | 模板版本快照（内容、变量列表、变更说明） |
-| `test_case` | 用例主表（三类配置、规则、模板引用策略、模型与裁判策略、当前版本、判分方式、答案契约） |
+| `test_case` | 用例主表（三类配置、规则、模板引用策略、模型与裁判策略、当前版本、判分方式、答案契约、请求变量、会话绑定方式） |
 | `test_case_revision` | 用例版本快照（全字段快照、变更类型、变更说明、操作人） |
 | `batch_task` | 批量任务（并发、QPS、环境失败重试策略、状态、统计、控制标志） |
 | `execution_record` | 单次尝试执行（`case_version` 绑定、尝试次数、错误分类、状态、得分、轮次、时延、Token、终止原因、判分模式与事实冗余） |
@@ -380,7 +405,7 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 | 分组 | 主要接口 |
 | --- | --- |
 | 认证 | `POST /auth/login`、`GET /auth/me` |
-| 环境 | `GET/POST /environments`、`PUT/DELETE /environments/{id}`、`GET/PUT /environments/{id}/variables`、`POST /environments/{id}/health-check`、`GET /environments/{id}/usage` |
+| 环境 | `GET/POST /environments`、`PUT/DELETE /environments/{id}`、`GET/PUT /environments/{id}/variables`、`POST /environments/{id}/health-check`、`GET /environments/{id}/usage`、`POST /environments/{id}/preview`（选示例用例渲染报文） |
 | 模型 | `GET/POST /models`、`PUT/DELETE /models/{id}`、`POST /models/{id}/test`、`POST /models/opencode/catalog`（拉取 OpenCode Serve 可用模型与 Agent） |
 | Prompt | `GET/POST /prompts`、`GET/PUT/DELETE /prompts/{id}`、`POST /prompts/{id}/versions`、`GET /prompts/{id}/versions/{version}`、`GET /prompts/{id}/usage`、`POST /prompts/{id}/sandbox` |
 | 用例 | `GET/POST /cases`、`GET/PUT/DELETE /cases/{id}`、`POST /cases/{id}/debug`、`POST /cases/ai-draft`（AI 草稿）、`GET /cases/{id}/facts`、`POST /cases/{id}/facts/{fact_id}/verify`、`POST /cases/{id}/review`、`POST /cases/{id}/freeze`、`GET /cases/{id}/revisions`、`GET /cases/{id}/revisions/diff`、`POST /cases/{id}/rollback`、`GET /cases/{id}/trend`、`GET /cases/{id}/executions`、`GET /cases/compare/runs`、`POST /cases/import`、`GET /cases/export` |
@@ -401,7 +426,7 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 
 ```powershell
 cd backend
-python -m pytest -q          # 225 passed（Mock / PostgreSQL 依赖不可用时自动 skip）
+python -m pytest -q          # 235 passed（Mock / PostgreSQL 依赖不可用时自动 skip）
 python -m ruff check billing_qa scripts tests
 ```
 

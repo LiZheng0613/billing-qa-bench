@@ -34,6 +34,8 @@ EXPORT_ORDER: tuple[str, ...] = (
     "priority",
     "tags",
     "environment_code",
+    "request_variables",
+    "session_mode",
     "query",
     "expected_answer",
     "expected_rules",
@@ -106,6 +108,7 @@ _STRUCTURED_FIELDS = {
     "response_contract",
     "plan_spec",
     "prompt_overrides",
+    "request_variables",
 }
 _LIST_FIELDS = {"tags", "judge_model_ids", "judge_model_codes"}
 _UPPER_FIELDS = {
@@ -119,6 +122,7 @@ _UPPER_FIELDS = {
     "judge_strategy",
     "simulator_template_strategy",
     "judge_template_strategy",
+    "session_mode",
 }
 
 ALLOWED_FIELDS = (set(SNAPSHOT_FIELDS) | set(REFERENCE_CODES) | {"judge_model_ids"}) - READONLY_FIELDS

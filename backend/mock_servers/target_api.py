@@ -1191,7 +1191,18 @@ async def chat(request: Request):
         raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
 
     query = str(body.get("query") or "")
-    session_id = str(body.get("session_id") or "") or f"sess-{uuid.uuid4().hex[:12]}"
+    raw_session = (
+        body.get("session_id")
+        or body.get("sessionId")
+        or body.get("conversationId")
+        or ""
+    )
+    if "[MOCK:REQUIRE_SESSION]" in query and not raw_session:
+        raise HTTPException(
+            status_code=400,
+            detail="session required: request is missing conversation/session id",
+        )
+    session_id = str(raw_session) or f"sess-{uuid.uuid4().hex[:12]}"
     history = body.get("history") or []
 
     if "模拟崩溃" in query or "触发异常" in query:
@@ -1210,6 +1221,10 @@ async def chat(request: Request):
         result = _resolve_result(query, history, session_id, None)
     result = dict(result)
     result["session_id"] = session_id
+    # 回显请求中的自定义参数（不含 query/history），便于离线断言变量注入是否生效
+    result["received_params"] = {
+        key: value for key, value in body.items() if key not in {"query", "history"}
+    }
 
     accept = request.headers.get("accept", "")
     if "text/event-stream" in accept:

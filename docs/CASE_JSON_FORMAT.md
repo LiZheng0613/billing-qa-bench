@@ -122,6 +122,8 @@
 | `hidden_context` | object[] | 隐藏信息释放表 `{key, content, release_hint}` |
 | `max_turns` | int | 1～20 |
 | `terminate_conditions` | object | 终止条件 |
+| `request_variables` | object | 用例级请求变量，渲染进环境请求头 / 请求体模板；值支持字符串、数字与 JSON |
+| `session_mode` | enum | `INHERIT`（默认，跟随环境）/ `SERVER_RETURNED` / `CLIENT_GENERATED`；固定值由 `request_variables.session_id` 表达 |
 
 ### 3.3 模板与模型
 
@@ -155,7 +157,53 @@
 > `answer_envelope` 一起导出。跨环境导入时如需保留「已取证」状态，请把这几项一并带上；
 > 否则新事实默认 `PENDING`，会导致该用例无法评审通过或冻结。
 
-### 3.5 评审与数据集
+### 3.5 请求变量与多轮会话绑定
+
+执行器渲染请求报文时按三层优先级合并变量：
+
+```
+运行时变量（query / session_id / history / history_text / turn）
+  > 用例 request_variables
+    > 环境变量池
+```
+
+- 占位符写法为 `{{variable}}`，可出现在环境 `headers_template` 与 `body_template` 的任意位置；
+- 会话字段名由模板决定（如 `"conversationId": "{{session_id}}"`），不同接口可各自定义；
+- `request_variables` 的 key 需匹配 `[A-Za-z_][A-Za-z0-9_]*`，且不能使用运行时保留字
+  （`query` / `history` / `history_text` / `turn`），否则校验失败；总量上限 16KB。
+
+会话模式解析优先级：
+
+| 场景 | 生效模式 |
+| --- | --- |
+| `request_variables.session_id` 有值 | `FIXED`（最高优先，所有轮次使用该固定值） |
+| `session_mode` 非 `INHERIT` | 使用用例配置 |
+| 其他 | 跟随环境 `session_mode` |
+
+| 模式 | 行为 |
+| --- | --- |
+| `SERVER_RETURNED` | 首轮不传会话值，由响应回填并用于后续轮次（默认） |
+| `CLIENT_GENERATED` | 执行开始时生成唯一值（`exec-{execution_id}-xxxxxxxx`），全程各轮一致 |
+| `FIXED` | 使用用例 `request_variables.session_id`，不采纳响应返回值 |
+
+示例：
+
+```json
+{
+  "code": "NEW-MULTI-001",
+  "name": "多轮账单追问（客户端会话）",
+  "case_type": "STATIC_MULTI",
+  "environment_code": "QA-MOCK",
+  "session_mode": "CLIENT_GENERATED",
+  "request_variables": { "user_id": "13800138000", "channel": "app" },
+  "turns": [
+    { "query": "我本月账单多少钱？" },
+    { "query": "其中超套流量费是多少？" }
+  ]
+}
+```
+
+### 3.6 评审与数据集
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -163,7 +211,7 @@
 | `dataset_version` | string | 数据集版本标签 |
 | `dedupe_hash` | string | 去重指纹，一般由系统维护 |
 
-### 3.6 只读字段（出现也不写入）
+### 3.7 只读字段（出现也不写入）
 
 `id`、`current_version`、`created_by`、`updated_by`、`deleted_at`、`reviewed_by`、
 `created_at`、`updated_at`、`exported_at`、`schema`、`schema_version`、`case_count`。

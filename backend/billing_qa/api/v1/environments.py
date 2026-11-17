@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,15 +20,24 @@ from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.common import MessageResponse, Page
 from billing_qa.schemas.environment import (
+    DEFAULT_BODY_TEMPLATE,
     EnvironmentCreate,
     EnvironmentOut,
     EnvironmentUpdate,
     EnvironmentUsage,
+    EnvPreviewRequest,
+    EnvPreviewResponse,
     EnvVariableOut,
     HealthCheckResult,
     VariableBatchUpdate,
 )
-from billing_qa.services.adapter.target_api import EnvContext, TargetApiAdapter
+from billing_qa.services.adapter.renderer import find_variables, format_history, render_structure
+from billing_qa.services.adapter.session import init_session_id, resolve_session_mode
+from billing_qa.services.adapter.target_api import (
+    EnvContext,
+    TargetApiAdapter,
+    _sanitize_headers,
+)
 
 router = APIRouter(
     prefix="/environments",
@@ -228,4 +240,105 @@ async def environment_usage(
     ).scalar_one()
     return EnvironmentUsage(
         environment_id=env_id, case_count=int(case_count), task_count=int(task_count)
+    )
+
+
+# ---------------------------------------------------------------------- #
+# 请求报文预览（接口配置页使用）
+# ---------------------------------------------------------------------- #
+_RUNTIME_VARIABLES = {"query", "session_id", "history", "history_text", "turn"}
+
+
+def _preview_query(case: TestCase) -> str:
+    if case.query:
+        return case.query
+    if case.initial_query:
+        return case.initial_query
+    turns = case.turns or []
+    if turns and isinstance(turns[0], dict):
+        return str(turns[0].get("query") or "")
+    return "示例提问"
+
+
+def _template_placeholders(template: Any) -> list[str]:
+    return find_variables(json.dumps(template or {}, ensure_ascii=False))
+
+
+def _variable_origins(
+    ctx: EnvContext, case_vars: dict[str, Any], mode: str
+) -> dict[str, str]:
+    names: list[str] = []
+    for template in (ctx.headers_template, ctx.body_template or DEFAULT_BODY_TEMPLATE):
+        for name in _template_placeholders(template):
+            if name not in names:
+                names.append(name)
+    origins: dict[str, str] = {}
+    for name in names:
+        if name == "session_id":
+            origins[name] = "CASE" if mode == "FIXED" else "SESSION"
+        elif name in _RUNTIME_VARIABLES:
+            origins[name] = "RUNTIME"
+        elif name in case_vars:
+            origins[name] = "CASE"
+        elif name in ctx.variables:
+            origins[name] = "ENV"
+        else:
+            origins[name] = "MISSING"
+    return origins
+
+
+@router.post(
+    "/{env_id}/preview",
+    response_model=EnvPreviewResponse,
+    summary="请求报文预览（选示例用例带入变量）",
+)
+async def preview_request(
+    env_id: int,
+    payload: EnvPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+) -> EnvPreviewResponse:
+    """只读预览：用示例用例的请求变量与会话绑定配置渲染一次请求报文。"""
+    env = await _get_env(db, env_id)
+    case = await db.get(TestCase, payload.case_id)
+    if case is None or case.deleted_at is not None:
+        raise NotFoundError("示例用例不存在或已删除")
+
+    ctx = EnvContext.from_orm(env)
+    case_vars = case.request_variables or {}
+    mode = resolve_session_mode(case.session_mode, ctx.session_mode, case_vars)
+    query = _preview_query(case)
+    session_id = init_session_id(mode, case_vars, None)
+
+    variables: dict[str, Any] = dict(ctx.variables)
+    variables.update(case_vars)
+    variables.update(
+        {
+            "query": query,
+            "session_id": session_id or "",
+            "history": format_history([], style="messages"),
+            "history_text": format_history([], style="text"),
+            "turn": 1,
+        }
+    )
+
+    header_missing: list[str] = []
+    headers = render_structure(ctx.headers_template or {}, variables, header_missing)
+    missing: list[str] = list(header_missing)
+    body = render_structure(
+        ctx.body_template or dict(DEFAULT_BODY_TEMPLATE), variables, missing
+    )
+
+    warnings: list[str] = []
+    unique_missing = list(dict.fromkeys(missing))
+    if unique_missing:
+        warnings.append(f"模板占位符缺少变量：{', '.join(unique_missing)}")
+
+    return EnvPreviewResponse(
+        headers=_sanitize_headers({str(k): str(v) for k, v in (headers or {}).items()}),
+        body=body,
+        origins=_variable_origins(ctx, case_vars, mode),
+        session_mode_resolved=mode,
+        session_id=session_id,
+        query=query,
+        warnings=warnings,
     )

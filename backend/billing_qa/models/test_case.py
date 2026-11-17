@@ -45,6 +45,16 @@ class TestCase(Base, TimestampMixin):
         ForeignKey("environment.id", ondelete="SET NULL"), nullable=True
     )
 
+    # ---- 请求变量与会话绑定 ----
+    request_variables: Mapped[dict | None] = mapped_column(
+        JSON, comment='用例级请求变量，如 {"user_id":"13800138000"}'
+    )
+    session_mode: Mapped[str] = mapped_column(
+        String(24),
+        default="INHERIT",
+        comment="会话绑定方式：INHERIT / SERVER_RETURNED / CLIENT_GENERATED（FIXED 由 request_variables.session_id 表达）",
+    )
+
     # ---- 单轮 ----
     query: Mapped[str | None] = mapped_column(Text, comment="固定输入问题")
     expected_answer: Mapped[str | None] = mapped_column(Text, comment="预期口径/数值")
