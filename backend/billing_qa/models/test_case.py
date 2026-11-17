@@ -45,14 +45,14 @@ class TestCase(Base, TimestampMixin):
         ForeignKey("environment.id", ondelete="SET NULL"), nullable=True
     )
 
-    # ---- 请求变量与会话绑定 ----
+    # ---- 请求变量 ----
     request_variables: Mapped[dict | None] = mapped_column(
         JSON, comment='用例级请求变量，如 {"user_id":"13800138000"}'
     )
     session_mode: Mapped[str] = mapped_column(
         String(24),
         default="INHERIT",
-        comment="会话绑定方式：INHERIT / SERVER_RETURNED / CLIENT_GENERATED（FIXED 由 request_variables.session_id 表达）",
+        comment="已废弃：会话方式统一由执行环境决定，保留列兼容历史数据",
     )
 
     # ---- 单轮 ----

@@ -11,7 +11,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from billing_qa.models.enums import (
-    CaseSessionMode,
     CaseType,
     FactKind,
     GradingMode,
@@ -248,14 +247,10 @@ class CaseBase(BaseModel):
     tags: list[str] = Field(default_factory=list)
     environment_id: int | None = None
 
-    # ---- 请求变量与会话绑定 ----
+    # ---- 请求变量 ----
     request_variables: dict[str, Any] = Field(
         default_factory=dict,
         description="渲染进请求头/请求体模板的用例级变量，值支持任意 JSON 类型",
-    )
-    session_mode: CaseSessionMode = Field(
-        default=CaseSessionMode.INHERIT,
-        description="会话绑定方式：INHERIT 跟随环境；FIXED 由 request_variables.session_id 表达",
     )
 
     query: str | None = None
@@ -357,7 +352,6 @@ class CaseUpdate(BaseModel):
     tags: list[str] | None = None
     environment_id: int | None = None
     request_variables: dict[str, Any] | None = None
-    session_mode: CaseSessionMode | None = None
     query: str | None = None
     expected_answer: str | None = None
     expected_rules: RuleConfig | None = None
@@ -434,7 +428,6 @@ class CaseOut(ORMModel):
     tags: list | None
     environment_id: int | None
     request_variables: dict | None = None
-    session_mode: str | None = None
     query: str | None
     expected_answer: str | None
     expected_rules: dict | None

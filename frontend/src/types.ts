@@ -81,7 +81,6 @@ export interface EnvVariableInput {
 
 // ------------------------------------------------------- 多轮会话绑定
 export type SessionMode = 'SERVER_RETURNED' | 'CLIENT_GENERATED'
-export type CaseSessionMode = 'INHERIT' | 'SERVER_RETURNED' | 'CLIENT_GENERATED'
 /** 变量来源标注：运行时 / 用例 / 环境变量池 / 会话 / 前置接口 / 缺失 */
 export type VariableOrigin = 'RUNTIME' | 'CASE' | 'ENV' | 'SESSION' | 'PREHOOK' | 'MISSING'
 
@@ -512,7 +511,6 @@ export interface TestCase {
   tags: string[] | null
   environment_id: number | null
   request_variables: Record<string, unknown> | null
-  session_mode: string | null
   query: string | null
   expected_answer: string | null
   expected_rules: RuleConfig | null
@@ -569,7 +567,6 @@ export interface CasePayload {
   tags?: string[]
   environment_id?: number | null
   request_variables?: Record<string, unknown> | null
-  session_mode?: CaseSessionMode
   query?: string | null
   expected_answer?: string | null
   expected_rules?: RuleConfig | null

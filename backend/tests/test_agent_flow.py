@@ -327,7 +327,6 @@ async def test_executor_agent_flow_two_turns() -> None:
                 {"query": "那费用都包含哪些项目？"},
             ],
             request_variables={"userid": "13800138000", "custid": "C0001"},
-            session_mode="SERVER_RETURNED",
         )
         db.add(case)
         await db.commit()
@@ -339,7 +338,6 @@ async def test_executor_agent_flow_two_turns() -> None:
             "case_type": "STATIC_MULTI",
             "query": None,
             "request_variables": {"userid": "13800138000", "custid": "C0001"},
-            "session_mode": "SERVER_RETURNED",
             "grading_mode": "LEGACY",
             "expected_rules": None,
             "turns": [

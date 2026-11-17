@@ -104,16 +104,8 @@ class GradingMode(StrEnum):
 
 
 class SessionMode(StrEnum):
-    """环境级多轮会话绑定方式。"""
+    """环境级多轮会话绑定方式（会话方式由环境统一决定）。"""
 
-    SERVER_RETURNED = "SERVER_RETURNED"
-    CLIENT_GENERATED = "CLIENT_GENERATED"
-
-
-class CaseSessionMode(StrEnum):
-    """用例级多轮会话绑定方式；INHERIT 表示跟随环境配置。"""
-
-    INHERIT = "INHERIT"
     SERVER_RETURNED = "SERVER_RETURNED"
     CLIENT_GENERATED = "CLIENT_GENERATED"
 

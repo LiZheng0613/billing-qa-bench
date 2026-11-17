@@ -75,8 +75,8 @@ async def _check_session_binding() -> list[str]:
     )
     # 用例变量应覆盖同名的环境变量池取值
     case_vars: dict[str, object] = {"user_id": "13800138000", "channel": "smoke"}
-    mode = resolve_session_mode("INHERIT", ctx.session_mode, case_vars)
-    session_id = init_session_id(mode, case_vars, 9001)
+    mode = resolve_session_mode(ctx.session_mode)
+    session_id = init_session_id(mode, 9001)
     if mode != CLIENT_GENERATED or not session_id:
         return [f"会话模式解析异常: mode={mode} session={session_id}"]
 

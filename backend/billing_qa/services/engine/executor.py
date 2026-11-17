@@ -155,10 +155,8 @@ class CaseExecutor:
         if not query:
             raise ValidationError("单轮用例缺少 query")
         case_vars = snapshot.get("request_variables") or {}
-        mode = resolve_session_mode(
-            snapshot.get("session_mode"), adapter.env.session_mode, case_vars
-        )
-        session_id = init_session_id(mode, case_vars, execution_id)
+        mode = resolve_session_mode(adapter.env.session_mode)
+        session_id = init_session_id(mode, execution_id)
         response = await adapter.chat(
             query, session_id=session_id, extra_variables=case_vars
         )
@@ -190,10 +188,8 @@ class CaseExecutor:
         rules_enabled = _legacy_rules_enabled(snapshot)
         history: list[dict[str, str]] = []
         case_vars = snapshot.get("request_variables") or {}
-        session_mode = resolve_session_mode(
-            snapshot.get("session_mode"), adapter.env.session_mode, case_vars
-        )
-        session_id: str | None = init_session_id(session_mode, case_vars, execution_id)
+        session_mode = resolve_session_mode(adapter.env.session_mode)
+        session_id: str | None = init_session_id(session_mode, execution_id)
         records: list[dict[str, Any]] = []
         rules: list[RuleResult] = []
         notes: list[str] = []
@@ -250,10 +246,8 @@ class CaseExecutor:
         released_keys: set[str] = set()
         history: list[dict[str, str]] = []
         case_vars = snapshot.get("request_variables") or {}
-        session_mode = resolve_session_mode(
-            snapshot.get("session_mode"), adapter.env.session_mode, case_vars
-        )
-        session_id: str | None = init_session_id(session_mode, case_vars, execution_id)
+        session_mode = resolve_session_mode(adapter.env.session_mode)
+        session_id: str | None = init_session_id(session_mode, execution_id)
         records: list[dict[str, Any]] = []
         rules: list[RuleResult] = []
         rules_enabled = _legacy_rules_enabled(snapshot)
@@ -731,7 +725,7 @@ class CaseExecutor:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         # 会话痕迹记录的是「本轮实际生效的会话值」：
-        # CLIENT_GENERATED / FIXED 为请求侧生成值，SERVER_RETURNED 采纳响应回填值。
+        # CLIENT_GENERATED 为请求侧生成值，SERVER_RETURNED 采纳响应回填值。
         return {
             "turn_index": turn_index,
             "query": query,

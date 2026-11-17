@@ -181,14 +181,12 @@
 >
 > 配置示例见 [`AGENT_INTEGRATION_GUIDE.md`](AGENT_INTEGRATION_GUIDE.md)。
 
-会话值的**生成方尚未确定**，因此平台同时支持两种模式，环境级默认 + 用例级可覆盖：
+会话值的**生成方**决定环境配置：平台支持两种模式，方式由环境统一决定，用例不单独配置：
 
 | 模式 | 配置位置 | 行为 |
 | --- | --- | --- |
 | `SERVER_RETURNED` | 环境 `session_mode`（默认） | 首轮不传会话值，平台从响应中提取并回填，后续轮次沿用 |
 | `CLIENT_GENERATED` | 环境 `session_mode` | 执行开始时由平台生成唯一值（`exec-{execution_id}-xxxxxxxx`），全程各轮携带 |
-| `INHERIT` | 用例 `session_mode`（默认） | 跟随环境配置 |
-| `FIXED` | 用例 `request_variables.session_id` | 使用显式固定值，优先级最高（用于复现特定会话 / 调试） |
 
 会话字段名**由模板占位符位置决定**，平台不写死字段名。例如：
 

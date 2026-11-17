@@ -5,7 +5,6 @@ import type {
   AnswerEnvelope,
   CaseAIDraft,
   CasePayload,
-  CaseSessionMode,
   CaseType,
   DraftFact,
   DraftMissing,
@@ -558,28 +557,10 @@ function removeFact(section: 'must' | 'may', index: number): void {
   if (section === 'must' && !rows.length) rows.push(emptyFactRow())
 }
 
-// ---- 请求变量与会话绑定 ----
+// ---- 请求变量与会话提示 ----
 const RESERVED_REQUEST_VARIABLES = ['query', 'history', 'history_text', 'turn', 'timestamp_iso']
 const RUNTIME_PLACEHOLDERS = ['query', 'session_id', 'history', 'history_text', 'turn', 'timestamp_iso']
 const SESSION_FIELD_EXAMPLE = '"conversationId": "{{session_id}}"'
-
-const CASE_SESSION_OPTIONS: Array<{
-  value: CaseSessionMode
-  label: string
-  desc: string
-}> = [
-  { value: 'INHERIT', label: '跟随环境', desc: '使用执行环境配置的会话模式' },
-  {
-    value: 'SERVER_RETURNED',
-    label: '服务端返回',
-    desc: '首轮不带会话值，由目标接口返回后回填，后续轮次沿用',
-  },
-  {
-    value: 'CLIENT_GENERATED',
-    label: '客户端生成',
-    desc: '执行开始时平台生成唯一会话值，全程各轮携带同一值',
-  },
-]
 
 const selectedEnvironment = computed(
   () => props.environments.find((env) => env.id === form.environment_id) ?? null,
@@ -734,7 +715,6 @@ function resetForm(): void {
     ? JSON.stringify(source?.request_variables ?? {}, null, 2)
     : ''
   form.requestVariablesMode = 'rows'
-  form.sessionMode = (source?.session_mode as CaseSessionMode) ?? 'INHERIT'
   resetContractForm(source)
   form.change_summary = ''
   void loadVersions('simulator')
@@ -993,7 +973,6 @@ function buildPayload(): CasePayload | null {
     tags: splitList(form.tagsText),
     environment_id: form.environment_id,
     request_variables: requestVariables,
-    session_mode: form.sessionMode,
     max_turns: form.maxTurns,
     simulator_template_id: form.simulator_template_id,
     simulator_template_strategy: form.simulatorStrategy,
@@ -2748,8 +2727,7 @@ function openDraftResult(): void {
                   </code>
                 </p>
                 <p class="mt-1 text-slate-500">
-                  query / session_id / history / turn / timestamp_iso 由运行时自动注入，无需在此填写；需要固定会话值时添加
-                  key 为 session_id 的变量即可（优先级最高）。
+                  query / session_id / history / turn / timestamp_iso 由运行时自动注入，无需在此填写。
                 </p>
                 <p v-if="missingEnvPlaceholders.length" class="mt-1 text-amber-700">
                   尚未提供取值：{{ missingEnvPlaceholders.join('、') }}
@@ -2757,51 +2735,28 @@ function openDraftResult(): void {
               </div>
             </section>
 
-            <section class="space-y-3">
+            <section class="space-y-2">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">
                   多轮会话绑定
                 </h3>
-                <span class="text-[11px] text-slate-500">
-                  环境默认：{{
-                    selectedEnvironment
-                      ? selectedEnvironment.session_mode === 'CLIENT_GENERATED'
-                        ? '客户端生成'
-                        : '服务端返回'
-                      : '未绑定环境'
-                  }}
-                </span>
+                <span class="text-[11px] text-slate-500">由执行环境统一决定</span>
               </div>
-              <div class="grid gap-2 sm:grid-cols-3">
-                <label
-                  v-for="option in CASE_SESSION_OPTIONS"
-                  :key="option.value"
-                  class="flex cursor-pointer items-start gap-2 rounded-xl border p-2.5 transition"
-                  :class="
-                    form.sessionMode === option.value
-                      ? 'border-indigo-300 bg-indigo-50/70'
-                      : 'border-slate-200 bg-white hover:border-slate-300'
-                  "
-                >
-                  <input
-                    v-model="form.sessionMode"
-                    type="radio"
-                    :value="option.value"
-                    class="mt-0.5 h-4 w-4 border-slate-300 text-indigo-600"
-                  />
-                  <span>
-                    <span class="block text-xs font-medium text-slate-800">{{ option.label }}</span>
-                    <span class="block text-[11px] leading-relaxed text-slate-500">
-                      {{ option.desc }}
-                    </span>
-                  </span>
-                </label>
-              </div>
-              <p class="text-[11px] text-slate-500">
-                请求报文中的会话字段名由环境模板占位符决定，例如
+              <div
+                class="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px] leading-relaxed text-slate-600"
+              >
+                当前环境：
+                <span class="font-medium text-slate-800">{{
+                  selectedEnvironment
+                    ? selectedEnvironment.session_mode === 'CLIENT_GENERATED'
+                      ? '客户端生成会话（全程携带平台生成值）'
+                      : '服务端返回会话（首轮为空，响应回填）'
+                    : '未绑定环境'
+                }}</span>
+                。请求报文中的会话字段名由环境模板占位符决定，例如
                 <code class="font-mono text-[10px] text-slate-700">{{ SESSION_FIELD_EXAMPLE }}</code>
-                ，不同接口可各自定义字段名。
-              </p>
+                。如需调整会话方式，请到「设置 → 环境」修改。
+              </div>
             </section>
 
             <section class="space-y-3">

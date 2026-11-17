@@ -123,7 +123,6 @@
 | `max_turns` | int | 1～20 |
 | `terminate_conditions` | object | 终止条件 |
 | `request_variables` | object | 用例级请求变量，渲染进环境请求头 / 请求体模板；值支持字符串、数字与 JSON |
-| `session_mode` | enum | `INHERIT`（默认，跟随环境）/ `SERVER_RETURNED` / `CLIENT_GENERATED`；固定值由 `request_variables.session_id` 表达 |
 
 ### 3.3 模板与模型
 
@@ -174,29 +173,22 @@
 - `request_variables` 的 key 需匹配 `[A-Za-z_][A-Za-z0-9_]*`，且不能使用运行时保留字
   （`query` / `history` / `history_text` / `turn` / `timestamp_iso`），否则校验失败；总量上限 16KB。
 
-会话模式解析优先级：
-
-| 场景 | 生效模式 |
-| --- | --- |
-| `request_variables.session_id` 有值 | `FIXED`（最高优先，所有轮次使用该固定值） |
-| `session_mode` 非 `INHERIT` | 使用用例配置 |
-| 其他 | 跟随环境 `session_mode` |
+会话方式（`SERVER_RETURNED` / `CLIENT_GENERATED`）由**执行环境**统一配置，所有用例跟随，
+用例 JSON 不再接受 `session_mode` 字段：
 
 | 模式 | 行为 |
 | --- | --- |
-| `SERVER_RETURNED` | 首轮不传会话值，由响应回填并用于后续轮次（默认） |
+| `SERVER_RETURNED` | 首轮渲染空会话值，由响应回填并用于后续轮次（默认） |
 | `CLIENT_GENERATED` | 执行开始时生成唯一值（`exec-{execution_id}-xxxxxxxx`），全程各轮一致 |
-| `FIXED` | 使用用例 `request_variables.session_id`，不采纳响应返回值 |
 
-示例：
+示例（会话方式由 `QA-MOCK` 环境决定）：
 
 ```json
 {
   "code": "NEW-MULTI-001",
-  "name": "多轮账单追问（客户端会话）",
+  "name": "多轮账单追问",
   "case_type": "STATIC_MULTI",
   "environment_code": "QA-MOCK",
-  "session_mode": "CLIENT_GENERATED",
   "request_variables": { "user_id": "13800138000", "channel": "app" },
   "turns": [
     { "query": "我本月账单多少钱？" },

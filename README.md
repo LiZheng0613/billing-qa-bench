@@ -216,14 +216,12 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 - **时间戳**：`timestamp_iso` 为请求时刻的 ISO 8601 字符串（如 `2026-11-17T18:00:00.123`），每轮请求刷新。
 - **Basic 鉴权**：环境可配置账号 + 密码（密码加密存储），执行时自动生成 `Authorization: Basic base64(账号:密码)`；请求头模板显式写了 `Authorization` 时以模板为准。
 - **前置接口钩子**：执行前调用一次，支持用环境变量池与用例变量渲染 headers / body，并用 `extract`（变量名 → JSONPath）提取 `conversationId`、Token 等字段，供主请求与后续轮次复用；旧的 `token_jsonpath` / `token_var` 配置继续兼容。
-- **会话绑定**：环境级 `session_mode` 二选一，用例可覆盖或跟随环境：
+- **会话绑定**：会话方式由**执行环境统一决定**，所有用例跟随，不在用例上单独选择：
 
   | 模式 | 行为 |
   | --- | --- |
-  | `SERVER_RETURNED`（环境默认） | 首轮不传会话值，由被测接口返回后回填，后续轮次沿用 |
+  | `SERVER_RETURNED`（默认） | 首轮渲染空会话值，由被测接口返回后回填，后续轮次沿用 |
   | `CLIENT_GENERATED` | 执行开始时生成唯一值（`exec-{execution_id}-xxxxxxxx`），全程各轮一致 |
-  | `INHERIT`（用例默认） | 跟随环境配置 |
-  | `FIXED` | 用例 `request_variables` 中显式给出 `session_id`，优先级最高 |
 
 - **字段名由模板决定**：例如 `"conversationId": "{{session_id}}"` 或 `"sessionid": "{{session_id}}"`，不同接口可各自定义，平台不写死字段名；首轮渲染为空字符串，由目标接口按「首轮对话」处理。
 - **接口配置页**：环境编辑弹窗内提供「Basic 鉴权」「前置接口钩子」「多轮会话绑定」、可用占位符清单与变量来源标注，并可选一条示例用例做**报文预览**（只读，不落库）。

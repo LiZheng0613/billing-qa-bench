@@ -307,7 +307,7 @@ def _variable_origins(
     prehook_names = _prehook_variables(ctx)
     for name in names:
         if name == "session_id":
-            origins[name] = "CASE" if mode == "FIXED" else "SESSION"
+            origins[name] = "SESSION"
         elif name in _RUNTIME_VARIABLES:
             origins[name] = "RUNTIME"
         elif name in case_vars:
@@ -339,9 +339,9 @@ async def preview_request(
 
     ctx = EnvContext.from_orm(env)
     case_vars = case.request_variables or {}
-    mode = resolve_session_mode(case.session_mode, ctx.session_mode, case_vars)
+    mode = resolve_session_mode(ctx.session_mode)
     query = _preview_query(case)
-    session_id = init_session_id(mode, case_vars, None)
+    session_id = init_session_id(mode, None)
 
     variables: dict[str, Any] = dict(ctx.variables)
     variables.update(case_vars)

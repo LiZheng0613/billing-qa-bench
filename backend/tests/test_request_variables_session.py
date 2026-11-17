@@ -18,7 +18,6 @@ from billing_qa.models.test_case import TestCase, TestCaseRevision
 from billing_qa.schemas.case import validate_request_variables
 from billing_qa.services.adapter.session import (
     CLIENT_GENERATED,
-    FIXED,
     SERVER_RETURNED,
     init_session_id,
     resolve_session_mode,
@@ -30,33 +29,25 @@ from billing_qa.services.engine.executor import CaseExecutor
 # ---------------------------------------------------------------------- #
 # 会话模式解析
 # ---------------------------------------------------------------------- #
-def test_resolve_session_mode_priority() -> None:
-    # 环境默认
-    assert resolve_session_mode("INHERIT", CLIENT_GENERATED, {}) == CLIENT_GENERATED
-    # 用例覆盖环境
-    assert resolve_session_mode(SERVER_RETURNED, CLIENT_GENERATED, {}) == SERVER_RETURNED
-    # 用例固定值优先级最高
-    assert (
-        resolve_session_mode("INHERIT", CLIENT_GENERATED, {"session_id": "fixed-1"})
-        == FIXED
-    )
-    # 缺省回退
-    assert resolve_session_mode(None, None, None) == SERVER_RETURNED
+def test_resolve_session_mode_from_environment() -> None:
+    # 会话方式只由环境决定，用例侧不再提供覆盖入口
+    assert resolve_session_mode(CLIENT_GENERATED) == CLIENT_GENERATED
+    assert resolve_session_mode(SERVER_RETURNED) == SERVER_RETURNED
+    assert resolve_session_mode(None) == SERVER_RETURNED
+    assert resolve_session_mode("BOGUS") == SERVER_RETURNED
 
 
 def test_init_session_id_per_mode() -> None:
-    assert init_session_id(SERVER_RETURNED, {}, 7) is None
-    generated = init_session_id(CLIENT_GENERATED, {}, 7)
+    assert init_session_id(SERVER_RETURNED, 7) is None
+    generated = init_session_id(CLIENT_GENERATED, 7)
     assert generated is not None and generated.startswith("exec-7-")
-    assert init_session_id(CLIENT_GENERATED, {}, 7) != generated  # 每次执行独立
-    assert init_session_id(FIXED, {"session_id": "abc"}, 7) == "abc"
+    assert init_session_id(CLIENT_GENERATED, 7) != generated  # 每次执行独立
 
 
 def test_session_updates_only_server_returned() -> None:
     assert session_updates_from_response(SERVER_RETURNED, "old", "new") == "new"
     assert session_updates_from_response(SERVER_RETURNED, "old", None) == "old"
     assert session_updates_from_response(CLIENT_GENERATED, "gen", "server") == "gen"
-    assert session_updates_from_response(FIXED, "fixed", "server") == "fixed"
 
 
 # ---------------------------------------------------------------------- #
@@ -154,7 +145,6 @@ async def test_preview_renders_case_variables(client: httpx.AsyncClient) -> None
     )
     assert case.status_code == 200, case.text
     case_id = case.json()["id"]
-    assert case.json()["session_mode"] == "INHERIT"
     assert case.json()["request_variables"] == {
         "user_id": "13800138000",
         "channel": "app",
@@ -174,31 +164,6 @@ async def test_preview_renders_case_variables(client: httpx.AsyncClient) -> None
         assert body["origins"]["session_id"] == "SESSION"
         assert body["origins"]["user_id"] == "CASE"
         assert body["warnings"] == []
-
-        # 固定值模式：显式 session_id 覆盖环境模式
-        fixed_case = await client.post(
-            "/cases",
-            json={
-                "code": f"{case_code}-FIX",
-                "name": "固定会话用例",
-                "case_type": "SINGLE",
-                "query": "查余额",
-                "environment_id": env_id,
-                "request_variables": {"session_id": "fixed-session-1", "user_id": "13900139000"},
-            },
-        )
-        assert fixed_case.status_code == 200, fixed_case.text
-        fixed_id = fixed_case.json()["id"]
-        try:
-            fixed_preview = await client.post(
-                f"/environments/{env_id}/preview", json={"case_id": fixed_id}
-            )
-            assert fixed_preview.status_code == 200, fixed_preview.text
-            assert fixed_preview.json()["session_mode_resolved"] == FIXED
-            assert fixed_preview.json()["body"]["conversationId"] == "fixed-session-1"
-            assert fixed_preview.json()["origins"]["session_id"] == "CASE"
-        finally:
-            await client.delete(f"/cases/{fixed_id}")
     finally:
         await client.delete(f"/cases/{case_id}")
         await client.delete(f"/environments/{env_id}")
@@ -288,7 +253,6 @@ async def test_executor_injects_case_variables_and_client_session() -> None:
             environment_id=env.id,
             query="帮我查一下 13800138000 本月账单总额",
             request_variables={"user_id": "13800138000", "channel": "smoke"},
-            session_mode=CLIENT_GENERATED,
         )
         db.add(case)
         await db.commit()
@@ -300,7 +264,6 @@ async def test_executor_injects_case_variables_and_client_session() -> None:
             "case_type": "SINGLE",
             "query": "帮我查一下 13800138000 本月账单总额",
             "request_variables": {"user_id": "13800138000", "channel": "smoke"},
-            "session_mode": CLIENT_GENERATED,
             "grading_mode": "LEGACY",
             "expected_rules": None,
             "turns": None,

@@ -198,13 +198,12 @@
   "request_variables": {
     "userid": "13800138000",
     "custid": "C0001"
-  },
-  "session_mode": "INHERIT"
+  }
 }
 ```
 
 - 用例抽屉「请求变量」支持按行或 JSON 编辑；
-- `session_mode` 保持「跟随环境」即可；需要固定会话复现时，加 `"session_id": "<固定值>"`；
+- **会话方式由执行环境统一决定**，用例上不再提供选择项；
 - 运行时保留字（`query` / `session_id` / `history` / `history_text` / `turn` / `timestamp_iso`）不能出现在请求变量里。
 
 ---

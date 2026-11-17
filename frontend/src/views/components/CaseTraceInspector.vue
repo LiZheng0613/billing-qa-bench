@@ -435,7 +435,7 @@ const caseSnapshotExtra = computed(() => {
   const snap = (props.detail?.case_snapshot ?? {}) as Record<string, unknown>
   const requestVariables = (snap.request_variables ?? {}) as Record<string, unknown>
   return {
-    mode: typeof snap.session_mode === 'string' ? snap.session_mode : '',
+    mode: typeof snap.session_mode === 'string' ? snap.session_mode : 'INHERIT',
     requestVariables,
   }
 })
@@ -446,12 +446,9 @@ const sessionModeText = computed(() => {
       return '客户端生成'
     case 'SERVER_RETURNED':
       return '服务端返回'
-    case 'FIXED':
-      return '固定值'
     case 'INHERIT':
-      return '跟随环境'
     default:
-      return '—'
+      return '跟随环境'
   }
 })
 
@@ -635,12 +632,6 @@ function turnRequestKeys(turn: TurnTrace): string[] {
                 </span>
                 <span v-else class="text-[10px] text-slate-500">
                   未携带会话值（服务端新建会话）
-                </span>
-                <span
-                  v-if="caseSnapshotExtra.requestVariables.session_id"
-                  class="text-[10px] text-slate-500"
-                >
-                  固定会话：{{ variableText(caseSnapshotExtra.requestVariables.session_id) }}
                 </span>
               </div>
               <div
