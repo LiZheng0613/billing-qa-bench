@@ -1,6 +1,6 @@
 [project]
 name = "billing-qa-platform"
-version = "0.1.0"
+version = "1.0.0"
 description = "问账智能客服批量测试平台 - 后端服务"
 requires-python = ">=3.11"
 dependencies = [
