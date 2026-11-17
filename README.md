@@ -1,10 +1,10 @@
 # 问账智能客服批量测试平台
 
-面向「问账智能客服」的自动化回归与质量评估平台：把智能客服上线与迭代前的多轮对话回归、数值准确性校验与口径一致性验证，变成**可批量执行、可复现、可审计**的质量流水线。
+面向问账智能客服（帮用户查话费、账单、套餐、余额等问账问题的 AI 客服）的自动化回归与质量评估平台：把上线与迭代前的多轮对话回归、数值准确性校验与口径一致性验证，做成**可批量执行、可复现、可审计**的流水线。
 
 - 后端：Python 3.11+ / FastAPI / SQLAlchemy 2.0 Async / Alembic / PostgreSQL 15+ / Redis
 - 前端：Vue 3 `<script setup>` + TypeScript / Vite / Tailwind CSS / Pinia / ECharts
-- 交付形态：单仓库（`backend` + `frontend`），本机即可完成全链路自测，无需外部大模型与真实被测系统（内置 OpenAI 兼容 Mock LLM 与 Mock 被测客服）
+- 交付形态：单仓库（`backend` + `frontend`），本机即可完成全链路自测，无需外部大模型与真实被测系统（内置 OpenAI 兼容 Mock LLM 与 Mock 被测客服系统）
 
 ---
 
@@ -14,13 +14,15 @@
 
 | 痛点 | 现实情况 | 平台方案 |
 | --- | --- | --- |
-| 人工评测慢、主观、不可复现 | 一天抽几十通对话逐条人审，今天 90 分明天 70 分，说不出差在哪 | 批量任务并发执行；规则硬校验（金额 / 笔数 / 日期 / 必须包含 / 禁止包含）+ LLM 多裁判（`AVG` 均分 / `VETO` 一票否决）混合裁决；同一用例版本可无限次复现 |
+| 人工评测慢、主观、不可复现 | 一天人工抽检几十条对话，今天 90 分明天 70 分，说不出差在哪 | 批量任务并发执行；规则硬校验（金额 / 笔数 / 日期 / 必须包含 / 禁止包含）+ LLM 多裁判（`AVG` 均分 / `VETO` 一票否决）混合裁决；同一用例版本可反复回归，结果与证据全程留痕 |
 | 多轮对话测不全 | 用户会追问、会指代上文、会「挤牙膏式」一点一点释放信息，固定脚本覆盖不了 | 三类用例：单轮 / 静态多轮 / **动态多轮**（LLM 模拟器按目标驱动，隐藏信息逐轮释放），配三重熔断（轮次上限 / 复读检测 / 模拟器放弃）防止失控 |
-| 出了问题说不清 | 「上次还是对的」——是改了 Prompt、换了模型，还是被测接口数据变了？无法定责 | 版本快照绑定执行（`case_version`）+ 全链路 Trace（轮次、裁判明细、原始收发报文留存）+ 历史趋势与两次 Run 对比 |
+| 出了问题说不清 | 「上次还是对的」——是改了 Prompt、换了模型，还是被测接口数据变了？无法定责 | 版本快照绑定执行（`case_version`）+ 全链路 Trace（轮次、裁判明细、原始收发报文留存）+ 历史趋势与任意两次 Run 对比 |
 
 平台把这些能力串成一条质量流水线：
 
-**配置被测环境（支持真实 Agent 报文对接）→ 编写 / 导入用例（可 AI 起草）→ 评审冻结进入数据集 → 批量执行 → 大盘看通过率与时延 → 点进 Trace 定位根因 → 修订用例或口径，再回归。**
+**配置被测环境（支持真实 Agent 报文对接）→ 编写 / 导入用例（可 AI 起草）→ 评审 / 冻结沉淀数据集（答案契约用例）→ 批量执行 → 大盘看通过率与时延 → 点进 Trace 定位根因 → 修订用例或口径后再次回归。**
+
+> 演示域为电信计费问账；被测系统通过「环境」模板化对接，任何提供 HTTP(S) JSON 或 SSE 接口的智能客服都可接入。
 
 ---
 
@@ -37,11 +39,11 @@
 | 答案契约判分 | Must / May / MustNot 事实包络；名称-数值绑定（数值必须归属正确的业务名称）；取数取证（`gold_query`）与 `lucky_pass` 侥幸通过诊断 |
 | 被测系统对接 | SSE 流式 / JSON 非流式；请求头 / 体模板 `{{variable}}` 渲染；**Basic 鉴权**；**前置接口钩子**（取 `conversationId` / Token，多字段 JSONPath 提取）；会话由服务端返回回填或客户端生成；ISO 时间戳每轮刷新 |
 | Prompt 资产 | 模板版本管理、`LATEST / PINNED` 引用策略、单用例覆盖、引用影响面分析、在线试跑沙盒 |
-| AI 帮我填 | 用例抽屉全部语义字段可由 AI 生成草稿回填（不落库，人工确认后应用）；无依据的数值 / 日期不编造，进入「待补充」 |
+| AI 帮我填 | 用例抽屉中可手动填写的语义字段均可由 AI 起草回填（不落库，人工确认后应用）；无依据的数值 / 日期不编造，进入「待补充」 |
 | 评审与数据集治理 | 答案契约用例「评审 → 冻结」两步进入数据集，Must 事实强制取证；候选池承接生产日志 / 执行轨迹 / 手工录入，分诊转正 |
 | 执行与观测 | 批量任务并发 / QPS 限流、环境类失败自动重试、任务终止、失败断点重跑、单批次结果 Excel 导出、全链路 Trace、原始报文留存 |
 | 指标大盘 | 通过率、平均 TTFT、P95 时延、Token 消耗、吞吐与预计剩余时间；WebSocket 推送，断线自动降级轮询 |
-| 视觉分析 | 单用例历史趋势（得分 / 时延 / 稳定性）、两次执行 Run 对比 |
+| 趋势与 Run 对比 | 单用例历史趋势（得分 / 时延 / 稳定性）、任意两次执行（Run）对比 |
 | 质量运营 | 业务口径字典、判分器自检（变异样本检出 / 误杀统计）、事实通过率与数据集分布统计 |
 | 安全 | JWT 单管理员登录、环境变量与模型 Key 使用 Fernet 加密落库、敏感值掩码展示 |
 
@@ -52,7 +54,7 @@
 ```
 batch_test/
 ├── backend/
-│   ├── billing_qa/            # 应用包（避免与 site-packages 中的 app 冲突）
+│   ├── billing_qa/            # 后端应用包
 │   │   ├── api/v1/            # auth / environments / models / prompts / cases / tasks / executions / ws / calibers / candidates / capabilities / grader / stats
 │   │   ├── core/              # 配置、日志、安全、异常、加密、任务控制面
 │   │   ├── db/                # 引擎/会话、建库初始化、种子数据、演示数据
@@ -66,7 +68,7 @@ batch_test/
 │   │       ├── grading/       # 答案契约判分（事实 / 行为 / 语义绑定 / 变异自检）
 │   │       ├── llm/           # OpenAI 兼容客户端（限流 / 重试 / 严格 JSON）与模型注册解析
 │   │       ├── revision/      # 版本快照与 Diff
-│   │       └── io/            # JSON 导入导出（Excel 仅保留兼容）
+│   │       └── io/            # 导入导出：用例 JSON、执行结果 Excel、用例 Excel（历史兼容）
 │   ├── migrations/            # Alembic 迁移脚本
 │   ├── mock_servers/          # 内置 Mock：LLM(8001) 与被测客服系统(8002)
 │   ├── scripts/               # api_smoke.py / e2e_smoke.py / seed_demo_history.py / migrate_mysql_to_postgres.py
@@ -136,7 +138,7 @@ python -m uvicorn billing_qa.main:app --host 127.0.0.1 --port 8000
 ```
 
 - `--reset` 会删除 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` 中的全部数据，保留环境、模型、Prompt 等基础资产，再重新写入演示用例、业务口径与候选池。
-- 需要演示大盘、趋势与 Run 对比时，再执行 `python scripts/seed_demo_history.py`：脚本会真实调用 Mock 服务生成 3 条已完成批量任务（全量回归 / 单轮与契约专项 / 动态多轮专项），以及对应的执行记录、轮次轨迹与裁判明细，并回填近 3 天历史时间。脚本幂等，重复执行只重建 `DEMO-TASK-*`。
+- 需要演示大盘、趋势与 Run 对比时，再执行 `python scripts/seed_demo_history.py`：脚本会真实调用 Mock 服务生成 3 条已完成的批量任务（全量回归 / 单轮与契约专项 / 动态多轮专项），以及对应的执行记录、轮次轨迹与裁判明细，并把时间戳回填到近 3 天。脚本幂等，重复执行只重建 `DEMO-TASK-*`。
 
 > 表结构只有一条链路：`init_db` 内部调用 `billing_qa.db.migrations.upgrade_schema()`，即 `alembic upgrade head`（空库会按迁移脚本从零建表），不再使用 `create_all` 或 `alembic stamp`。后续结构变更仍是 `alembic revision --autogenerate` + `alembic upgrade head`。
 
@@ -154,7 +156,7 @@ python -m uvicorn mock_servers.llm_api:app --host 127.0.0.1 --port 8001
 python -m uvicorn mock_servers.target_api:app --host 127.0.0.1 --port 8002
 ```
 
-- Mock 被测系统内置电信计费问账数据（账单、套餐、余量、余额、offer、漫游等五类数据型问题 + 欠费 / 增值 / 宽带等存量场景），完整口径见 [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md)。
+- Mock 被测系统内置电信计费问账数据：账单 / 套餐月费与合约 / 套餐用量 / 账户余额 / offer 订购五类数据型问题为主，外加国际漫游、增值业务、欠费停机、融合宽带/IPTV 等场景，完整口径见 [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md)。
 - Mock 支持注入指令，用于稳定复现失败 / 熔断 / 异常等质量场景（写在用例 `query` / `expected_answer` / 隐藏上下文中即可触发）：
 
 | 指令 | 效果 |
@@ -190,7 +192,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | 资产 | 内容 |
 | --- | --- |
 | 环境 | `QA-MOCK-JSON`：Agent 报文（Basic 鉴权 + 前置取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso`），**57 条演示用例默认绑定**；`QA-MOCK`：SSE 流式演示环境 |
-| 用例 | 57 条（55 `ACTIVE` + 1 `DRAFT` + 1 `DISABLED`；25 条答案契约 + 32 条 4 维评分），全部带 `userid` / `custid` 请求变量，按话术号码自动取值 |
+| 用例 | 57 条（55 `ACTIVE` + 1 `DRAFT` + 1 `DISABLED`；25 条答案契约 + 32 条 4 维评分），全部带 `userid` / `custid` 请求变量（`userid` 取自话术中的号码） |
 | 业务资产 | 9 个模型、3 套 Prompt 模板、14 条业务口径、8 条候选（NEW / TRIAGED / PROMOTED / REJECTED） |
 | 历史数据 | 3 条批量任务 + 106 条执行明细、轮次轨迹与裁判明细（`seed_demo_history.py` 生成） |
 
@@ -200,11 +202,11 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 ---
 
-## 5. 首次使用路径（五分钟走通）
+## 5. 首次上手（五分钟走通）
 
 1. **环境与模型**：确认 `QA-MOCK-JSON`（Agent 报文环境）与 `QA-MOCK`（SSE 演示环境）探活成功；确认 `MOCK-SIM`（模拟器）与 `MOCK-JUDGE` / `MOCK-JUDGE-2`（裁判）连通性测试通过。
 2. **Prompt 资产**：查看内置模板 `SIM_DEFAULT_BILLING_USER` 与 `JUDGE_DEFAULT_ZERO_TOLERANCE`，可在沙盒中试跑。
-3. **用例资产**：浏览 57 条电信计费演示用例（55 条 `ACTIVE` + 1 条 `DRAFT` + 1 条 `DISABLED`；其中 25 条答案契约、32 条 4 维评分）；勾选行（或「全选筛选结果」）后点右上角「批量执行（N）」，可直接建任务并跳转大盘；行内「历史」查看该用例全部执行记录，打开「趋势 / 对比 / 版本」体验 Diff 与历史分析。
+3. **用例资产**：浏览 57 条电信计费演示用例；勾选行（或「全选筛选结果」）后点右上角「批量执行（N）」，可直接建任务并跳转大盘；行内「历史」查看该用例全部执行记录，打开「趋势 / 对比 / 版本」体验 Diff 与历史分析。
 4. **测试大盘**：也可在「新建批量任务」中勾选用例（支持全选筛选结果，覆盖上百条用例）、设置并发数与 QPS，执行后 WebSocket 实时刷新进度；选中任务即为「批量任务详情」，点击用例行进入单笔执行结果。
 5. **执行记录**：列表查看全部批量 / 调试 / 重跑记录，点击任意记录进入单笔结果页（对话轮次、裁判明细、规则校验、用例快照与原始报文）；对失败任务可断点重跑。
 
@@ -216,14 +218,14 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 所有 LLM 场景共用同一份模型注册数据，统一由 `services/llm/registry` 解析，语义保持一致：
 
-- **用例编写 / 动态模拟器**：不再按次或按用例选模型。两者各自只允许**一个启用项**，由系统配置决定，界面上不提供选择。
+- **用例编写 / 动态模拟器**：不按用例选择模型，两者各自只允许**一个启用项**，由系统配置决定，界面上不提供选择。
   - 模型注册里启用第二个同角色模型会直接 422：「该角色已有启用的模型，请先停用它」。
   - 存量数据出现多个启用项时，调用会明确报错并列出冲突项，要求只保留一个。
   - 要换模型：在设置页停用旧的、启用新的。
 - **LLM 裁判**：仍可按用例多选（AVG / VETO 多裁判机制依赖），不受唯一启用约束。
 - **Prompt 沙盒**：保留显式指定模型的能力（调试不同模型对同一 Prompt 的输出）。
 - **连通性测试**：按注册项直测，不受角色与启用状态限制。
-- 调试时的 `case_snapshot_override` 传入跨角色模型会被拒绝并记录为 `ERROR`，而不是悄悄用错模型执行。
+- 调试时的 `case_snapshot_override` 传入与角色不匹配的模型会被拒绝并记录为 `ERROR`，而不是悄悄用错模型执行。
 
 > 模拟器模型已从用例字段中移除（原 `simulator_model_id` 列与 API 字段已删除），
 > 执行时统一取全局唯一启用的 `SIMULATOR` 模型。
@@ -258,7 +260,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 事实判分不再只看「答案里出现过这个数字」，而是要求数值归属到正确的业务名称，避免 `账单总额=100 / 税额=10` 被写成 `账单总额=10 / 税额=100` 时仍然通过。三层优先级：
 
-1. **JSON key 绑定**：最终答案是 JSON（或带 ```json 代码块）时，按字段名直接取值，如 `{"total_amount": 268.5, "item_count": 4}`。
+1. **JSON key 绑定**：最终答案是 JSON 对象（或包含 JSON 代码块）时，按字段名直接取值，如 `{"total_amount": 268.5, "item_count": 4}`。
 2. **名称绑定**：中文散文里名称与数值需处于同一分句；仅跨行 / 冒号列表等场景允许短窗口兜底。
 3. **纯数值兜底**：答案完全没出现业务名称时按数值匹配；若该数值已明确绑定到另一个业务名称，则判「数值归属冲突」而不是复用。
 
@@ -289,7 +291,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 环境模板（`headers_template` / `body_template`）用 `{{variable}}` 占位，具体取值按用例注入：
 
 - **请求变量**：用例级 `request_variables`（key-value，值支持字符串 / 数字 / JSON），在用例抽屉「请求变量」中按行维护或直接编辑 JSON；不放敏感信息，明文保存。
-- **三层优先级**：运行时变量（`query` / `session_id` / `history` / `history_text` / `turn` / `timestamp_iso`）> 用例 `request_variables` > 环境变量池。运行时保留字不允许在用例变量中重复定义。
+- **三层优先级**：运行时变量（`query` / `session_id` / `history` / `history_text` / `turn` / `timestamp_iso`）> 用例 `request_variables` > 环境变量池。其中 `query` / `history` / `history_text` / `turn` / `timestamp_iso` 为保留字，不允许在用例变量中定义；`session_id` 由会话机制注入，用例中自定义会被运行时值覆盖。
 - **时间戳**：`timestamp_iso` 为请求时刻的 ISO 8601 字符串（如 `2026-11-17T18:00:00.123`），每轮请求刷新。
 - **Basic 鉴权**：环境可配置账号 + 密码（密码加密存储），执行时自动生成 `Authorization: Basic base64(账号:密码)`；请求头模板显式写了 `Authorization` 时以模板为准。
 - **前置接口钩子**：执行前调用一次，支持用环境变量池与用例变量渲染 headers / body，并用 `extract`（变量名 → JSONPath）提取 `conversationId`、Token 等字段，供主请求与后续轮次复用；旧的 `token_jsonpath` / `token_var` 配置继续兼容。
@@ -300,7 +302,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
   | `SERVER_RETURNED`（默认） | 首轮渲染空会话值，由被测接口返回后回填，后续轮次沿用 |
   | `CLIENT_GENERATED` | 执行开始时生成唯一值（`exec-{execution_id}-xxxxxxxx`），全程各轮一致 |
 
-- **字段名由模板决定**：例如 `"conversationId": "{{session_id}}"` 或 `"sessionid": "{{session_id}}"`，不同接口可各自定义，平台不写死字段名；首轮渲染为空字符串，由目标接口按「首轮对话」处理。
+- **字段名由模板决定**：例如 `"conversationId": "{{session_id}}"` 或 `"sessionid": "{{session_id}}"`，不同接口可各自定义，平台不写死字段名；`SERVER_RETURNED` 模式下首轮渲染为空字符串，由目标接口按首轮对话处理。
 - **接口配置页**：环境编辑弹窗内提供「Basic 鉴权」「前置接口钩子」、可用占位符清单与变量来源标注，并可选一条示例用例做**报文预览**（只读，不落库）。
 - **执行结果**：对话轮次页展示每轮会话徽标、会话连续性小结、用例变量来源标记；不一致时会提示「上下文可能未延续」。
 
@@ -360,7 +362,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | `MAX_TURNS_HARD_LIMIT` | `20` | 轮次硬上限（超过即熔断） |
 | `REPETITION_SIMILARITY_THRESHOLD` | `0.9` | 复读检测相似度阈值 |
 | `TASK_RETENTION_DAYS` | `30` | 任务数据保留天数 |
-| `MOCK_LLM_BASE_URL` / `MOCK_TARGET_BASE_URL` | 8001 / 8002 | 内置 Mock 地址 |
+| `MOCK_LLM_BASE_URL` / `MOCK_TARGET_BASE_URL` | `http://127.0.0.1:8001/v1` / `http://127.0.0.1:8002` | 内置 Mock 地址 |
 
 ---
 
@@ -397,7 +399,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
    - 渲染模拟器 Prompt（目标、隐藏信息、轮次、历史）→ 调 LLM → 解析 `thought / status / query`。
    - 调被测系统（SSE 逐块累计首字时延）→ 记录 `turn_trace` → `LEGACY` 模式下做规则校验。
    - 判定终止：目标达成、模拟器放弃、复读、轮次超限。
-4. **混合裁决**：`LEGACY` 模式为规则硬校验 + 多个 LLM 裁判并行，`VETO` 任一审判红即失败、`AVG` 取均值；`ANSWER_CONTRACT` 模式由四道闸门（安全 / 行为 / 事实 / 扩展）判定，LLM 裁判只提供质量分参考。最终以最后一轮结论为准。
+4. **混合裁决**：`LEGACY` 模式为规则硬校验 + 多个 LLM 裁判并行，`VETO` 策略下任一裁判命中红线即判失败、`AVG` 取均值；`ANSWER_CONTRACT` 模式由四道闸门（安全 / 行为 / 事实 / 扩展）判定，LLM 裁判只提供质量分参考。以最后一轮结论为准。
 5. **指标聚合**：通过率、平均 TTFT、P95 时延、Token、吞吐、预计剩余时间；进度事件经 Redis + WebSocket 推送。
 
 ---
@@ -469,7 +471,7 @@ cd frontend
 npm run test:e2e    # 「AI 帮我填」主链路回归
 ```
 
-- 依赖：后端 `127.0.0.1:8000`、Mock LLM `8001`、前端 `5173` 都在运行，且已是演示库数据。
+- 依赖：后端 `127.0.0.1:8000`、Mock LLM `8001`、前端 `5173` 都在运行，且已初始化演示数据。
 - 默认用本机 Edge（`channel: 'msedge'`）驱动，不下载 Chromium；其他浏览器可改 `playwright.config.ts`。
 - 用例会真实创建临时用例并在结束时删除，保持演示库 57 条基线；失败时可看 `test-results/` 下的截图与 trace。
 
@@ -489,7 +491,7 @@ npm run test:e2e    # 「AI 帮我填」主链路回归
 - 任务执行器为进程内 asyncio 调度，重启进程会中断进行中的任务（状态保留，可重跑）。
 - 动态多轮的「目标达成」判定依赖模拟器输出与裁判结论，Mock 场景下由注入指令确定。
 - 前端 ECharts 全量包约 1.0 MB（gzip 343 KB），已拆分为独立 vendor chunk；如需进一步瘦身可改为按需引入。
-- 测试与冒烟脚本会在当前连接的数据库中产生临时用例 / 任务数据（自清理创建的资产，但保留执行记录）；演示库与开发库建议分开，或演示前按 §4.3 重置。
+- 测试与冒烟脚本会在当前连接的数据库中产生临时数据（脚本会自清理创建的用例与模板，但任务与执行记录会留存）；演示库与开发库建议分开，或演示前按 §4.3 重置。
 
 ---
 
