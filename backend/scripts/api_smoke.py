@@ -244,7 +244,7 @@ def main() -> int:
     trend = client.get(f"/cases/{case['id']}/trend").json()
     check(len(trend["points"]) >= 1, "用例趋势聚合")
 
-    # 9. 暂停 / 恢复 / 终止
+    # 9. 任务终止
     case_ids = [item["id"] for item in cases["items"][:5]]
     control_task = client.post(
         "/tasks",

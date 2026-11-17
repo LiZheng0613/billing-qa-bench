@@ -1,4 +1,4 @@
-"""任务控制面：Redis 状态标志位（暂停/恢复/终止），带进程内降级。"""
+"""任务控制面：Redis 状态标志位（RUNNING / ABORTING / ABORTED），带进程内降级。"""
 
 from __future__ import annotations
 
