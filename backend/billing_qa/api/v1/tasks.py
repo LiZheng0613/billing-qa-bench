@@ -1,8 +1,11 @@
-"""批量任务接口：创建、启停控制、指标、断点重跑。"""
+"""批量任务接口：创建、启停控制、指标、断点重跑、结果导出。"""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+import re
+from typing import Any
+
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +37,21 @@ from billing_qa.services.engine.schedule import (
     initial_next_run,
 )
 from billing_qa.services.engine.scheduler import scheduler
+from billing_qa.services.io.execution_excel import (
+    bool_text,
+    build_task_results_xlsx,
+    case_status_label,
+    case_type_label,
+    error_kind_label,
+    format_datetime,
+    grading_mode_label,
+    input_type_label,
+    review_status_label,
+    risk_level_label,
+    root_cause_label,
+    source_label,
+    status_label,
+)
 
 router = APIRouter(
     prefix="/tasks", tags=["批量任务"], dependencies=[Depends(get_current_operator)]
@@ -597,4 +615,301 @@ async def task_executions(
     ]
     return Page[CaseExecutionItem](
         items=items, total=int(total), page=page, page_size=page_size
+    )
+
+
+# ---------------------------------------------------------------- 结果导出
+def _snapshot_value(snapshot: dict[str, Any], key: str, fallback: Any = None) -> Any:
+    value = snapshot.get(key) if isinstance(snapshot, dict) else None
+    return fallback if value is None else value
+
+
+def _join_notes(value: Any) -> str | None:
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value if item not in (None, "")]
+        return "；".join(items) or None
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _judge_notes(record: ExecutionRecord) -> str | None:
+    """优先取聚合裁决里的备注，缺失时回退到各裁判归因说明。"""
+    result = record.judge_result
+    if isinstance(result, dict):
+        notes: list[str] = []
+        for key in ("notes", "policy_notes"):
+            text = _join_notes(result.get(key))
+            if text:
+                notes.extend(item for item in text.split("；") if item)
+        if notes:
+            # 去重并保持原有顺序，避免 notes 与 policy_notes 重复。
+            return "；".join(dict.fromkeys(notes))
+    reasons = [
+        judge.reason.strip()
+        for judge in record.judges
+        if judge.reason and judge.reason.strip()
+    ]
+    return "；".join(reasons) or None
+
+
+def _turn_payload(turn: Any) -> dict[str, Any]:
+    return {
+        "turn": turn.turn_index,
+        "input_source": turn.input_source,
+        "query": turn.query,
+        "simulator_thought": turn.simulator_thought,
+        "simulator_status": turn.simulator_status,
+        "hidden_context_released": turn.hidden_context_released,
+        "rendered_prompt": turn.rendered_prompt,
+        "request_payload": turn.request_payload,
+        "response_raw": turn.response_raw,
+        "final_answer": turn.final_answer,
+        "session_id": turn.session_id,
+        "intent": turn.intent,
+        "generated_sql": turn.generated_sql,
+        "api_params": turn.api_params,
+        "raw_db_data": turn.raw_db_data,
+        "tool_calls": turn.tool_calls,
+        "evidence": turn.evidence,
+        "ttft_ms": turn.ttft_ms,
+        "latency_ms": turn.latency_ms,
+        "rule_check": turn.rule_check,
+        "simulator_prompt_tokens": turn.simulator_prompt_tokens,
+        "simulator_completion_tokens": turn.simulator_completion_tokens,
+        "created_at": format_datetime(turn.created_at),
+    }
+
+
+def _judge_payload(judge: Any) -> dict[str, Any]:
+    return {
+        "model_config_id": judge.model_config_id,
+        "model_name": judge.model_name,
+        "pass_flag": judge.pass_flag,
+        "total_score": judge.total_score,
+        "dimension_scores": judge.dimension_scores,
+        "error_tags": judge.error_tags,
+        "reason": judge.reason,
+        "judge_prompt": judge.judge_prompt,
+        "raw_response": judge.raw_response,
+        "prompt_tokens": judge.prompt_tokens,
+        "completion_tokens": judge.completion_tokens,
+        "created_at": format_datetime(judge.created_at),
+    }
+
+
+async def _collect_task_results(
+    db: AsyncSession, task: BatchTask, *, latest_per_case: bool
+) -> list[dict[str, Any]]:
+    """收集批次执行结果，并整理成 Excel 行数据。"""
+    attempt_counts: dict[int, int] = {}
+    if latest_per_case:
+        latest_ids = (
+            select(func.max(ExecutionRecord.id).label("max_id"))
+            .where(ExecutionRecord.task_id == task.id)
+            .group_by(ExecutionRecord.case_id)
+            .subquery()
+        )
+        condition = ExecutionRecord.id.in_(select(latest_ids.c.max_id))
+    else:
+        condition = ExecutionRecord.task_id == task.id
+
+    records = list(
+        (
+            await db.execute(
+                select(ExecutionRecord)
+                .where(condition)
+                .order_by(
+                    ExecutionRecord.case_id.asc(),
+                    ExecutionRecord.attempt_no.asc(),
+                    ExecutionRecord.id.asc(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not records:
+        return []
+
+    case_ids = {record.case_id for record in records}
+    case_map = {
+        case.id: case
+        for case in (
+            await db.execute(select(TestCase).where(TestCase.id.in_(case_ids)))
+        )
+        .scalars()
+        .all()
+    }
+    count_rows = (
+        await db.execute(
+            select(ExecutionRecord.case_id, func.count())
+            .where(
+                ExecutionRecord.task_id == task.id,
+                ExecutionRecord.case_id.in_(case_ids),
+            )
+            .group_by(ExecutionRecord.case_id)
+        )
+    ).all()
+    attempt_counts = {int(case_id): int(count) for case_id, count in count_rows}
+
+    env_ids = {record.environment_id for record in records if record.environment_id}
+    if task.environment_id:
+        env_ids.add(task.environment_id)
+    env_names: dict[int, str] = {}
+    if env_ids:
+        env_names = {
+            env_id: name
+            for env_id, name in (
+                await db.execute(
+                    select(Environment.id, Environment.name).where(
+                        Environment.id.in_(env_ids)
+                    )
+                )
+            ).all()
+        }
+
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        snapshot = record.case_snapshot or {}
+        case = case_map.get(record.case_id)
+        tags = _snapshot_value(snapshot, "tags", case.tags if case else None)
+        final_answer = next(
+            (
+                turn.final_answer
+                for turn in reversed(record.turns)
+                if turn.final_answer not in (None, "")
+            ),
+            None,
+        )
+        env_id = record.environment_id or task.environment_id
+        rows.append(
+            {
+                "execution_id": record.id,
+                "trace_uid": record.trace_uid,
+                "case_id": record.case_id,
+                "case_code": _snapshot_value(snapshot, "code", case.code if case else None),
+                "case_name": _snapshot_value(snapshot, "name", case.name if case else None),
+                "case_type": case_type_label(
+                    _snapshot_value(snapshot, "case_type", case.case_type if case else None)
+                ),
+                "priority": _snapshot_value(
+                    snapshot, "priority", case.priority if case else None
+                ),
+                "case_status": case_status_label(
+                    _snapshot_value(snapshot, "status", case.status if case else None)
+                ),
+                "tags": ",".join(tags) if isinstance(tags, list) else tags,
+                "owner": _snapshot_value(snapshot, "owner", case.owner if case else None),
+                "dataset_version": _snapshot_value(
+                    snapshot, "dataset_version", case.dataset_version if case else None
+                ),
+                "snapshot_id": _snapshot_value(
+                    snapshot, "snapshot_id", case.snapshot_id if case else None
+                ),
+                "as_of": _snapshot_value(snapshot, "as_of", record.as_of),
+                "grading_mode": grading_mode_label(
+                    record.grading_mode or _snapshot_value(snapshot, "grading_mode")
+                ),
+                "input_type": input_type_label(_snapshot_value(snapshot, "input_type")),
+                "risk_level": risk_level_label(_snapshot_value(snapshot, "risk_level")),
+                "review_status": review_status_label(
+                    _snapshot_value(snapshot, "review_status")
+                ),
+                "expected_answer": _snapshot_value(
+                    snapshot, "expected_answer", case.expected_answer if case else None
+                ),
+                "description": _snapshot_value(
+                    snapshot, "description", case.description if case else None
+                ),
+                "query": _snapshot_value(snapshot, "query", case.query if case else None),
+                "user_goal": _snapshot_value(
+                    snapshot, "user_goal", case.user_goal if case else None
+                ),
+                "source": source_label(record.source),
+                "status": status_label(record.status),
+                "status_code": record.status,
+                "pass_flag": bool_text(record.pass_flag),
+                "total_score": record.total_score,
+                "termination_status": status_label(record.termination_status),
+                "attempt_no": record.attempt_no,
+                "attempt_count": attempt_counts.get(record.case_id, 1),
+                "error_kind": error_kind_label(record.error_kind),
+                "root_cause": root_cause_label(record.root_cause),
+                "lucky_pass": bool_text(record.lucky_pass),
+                "turns_used": record.turns_used,
+                "max_turns": record.max_turns,
+                "latency_ms": record.latency_ms,
+                "ttft_ms": record.ttft_ms,
+                "simulator_tokens": record.simulator_tokens,
+                "judge_tokens": record.judge_tokens,
+                "total_tokens": int(record.simulator_tokens or 0)
+                + int(record.judge_tokens or 0),
+                "simulator_template_version": record.simulator_template_version,
+                "judge_template_version": record.judge_template_version,
+                "grader_version": record.grader_version,
+                "environment_id": env_id,
+                "environment_name": env_names.get(env_id or 0),
+                "started_at": format_datetime(record.started_at),
+                "finished_at": format_datetime(record.finished_at),
+                "error_message": record.error_message,
+                "judge_notes": _judge_notes(record),
+                "final_answer": final_answer,
+                "rule_result": record.rule_result,
+                "judge_result": record.judge_result,
+                "answer_grading": record.answer_grading,
+                "fact_results": record.fact_results,
+                "diagnostics": record.diagnostics,
+                "judges": [_judge_payload(judge) for judge in record.judges],
+                "turns": [_turn_payload(turn) for turn in record.turns],
+                "case_snapshot": snapshot,
+            }
+        )
+    return rows
+
+
+def _safe_filename_part(value: str | None) -> str:
+    text = (value or "task").strip()
+    safe = re.sub(r"[^0-9A-Za-z_.-]+", "_", text).strip("._")
+    return safe or "task"
+
+
+@router.get("/{task_id}/export", summary="导出本次批量执行结果（Excel）")
+async def export_task_results(
+    task_id: int,
+    latest_per_case: bool = Query(
+        default=True, description="是否按用例只导出最新一次尝试（false 导出全部尝试）"
+    ),
+    db: AsyncSession = Depends(get_db),
+    operator: str = Depends(get_current_operator),
+) -> Response:
+    task = await _get_task(db, task_id)
+    metrics = await compute_task_metrics(db, task)
+    rows = await _collect_task_results(db, task, latest_per_case=latest_per_case)
+    exported_at = now()
+    content = build_task_results_xlsx(
+        task,
+        metrics,
+        rows,
+        environment_name=await _env_name(db, task.environment_id),
+        scope_label=(
+            "用例最新（每用例只保留最新一次尝试）"
+            if latest_per_case
+            else "全部尝试（含失败重跑）"
+        ),
+        exported_by=operator,
+        exported_at=exported_at,
+    )
+    filename = (
+        f"task_{_safe_filename_part(task.code)}_results_"
+        f"{exported_at:%Y%m%d_%H%M%S}.xlsx"
+    )
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
     )

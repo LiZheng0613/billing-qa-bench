@@ -19,7 +19,7 @@
 | 三重熔断 | 最大轮次 `MAX_TURNS_EXCEEDED`、复读检测 `REPETITION_ABORT`、模拟器放弃 `GIVE_UP`；熔断一律判不通过 |
 | 混合裁决 | 规则硬校验（金额/笔数/日期/必须包含/禁止包含） + LLM 裁判；支持 `AVG` 平均分与 `VETO` 一票否决，多裁判可并行 |
 | Prompt 资产 | 模板版本管理、`LATEST / PINNED` 引用策略、单用例覆盖、引用影响面分析、在线试跑沙盒 |
-| 执行与观测 | 批量任务并发 / QPS 限流、环境类失败自动重试、任务终止、失败断点重跑、全链路 Trace、原始报文留存 |
+| 执行与观测 | 批量任务并发 / QPS 限流、环境类失败自动重试、任务终止、失败断点重跑、单批次结果 Excel 导出、全链路 Trace、原始报文留存 |
 | 指标大盘 | 通过率、平均 TTFT、P95 时延、Token 消耗、吞吐与预计剩余时间；WebSocket 推送，断线自动降级轮询 |
 | 视觉分析 | 单用例历史趋势（得分 / 时延 / 稳定性）、两次执行 Run 对比 |
 | 安全 | JWT 单管理员登录、环境变量与模型 Key 使用 Fernet 加密落库、敏感值掩码展示 |
@@ -215,6 +215,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 ### 批量任务详情与单笔执行结果
 
 - **批量任务详情**（测试大盘选中任务）：展示该任务的通过分布（通过 / 失败 / 异常 / 轮次超限 / 复读熔断 / 执行中 / 等待中）、进度、TTFT/P95/Token 等指标，以及按用例汇总的最新一次执行结果（含尝试次数），支持分页，覆盖上百条用例。
+- **结果导出**：批量任务详情与周期计划的每次派生执行均可导出 Excel，包含「执行概览 + 用例结果」两个工作表；导出范围跟随页面当前模式（用例最新 / 全部尝试），用例结果覆盖执行状态、判分、失败原因、最终答案、裁判明细与完整轮次轨迹。
 - **单笔执行结果**（`/trace?execution=<id>`）：聚焦一次执行，展示对话轮次、裁判明细、规则校验、用例快照与原始报文；可返回所属批量任务详情，或跳转该用例全部历史。批量详情点击用例行、用例调试完成、趋势面板「查看 Trace」均复用此页面。
 - **用例历史**（`/trace?case=<id>`，或用例资产行内「历史」）：列出该用例全部批量 / 调试 / 重跑记录并分页；批量任务的「全部执行记录（含重试）」按任务列出每次尝试。用例级汇总统一取最新一次尝试，避免重试重复计数。
 
@@ -429,7 +430,7 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 | 业务口径 | `GET/POST /calibers`、`GET/PUT/DELETE /calibers/{id}` |
 | 判分器自检 | `GET /grader/mutants`、`POST /grader/evals/run`、`GET /grader/evals` |
 | 统计 | `GET /stats/overview`、`GET /stats/facts`、`GET /stats/datasets` |
-| 任务 | `GET/POST /tasks`、`GET /tasks/{id}`、`POST /tasks/{id}/start`、`POST /tasks/{id}/abort`、`POST /tasks/{id}/retry-failed`、`POST /tasks/{id}/run-now`（立即执行一次定时计划）、`PUT /tasks/{id}/schedule`（编辑定时计划）、`GET /tasks/{id}/runs`（计划执行历史）、`GET /tasks/{id}/metrics`、`GET /tasks/{id}/executions`（`latest_per_case=true` 按用例取最新一次并返回尝试次数） |
+| 任务 | `GET/POST /tasks`、`GET /tasks/{id}`、`POST /tasks/{id}/start`、`POST /tasks/{id}/abort`、`POST /tasks/{id}/retry-failed`、`POST /tasks/{id}/run-now`（立即执行一次定时计划）、`PUT /tasks/{id}/schedule`（编辑定时计划）、`GET /tasks/{id}/runs`（计划执行历史）、`GET /tasks/{id}/metrics`、`GET /tasks/{id}/executions`（`latest_per_case=true` 按用例取最新一次并返回尝试次数）、`GET /tasks/{id}/export`（单批次结果 Excel，`latest_per_case` 控制用例最新或全部尝试） |
 | 执行 | `GET /executions`、`GET /executions/{id}`、`GET /executions/{id}/raw` |
 | 实时 | `WS /ws/tasks/{task_id}?token=<jwt>` |
 

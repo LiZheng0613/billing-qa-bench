@@ -38,6 +38,7 @@ const latestPerCase = ref(true)
 const live = ref(false)
 const loading = ref(true)
 const notFound = ref(false)
+const exporting = ref(false)
 
 // 周期计划的历次执行
 const runs = ref<BatchTask[]>([])
@@ -414,6 +415,24 @@ async function retryFailed(): Promise<void> {
   }
 }
 
+async function exportResults(): Promise<void> {
+  if (!task.value || exporting.value) return
+  exporting.value = true
+  try {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')
+    await api.tasks.exportResults(
+      task.value.id,
+      latestPerCase.value,
+      `${task.value.code}_results_${stamp}.xlsx`,
+    )
+    toast.success('已导出本次批量执行结果')
+  } catch (exc) {
+    reportError(exc)
+  } finally {
+    exporting.value = false
+  }
+}
+
 async function runPlanNow(): Promise<void> {
   if (!plan.value) return
   if (!planActive.value) {
@@ -736,6 +755,7 @@ onBeforeUnmount(() => {
           :execution-page="executionPage"
           :execution-page-size="executionPageSize"
           :latest-per-case="latestPerCase"
+          :exporting="exporting"
           @start="startTask"
           @abort="abortTask"
           @retry="retryFailed"
@@ -745,6 +765,7 @@ onBeforeUnmount(() => {
           @select-execution="openExecution"
           @page-change="changeExecutionPage"
           @mode-change="changeMode"
+          @export="exportResults"
         />
       </div>
     </template>
@@ -759,6 +780,7 @@ onBeforeUnmount(() => {
         :execution-page="executionPage"
         :execution-page-size="executionPageSize"
         :latest-per-case="latestPerCase"
+        :exporting="exporting"
         @start="startTask"
         @abort="abortTask"
         @retry="retryFailed"
@@ -768,6 +790,7 @@ onBeforeUnmount(() => {
         @select-execution="openExecution"
         @page-change="changeExecutionPage"
         @mode-change="changeMode"
+        @export="exportResults"
       />
     </template>
   </div>

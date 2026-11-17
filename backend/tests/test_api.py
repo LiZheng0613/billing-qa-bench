@@ -9,9 +9,11 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
+from io import BytesIO
 
 import httpx
 import pytest
+from openpyxl import load_workbook
 from sqlalchemy import delete, text
 
 from billing_qa.db.session import SessionLocal
@@ -250,6 +252,34 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     ).json()
     assert latest["total"] == 1
     assert latest["items"][0]["attempt_count"] == 1
+
+    exported = await client.get(
+        f"/tasks/{task_id}/export", params={"latest_per_case": "true"}
+    )
+    assert exported.status_code == 200, exported.text
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    workbook = load_workbook(BytesIO(exported.content))
+    assert workbook.sheetnames == ["执行概览", "用例结果"]
+    export_sheet = workbook["用例结果"]
+    export_headers = [cell.value for cell in export_sheet[1]]
+    assert "用例编号" in export_headers
+    assert "最终答案" in export_headers
+    assert export_sheet.max_row == len(latest["items"]) + 1
+    assert (
+        export_sheet.cell(
+            row=2, column=export_headers.index("用例编号") + 1
+        ).value
+        == target["code"]
+    )
+    exported_all = await client.get(
+        f"/tasks/{task_id}/export", params={"latest_per_case": "false"}
+    )
+    assert exported_all.status_code == 200, exported_all.text
+    all_sheet = load_workbook(BytesIO(exported_all.content))["用例结果"]
+    assert all_sheet.max_row == executions["total"] + 1
+
     detail = (await client.get(f"/executions/{executions['items'][0]['id']}")).json()
     assert detail["turns"] and detail["case_snapshot"]
     assert detail["case_version"] == target["current_version"]
@@ -261,6 +291,11 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     assert history["total"] >= 1
     trend = (await client.get(f"/cases/{target['id']}/trend")).json()
     assert len(trend["points"]) >= 1
+
+
+async def test_task_result_export_missing_task(client: httpx.AsyncClient) -> None:
+    response = await client.get("/tasks/999999/export")
+    assert response.status_code == 404
 
 
 async def test_task_create_with_all_active_scope(client: httpx.AsyncClient) -> None:

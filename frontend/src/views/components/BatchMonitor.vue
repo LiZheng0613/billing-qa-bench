@@ -23,8 +23,9 @@ const props = withDefaults(
     executionPage?: number
     executionPageSize?: number
     latestPerCase?: boolean
+    exporting?: boolean
   }>(),
-  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, latestPerCase: true },
+  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, latestPerCase: true, exporting: false },
 )
 
 const emit = defineEmits<{
@@ -37,6 +38,7 @@ const emit = defineEmits<{
   (e: 'select-execution', executionId: number): void
   (e: 'page-change', page: number): void
   (e: 'mode-change', latestPerCase: boolean): void
+  (e: 'export'): void
 }>()
 
 const segmented = computed(() => {
@@ -173,6 +175,13 @@ const stats = computed(() => [
           :status="task.status"
           :label="planWaiting && !planActive ? '已停止' : null"
         />
+        <button
+          class="btn-ghost btn-xs"
+          :disabled="!task || exporting"
+          @click="emit('export')"
+        >
+          {{ exporting ? '导出中…' : '导出 Excel' }}
+        </button>
         <button v-if="canRunNow" class="btn-primary btn-xs" @click="emit('run-now')">
           立即执行
         </button>
@@ -291,7 +300,7 @@ const stats = computed(() => [
           <div>
             <h3 class="panel-title">用例执行结果</h3>
             <p class="mt-0.5 text-[11px] text-slate-500">
-              {{ latestPerCase ? '按用例汇总最新一次尝试' : '展示每次尝试（含失败重跑）' }}；点击行进入该用例的单笔执行结果页。
+              {{ latestPerCase ? '按用例只保留最新一次尝试' : '展示每次尝试（含失败重跑）' }}；点击行进入该用例的单笔执行结果页。
             </p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
@@ -305,7 +314,7 @@ const stats = computed(() => [
                 "
                 @click="emit('mode-change', true)"
               >
-                每用例最新
+                用例最新
               </button>
               <button
                 class="rounded-md px-2.5 py-1 transition"

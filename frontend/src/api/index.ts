@@ -272,6 +272,10 @@ export const api = {
       id: number,
       query?: { status?: string; latest_per_case?: boolean; page?: number; page_size?: number },
     ) => http.get<Page<CaseExecutionItem>>(`/tasks/${id}/executions`, query),
+    exportResults: (id: number, latestPerCase: boolean, filename: string) =>
+      downloadFile(`/tasks/${id}/export`, filename, {
+        latest_per_case: latestPerCase,
+      }),
   },
 
   // ---------------------------------------------------------------- 执行追踪
