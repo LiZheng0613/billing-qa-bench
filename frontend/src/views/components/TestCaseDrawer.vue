@@ -560,7 +560,6 @@ function removeFact(section: 'must' | 'may', index: number): void {
 // ---- 请求变量与会话提示 ----
 const RESERVED_REQUEST_VARIABLES = ['query', 'history', 'history_text', 'turn', 'timestamp_iso']
 const RUNTIME_PLACEHOLDERS = ['query', 'session_id', 'history', 'history_text', 'turn', 'timestamp_iso']
-const SESSION_FIELD_EXAMPLE = '"conversationId": "{{session_id}}"'
 
 const selectedEnvironment = computed(
   () => props.environments.find((env) => env.id === form.environment_id) ?? null,
@@ -2732,30 +2731,6 @@ function openDraftResult(): void {
                 <p v-if="missingEnvPlaceholders.length" class="mt-1 text-amber-700">
                   尚未提供取值：{{ missingEnvPlaceholders.join('、') }}
                 </p>
-              </div>
-            </section>
-
-            <section class="space-y-2">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">
-                  多轮会话绑定
-                </h3>
-                <span class="text-[11px] text-slate-500">由执行环境统一决定</span>
-              </div>
-              <div
-                class="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px] leading-relaxed text-slate-600"
-              >
-                当前环境：
-                <span class="font-medium text-slate-800">{{
-                  selectedEnvironment
-                    ? selectedEnvironment.session_mode === 'CLIENT_GENERATED'
-                      ? '客户端生成会话（全程携带平台生成值）'
-                      : '服务端返回会话（首轮为空，响应回填）'
-                    : '未绑定环境'
-                }}</span>
-                。请求报文中的会话字段名由环境模板占位符决定，例如
-                <code class="font-mono text-[10px] text-slate-700">{{ SESSION_FIELD_EXAMPLE }}</code>
-                。如需调整会话方式，请到「设置 → 环境」修改。
               </div>
             </section>
 
