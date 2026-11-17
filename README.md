@@ -115,6 +115,17 @@ python -m uvicorn billing_qa.main:app --host 127.0.0.1 --port 8000
 - `--reset` 会删除 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` 中的全部数据，保留环境、模型、Prompt 等基础资产，再重新写入演示用例、业务口径与候选池。
 - 需要演示大盘、趋势与 Run 对比时，再执行 `python scripts/seed_demo_history.py`：脚本会真实调用 Mock 服务生成 3 条已完成批量任务（全量回归 / 单轮与契约专项 / 动态多轮专项），以及对应的执行记录、轮次轨迹与裁判明细，并回填近 3 天历史时间。脚本幂等，重复执行只重建 `DEMO-TASK-*`。
 
+**演示数据包内容（与当前代码口径一致）**
+
+| 资产 | 内容 |
+| --- | --- |
+| 环境 | `QA-MOCK-JSON`：Agent 报文（Basic 鉴权 + 前置取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso`），**57 条演示用例默认绑定该环境**；`QA-MOCK`：SSE 流式演示环境 |
+| 用例 | 57 条（55 `ACTIVE` + 1 `DRAFT` + 1 `DISABLED`；25 条答案契约 + 32 条 4 维评分），全部带 `userid` / `custid` 请求变量，按话术号码自动取值 |
+| 业务资产 | 9 个模型、3 套 Prompt、14 条业务口径、8 条候选（NEW / TRIAGED / PROMOTED / REJECTED） |
+| 历史数据 | 3 条批量任务 + 执行记录、轮次轨迹与裁判明细（`seed_demo_history.py` 生成） |
+
+> 演示前建议依次执行 `python -m billing_qa.db.init_db --demo --reset` 与 `python scripts/seed_demo_history.py`，确保演示库只包含演示数据、没有测试残留。
+
 - Swagger：<http://127.0.0.1:8000/api/v1/docs>
 - 健康检查：<http://127.0.0.1:8000/health>
 
