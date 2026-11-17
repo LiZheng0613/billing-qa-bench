@@ -59,6 +59,11 @@ def main() -> int:
     health = client.post(f"/environments/{env['id']}/health-check").json()
     check(health.get("ok") is True, "环境探活", str(health))
 
+    agent_env = next(item for item in envs["items"] if item["code"] == "QA-MOCK-JSON")
+    check(agent_env.get("api_path") == "/api/v1/agent/chat", "Agent 报文环境接口")
+    check((agent_env.get("basic_auth") or {}).get("password_set") is True, "Agent 环境 Basic 鉴权")
+    check(bool((agent_env.get("pre_hook") or {}).get("enabled")), "Agent 环境前置接口")
+
     # 3. 模型
     models = client.get("/models").json()
     check(models["total"] >= 3, "模型列表")

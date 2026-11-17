@@ -198,10 +198,14 @@ async def _run_task(
 async def main() -> None:
     async with SessionLocal() as db:
         env = (
-            await db.execute(select(Environment).where(Environment.code == "QA-MOCK"))
+            await db.execute(select(Environment).where(Environment.code == "QA-MOCK-JSON"))
         ).scalar_one_or_none()
         if env is None:
-            raise SystemExit("未找到 QA-MOCK 环境，请先执行 init_db --demo")
+            env = (
+                await db.execute(select(Environment).where(Environment.code == "QA-MOCK"))
+            ).scalar_one_or_none()
+        if env is None:
+            raise SystemExit("未找到 QA-MOCK-JSON / QA-MOCK 环境，请先执行 init_db --demo")
         environment_id = int(env.id)
 
         all_cases = await _case_rows(db)

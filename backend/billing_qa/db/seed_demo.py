@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from sqlalchemy import select
@@ -58,65 +59,170 @@ SNAPSHOT_ID = "TELECOM-MOCK-2026-10"
 # ---------------------------------------------------------------------- #
 # 环境 / 模型
 # ---------------------------------------------------------------------- #
-async def _get_or_create_environment(
-    db: AsyncSession, code: str, *, is_stream: bool
-) -> Environment:
-    env = (
-        await db.execute(select(Environment).where(Environment.code == code))
-    ).scalar_one_or_none()
-    if env is not None:
-        return env
-    env = Environment(
-        code=code,
-        name="电信计费问账环境（Mock 流式）" if is_stream else "电信计费问账环境（Mock 非流式）",
-        description="内置电信计费 Mock 被测系统，覆盖账单、套餐、漫游、增值、欠费、发票等问账场景。",
-        base_url=settings.mock_target_base_url,
-        health_path="/health",
-        api_method="POST",
-        api_path="/api/v1/chat",
-        headers_template={"X-Tenant-Id": "{{tenant_id}}"},
-        body_template={
-            "query": "{{query}}",
-            "session_id": "{{session_id}}",
-            "history": "{{history}}",
+def _environment_spec(code: str, *, is_stream: bool) -> dict[str, Any]:
+    """演示环境配置。
+
+    - 流式环境保留 SSE 报文（``/api/v1/chat``），用于验证流式能力；
+    - 非流式环境按真实 Agent 对接报文配置：Basic 鉴权 + 前置取 conversationId +
+      首轮空 sessionid 回填 + ISO 时间戳，评测用例默认绑定到该环境。
+    """
+    if is_stream:
+        return {
+            "name": "电信计费问账环境（Mock 流式）",
+            "description": "内置电信计费 Mock 被测系统，覆盖账单、套餐、漫游、增值、欠费、发票等问账场景。",
+            "base_url": settings.mock_target_base_url,
+            "health_path": "/health",
+            "api_method": "POST",
+            "api_path": "/api/v1/chat",
+            "headers_template": {"X-Tenant-Id": "{{tenant_id}}"},
+            "body_template": {
+                "query": "{{query}}",
+                "session_id": "{{session_id}}",
+                "history": "{{history}}",
+            },
+            "is_stream": True,
+            "extractors": {
+                "final_answer": "$.data.answer",
+                "session_id": "$.data.session_id",
+                "intent": "$.data.intent",
+                "generated_sql": "$.data.generated_sql",
+                "api_params": "$.data.api_params",
+                "raw_db_data": "$.data.raw_db_data",
+            },
+            "pre_hook": {
+                "enabled": False,
+                "method": "POST",
+                "path": "/api/auth/token",
+                "headers": {"X-Tenant-Id": "{{tenant_id}}"},
+                "body": {"tenant_id": "{{tenant_id}}"},
+                "token_jsonpath": "$.data.token",
+                "token_var": "auth_token",
+                "cache_seconds": 300,
+            },
+            "basic_auth": None,
+            "session_mode": "SERVER_RETURNED",
+            "timeout_seconds": 60,
+            "verify_ssl": False,
+        }
+    return {
+        "name": "电信计费问账环境（Mock 非流式 · Agent 报文）",
+        "description": (
+            "按真实 Agent 报文对接：Basic 鉴权 + 前置取 conversationId + "
+            "首轮空 sessionid 回填；与流式环境共用同一份 Mock 数据。"
+        ),
+        "base_url": settings.mock_target_base_url,
+        "health_path": "/health",
+        "api_method": "POST",
+        "api_path": "/api/v1/agent/chat",
+        "headers_template": {},
+        "body_template": {
+            "conversationId": "{{conversationId}}",
+            "message": {
+                "content": "{{query}}",
+                "type": "text",
+                "xxx": "固定值",
+                "agent": "opencode",
+                "model": "ds-xxx",
+                "sessionid": "{{session_id}}",
+                "metadata": {
+                    "timestampe": "{{timestamp_iso}}",
+                    "requestcontext": "userid:{{userid}},custid:{{custid}},beid:101",
+                },
+            },
         },
-        is_stream=is_stream,
-        extractors={
+        "is_stream": False,
+        "extractors": {
             "final_answer": "$.data.answer",
-            "session_id": "$.data.session_id",
+            "session_id": "$.data.sessionid",
             "intent": "$.data.intent",
-            "generated_sql": "$.data.generated_sql",
-            "api_params": "$.data.api_params",
-            "raw_db_data": "$.data.raw_db_data",
         },
-        pre_hook={
-            "enabled": False,
+        "pre_hook": {
+            "enabled": True,
             "method": "POST",
-            "path": "/api/auth/token",
-            "headers": {"X-Tenant-Id": "{{tenant_id}}"},
-            "body": {"tenant_id": "{{tenant_id}}"},
+            "path": "/api/v1/conversation",
+            "headers": {},
+            "body": {"userid": "{{userid}}", "custid": "{{custid}}"},
+            "extract": {"conversationId": "$.data.conversationId"},
             "token_jsonpath": "$.data.token",
             "token_var": "auth_token",
             "cache_seconds": 300,
         },
-        timeout_seconds=60,
-        verify_ssl=False,
-        variables=[
-            EnvironmentVariable(
-                key="tenant_id",
-                value_encrypted=encrypt_value("TENANT_TELECOM_001"),
-                is_secret=False,
-                description="租户 ID",
-            ),
-            EnvironmentVariable(
-                key="auth_token",
-                value_encrypted=encrypt_value("mock-agent-token-2026"),
-                is_secret=True,
-                description="动态鉴权 Token（Pre-Hook 可覆盖）",
-            ),
-        ],
-    )
-    db.add(env)
+        "basic_auth": {
+            "username": "demo",
+            "password_encrypted": encrypt_value("s3cret"),
+        },
+        "session_mode": "SERVER_RETURNED",
+        "timeout_seconds": 60,
+        "verify_ssl": False,
+    }
+
+
+def _environment_variables(code: str) -> list[dict[str, Any]]:
+    """演示环境变量池（按环境对齐，多余变量会被清理）。"""
+    if code == DEMO_ENV_CODE:
+        return [
+            {
+                "key": "tenant_id",
+                "value": "TENANT_TELECOM_001",
+                "is_secret": False,
+                "description": "租户 ID",
+            },
+            {
+                "key": "auth_token",
+                "value": "mock-agent-token-2026",
+                "is_secret": True,
+                "description": "动态鉴权 Token（Pre-Hook 可覆盖）",
+            },
+        ]
+    return [
+        {
+            "key": "userid",
+            "value": "13800138000",
+            "is_secret": False,
+            "description": "默认用户号码（用例请求变量可覆盖）",
+        },
+        {
+            "key": "custid",
+            "value": "C0001",
+            "is_secret": False,
+            "description": "默认客户编号（用例请求变量可覆盖）",
+        },
+    ]
+
+
+async def _get_or_create_environment(
+    db: AsyncSession, code: str, *, is_stream: bool
+) -> Environment:
+    spec = _environment_spec(code, is_stream=is_stream)
+    env = (
+        await db.execute(select(Environment).where(Environment.code == code))
+    ).scalar_one_or_none()
+    if env is None:
+        env = Environment(code=code, **spec)
+        db.add(env)
+        await db.flush()
+    else:
+        # 演示环境保持与当前代码口径一致：每次 seed 都对齐配置
+        for key, value in spec.items():
+            setattr(env, key, value)
+        await db.flush()
+
+    desired = _environment_variables(code)
+    wanted_keys = {item["key"] for item in desired}
+    for item in list(env.variables):
+        if item.key not in wanted_keys:
+            await db.delete(item)
+    existing = {item.key for item in env.variables}
+    for item in desired:
+        if item["key"] not in existing:
+            env.variables.append(
+                EnvironmentVariable(
+                    key=item["key"],
+                    value_encrypted=encrypt_value(item["value"]),
+                    is_secret=item["is_secret"],
+                    description=item["description"],
+                )
+            )
     await db.flush()
     return env
 
@@ -353,12 +459,37 @@ def _plan(required: list[str], max_tool_calls: int = 3) -> dict[str, Any]:
 # ---------------------------------------------------------------------- #
 # 用例
 # ---------------------------------------------------------------------- #
+# 演示号码对应的客户编号（用于 requestcontext 中的 custid）
+_CUSTID_BY_PHONE: dict[str, str] = {
+    "13800138000": "C0001",
+    "13900139000": "C0002",
+    "13700137000": "C0003",
+    "13600136000": "C0004",
+    "13500135000": "C0005",
+}
+_PHONE_PATTERN = re.compile(r"1[3-9]\d{9}")
+
+
+def _case_phone(data: dict[str, Any]) -> str:
+    """从用例话术中取演示号码，作为 requestcontext 的 userid。"""
+    parts: list[Any] = [data.get("query"), data.get("initial_query"), data.get("expected_answer")]
+    for turn in data.get("turns") or []:
+        if isinstance(turn, dict):
+            parts.append(turn.get("query"))
+    for part in parts:
+        if not part:
+            continue
+        match = _PHONE_PATTERN.search(str(part))
+        if match:
+            return match.group(0)
+    return "13800138000"
+
+
 def _build_cases(
     *,
     env_id: int,
     sim_template_id: int,
     judge_template_id: int,
-    simulator_id: int,
     judge_id: int,
     judge2_id: int,
 ) -> list[dict[str, Any]]:
@@ -1933,6 +2064,15 @@ def _build_cases(
         },
     ]
 
+    for data in cases:
+        if data.get("request_variables"):
+            continue
+        phone = _case_phone(data)
+        data["request_variables"] = {
+            "userid": phone,
+            "custid": _CUSTID_BY_PHONE.get(phone, "C0001"),
+        }
+
     return cases
 
 
@@ -2226,8 +2366,8 @@ async def seed_demo_data(db: AsyncSession, *, reset: bool = False) -> None:
     if reset:
         await purge_cases(db)
 
-    env = await _get_or_create_environment(db, DEMO_ENV_CODE, is_stream=True)
-    await _get_or_create_environment(db, DEMO_JSON_ENV_CODE, is_stream=False)
+    await _get_or_create_environment(db, DEMO_ENV_CODE, is_stream=True)
+    json_env = await _get_or_create_environment(db, DEMO_JSON_ENV_CODE, is_stream=False)
 
     simulator = await _get_or_create_model(
         db,
@@ -2272,7 +2412,7 @@ async def seed_demo_data(db: AsyncSession, *, reset: bool = False) -> None:
         return
 
     cases = _build_cases(
-        env_id=env.id,
+        env_id=json_env.id,
         sim_template_id=sim_template.id,
         judge_template_id=judge_template.id,
         simulator_id=simulator.id,
@@ -2286,7 +2426,7 @@ async def seed_demo_data(db: AsyncSession, *, reset: bool = False) -> None:
     promoted = (
         await db.execute(select(TestCase).where(TestCase.code == "DEMO-CONTRACT-001"))
     ).scalar_one_or_none()
-    await _create_candidates(db, env_id=env.id, promoted_case_id=promoted.id if promoted else None)
+    await _create_candidates(db, env_id=json_env.id, promoted_case_id=promoted.id if promoted else None)
 
     await refresh_template_refs(db)
     await db.commit()

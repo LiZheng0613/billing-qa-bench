@@ -131,7 +131,7 @@ python -m uvicorn mock_servers.llm_api:app --host 127.0.0.1 --port 8001
 python -m uvicorn mock_servers.target_api:app --host 127.0.0.1 --port 8002
 ```
 
-- 演示数据中的环境 `QA-MOCK`（SSE）与 `QA-MOCK-JSON`（非流式）均指向 `http://127.0.0.1:8002/api/v1/chat`。
+- 演示数据中的环境 `QA-MOCK`（SSE · `/api/v1/chat`）与 `QA-MOCK-JSON`（非流式 · Agent 报文 `/api/v1/agent/chat`）均指向 `http://127.0.0.1:8002`；57 条演示用例默认绑定 `QA-MOCK-JSON`，请求按 Basic 鉴权 + 前置取 `conversationId` + 首轮空 `sessionid` 回填的真实报文流程发送。
 - Mock 被测系统内置电信计费问账数据，以账单、offer 订购、套餐月费/合约、套餐用量、账户余额五类数据型问题为主，并保留国际漫游、增值业务、欠费停机、融合宽带/IPTV 等场景：
   - **账单**：`13800138000` 账单 268.50 / 4 项（套餐 199 + 超套 27 + 漫游 32.50 + 彩铃 10）；`13900139000` 账单 356.80 / 5 项（融合套餐，含副卡 30、IPTV 20）。
   - **套餐用量**：`13800138000` 60GB 套餐用 69GB，超套 9GB / 27 元；`13900139000` 超套 15GB / 45 元；`13600136000` 30GB 仅用 18GB，无超套。
@@ -161,7 +161,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 ## 4. 首次使用路径
 
-1. **环境与模型**：确认 `QA-MOCK` 环境探活成功；确认 `MOCK-SIM`（模拟器）与 `MOCK-JUDGE` / `MOCK-JUDGE-2`（裁判）连通性测试通过。
+1. **环境与模型**：确认 `QA-MOCK-JSON`（Agent 报文环境）与 `QA-MOCK`（SSE 演示环境）探活成功；确认 `MOCK-SIM`（模拟器）与 `MOCK-JUDGE` / `MOCK-JUDGE-2`（裁判）连通性测试通过。
 2. **Prompt 资产**：查看内置模板 `SIM_DEFAULT_BILLING_USER` 与 `JUDGE_DEFAULT_ZERO_TOLERANCE`，可在沙盒中试跑。
 3. **用例资产**：浏览 57 条电信计费演示用例（55 条 `ACTIVE` + 1 条 `DRAFT` + 1 条 `DISABLED`；其中 25 条答案契约、32 条 4 维评分）；勾选行（或「全选筛选结果」）后点右上角「批量执行（N）」，可直接建任务并跳转大盘；行内「历史」查看该用例全部执行记录，打开「趋势 / 对比 / 版本」体验 Diff 与历史分析。
 4. **测试大盘**：也可在「新建批量任务」中勾选用例（支持全选筛选结果，覆盖上百条用例）、设置并发数与 QPS，执行后 WebSocket 实时刷新进度；选中任务即为「批量任务详情」，点击用例行进入单笔执行结果。

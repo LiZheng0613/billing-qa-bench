@@ -181,15 +181,15 @@
 | `SERVER_RETURNED` | 首轮渲染空会话值，由响应回填并用于后续轮次（默认） |
 | `CLIENT_GENERATED` | 执行开始时生成唯一值（`exec-{execution_id}-xxxxxxxx`），全程各轮一致 |
 
-示例（会话方式由 `QA-MOCK` 环境决定）：
+示例（会话方式由 `QA-MOCK-JSON` 环境决定）：
 
 ```json
 {
   "code": "NEW-MULTI-001",
   "name": "多轮账单追问",
   "case_type": "STATIC_MULTI",
-  "environment_code": "QA-MOCK",
-  "request_variables": { "user_id": "13800138000", "channel": "app" },
+  "environment_code": "QA-MOCK-JSON",
+  "request_variables": { "userid": "13800138000", "custid": "C0001" },
   "turns": [
     { "query": "我本月账单多少钱？" },
     { "query": "其中超套流量费是多少？" }

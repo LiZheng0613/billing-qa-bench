@@ -95,7 +95,12 @@ async def test_environment_list_and_variables(client: httpx.AsyncClient) -> None
     secret = next(item for item in variables if item["is_secret"])
     assert "*" in secret["value_masked"]
 
-    usage = (await client.get(f"/environments/{env['id']}/usage")).json()
+    # 演示用例默认绑定按真实 Agent 报文配置的非流式环境
+    agent_env = next(item for item in payload["items"] if item["code"] == "QA-MOCK-JSON")
+    assert agent_env["api_path"] == "/api/v1/agent/chat"
+    assert agent_env["basic_auth"]["password_set"] is True
+    assert agent_env["pre_hook"]["enabled"] is True
+    usage = (await client.get(f"/environments/{agent_env['id']}/usage")).json()
     assert usage["case_count"] >= 1
     assert usage["task_count"] >= 0
 
