@@ -7,6 +7,7 @@ import type {
   CasePayload,
   CaseType,
   DraftFact,
+  DraftHiddenContext,
   DraftMissing,
   DraftSource,
   DraftTurn,
@@ -19,6 +20,7 @@ import type {
   InputType,
   JudgeStrategy,
   ModelConfig,
+  NumericExpectation,
   PlanSpec,
   PromptListItem,
   ResponseContract,
@@ -28,7 +30,34 @@ import type {
   TurnItem,
 } from '../../types'
 import { caseTypeLabel } from '../../utils/format'
+import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
+
+// AI 草稿只落在浏览器本地，刷新后可以接着改；不写后端、不自动落库。
+const AI_DRAFT_STORAGE_KEY = 'billing-qa:ai-draft:v1'
+const AI_DRAFT_TTL_MS = 24 * 60 * 60 * 1000
+
+interface StoredAiDraft {
+  savedAt: number
+  scope: string
+  prompt: string
+  drafts: CaseAIDraft[]
+  draftIndex: number
+  warnings: string[]
+  baseCode: string | null
+  meta: {
+    modelName: string | null
+    elapsed: number
+    calibers: number
+    similar: number
+  } | null
+  count: number
+  applyMode: 'replace' | 'fillBlank'
+  selected: string[]
+  missingValues: Record<string, string>
+  pane: 'input' | 'result'
+  appliedCount: number
+}
 
 interface AmountRule {
   label: string
@@ -143,6 +172,7 @@ const emit = defineEmits<{
 }>()
 
 const toast = useToastStore()
+const confirm = useConfirm()
 
 const CASE_TYPES: CaseType[] = ['SINGLE', 'STATIC_MULTI', 'DYNAMIC_MULTI']
 const simulatorVersions = ref<number[]>([])
@@ -179,7 +209,6 @@ const form = reactive({
   judge_template_id: null as number | null,
   judgeTemplateStrategy: 'LATEST' as TemplateStrategy,
   judgeVersion: null as number | null,
-  simulator_model_id: null as number | null,
   judge_model_ids: [] as number[],
   judgeStrategy: 'AVG' as JudgeStrategy,
   pass_threshold: 60,
@@ -207,7 +236,6 @@ const form = reactive({
   requestVariables: [] as Array<{ key: string; value: string }>,
   requestVariablesJson: '',
   requestVariablesMode: 'rows' as 'rows' | 'json',
-  sessionMode: 'INHERIT' as CaseSessionMode,
   change_summary: '',
 })
 
@@ -237,7 +265,6 @@ const simulatorTemplates = computed(() =>
 const judgeTemplates = computed(() =>
   props.templates.filter((item) => item.template_type === 'LLM_JUDGE'),
 )
-const simulatorModels = computed(() => props.models.filter((item) => item.role === 'SIMULATOR'))
 const judgeModels = computed(() => props.models.filter((item) => item.role === 'JUDGE'))
 
 function splitList(text: string): string[] {
@@ -551,8 +578,17 @@ function addFact(section: 'must' | 'may'): void {
   factRows(section).push(emptyFactRow())
 }
 
-function removeFact(section: 'must' | 'may', index: number): void {
+async function removeFact(section: 'must' | 'may', index: number): Promise<void> {
   const rows = factRows(section)
+  const label = rows[index]?.label?.trim()
+  const ok = await confirm({
+    title: '删除事实',
+    message: label ? `确定删除事实「${label}」吗？` : '确定删除这条事实吗？',
+    detail: '删除后该事实不再参与契约判分。',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
   rows.splice(index, 1)
   if (section === 'must' && !rows.length) rows.push(emptyFactRow())
 }
@@ -615,8 +651,68 @@ function addRequestVariable(): void {
   form.requestVariables.push({ key: '', value: '' })
 }
 
-function removeRequestVariable(index: number): void {
+async function removeRequestVariable(index: number): Promise<void> {
+  const key = form.requestVariables[index]?.key?.trim()
+  const ok = await confirm({
+    title: '删除请求变量',
+    message: key ? `确定删除请求变量 ${key} 吗？` : '确定删除这条请求变量吗？',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
   form.requestVariables.splice(index, 1)
+}
+
+async function removeHiddenRow(index: number): Promise<void> {
+  const key = form.hidden[index]?.key?.trim()
+  const ok = await confirm({
+    title: '删除隐藏信息',
+    message: key ? `确定删除隐藏信息 ${key} 吗？` : '确定删除这条隐藏信息吗？',
+    detail: '删除后模拟器将不再释放该条信息。',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
+  form.hidden.splice(index, 1)
+}
+
+async function removeTurn(index: number): Promise<void> {
+  const query = form.turns[index]?.query?.trim()
+  const ok = await confirm({
+    title: '删除对话轮次',
+    message: query
+      ? `确定删除第 ${index + 1} 轮对话「${query.slice(0, 24)}」吗？`
+      : `确定删除第 ${index + 1} 轮对话吗？`,
+    detail: '该轮的提问与预期答案将一并移除。',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
+  form.turns.splice(index, 1)
+}
+
+async function removeAmountRule(index: number): Promise<void> {
+  const label = form.amounts[index]?.label?.trim()
+  const ok = await confirm({
+    title: '删除金额校验',
+    message: label ? `确定删除金额校验「${label}」吗？` : '确定删除这条金额校验吗？',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
+  form.amounts.splice(index, 1)
+}
+
+async function removeCountRule(index: number): Promise<void> {
+  const label = form.counts[index]?.label?.trim()
+  const ok = await confirm({
+    title: '删除次数校验',
+    message: label ? `确定删除次数校验「${label}」吗？` : '确定删除这条次数校验吗？',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
+  form.counts.splice(index, 1)
 }
 
 function switchRequestVariablesMode(mode: 'rows' | 'json'): void {
@@ -699,7 +795,6 @@ function resetForm(): void {
   form.judge_template_id = source?.judge_template_id ?? judgeTemplates.value[0]?.id ?? null
   form.judgeTemplateStrategy = (source?.judge_template_strategy as TemplateStrategy) ?? 'LATEST'
   form.judgeVersion = source?.judge_template_version ?? null
-  form.simulator_model_id = source?.simulator_model_id ?? simulatorModels.value[0]?.id ?? null
   form.judge_model_ids = source?.judge_model_ids ?? judgeModels.value.map((item) => item.id)
   form.judgeStrategy = (source?.judge_strategy as JudgeStrategy) ?? 'AVG'
   form.pass_threshold = source?.pass_threshold ?? 60
@@ -790,6 +885,12 @@ const aiDraftIndex = ref(0)
 const aiResponseWarnings = ref<string[]>([])
 const aiCount = ref(1)
 const aiDraft = computed<CaseAIDraft | null>(() => aiDrafts.value[aiDraftIndex.value] ?? null)
+const aiDraftConfidenceClass = computed(() => {
+  const value = aiDraft.value?.confidence ?? 0
+  if (value >= 0.7) return 'bg-emerald-50 text-emerald-700'
+  if (value >= 0.4) return 'bg-amber-50 text-amber-700'
+  return 'bg-rose-50 text-rose-700'
+})
 const aiBaseCode = ref<string | null>(null)
 const aiMeta = ref<{
   modelName: string | null
@@ -805,6 +906,8 @@ const aiSnapshot = ref<{ form: Record<string, unknown>; session: string } | null
 const aiApplyMode = ref<'replace' | 'fillBlank'>('replace')
 const aiSelected = ref<Set<string>>(new Set())
 const aiMissingValues = ref<Record<string, string>>({})
+const aiRestored = ref(false)
+const aiRestoredApplied = ref(false)
 const drawerBody = ref<HTMLElement | null>(null)
 
 watch(
@@ -813,12 +916,23 @@ watch(
     if (open) {
       resetForm()
       resetAiState()
+      restoreAiDraft()
       document.body.style.overflow = 'hidden'
     } else {
       document.body.style.overflow = ''
     }
   },
   { immediate: true },
+)
+
+// AI 草稿一旦变化就写本地缓存；抽屉关闭时保留，刷新或下次打开可继续。
+watch(
+  [aiPrompt, aiDrafts, aiDraftIndex, aiApplyMode, aiMissingValues, aiSelected, aiPane, aiCount, aiOpen],
+  () => {
+    if (!props.modelValue) return
+    persistAiDraft()
+  },
+  { deep: true },
 )
 
 watch(
@@ -980,7 +1094,6 @@ function buildPayload(): CasePayload | null {
     judge_template_id: form.judge_template_id,
     judge_template_strategy: form.judgeTemplateStrategy,
     judge_template_version: form.judgeTemplateStrategy === 'PINNED' ? form.judgeVersion : null,
-    simulator_model_id: form.simulator_model_id,
     judge_model_ids: [...form.judge_model_ids],
     judge_strategy: form.judgeStrategy,
     pass_threshold: form.pass_threshold,
@@ -1068,12 +1181,44 @@ function buildPayload(): CasePayload | null {
     payload.query = null
   }
 
+  // 待补充项回写：已应用草稿里仍未补上依据的项，保存时写进用例描述，
+  // 避免关闭抽屉后无人记得「这里还缺一个数」。只追加缺的，不重复堆积。
+  const pendingMissing = aiApplied.value
+    ? (aiDraft.value?.missing ?? []).filter((item) => !isMissingFilled(item))
+    : []
+  if (pendingMissing.length) {
+    const description = payload.description ?? ''
+    const existingNote = description
+      .split('\n')
+      .filter((line) => line.trim().startsWith('待补充：'))
+      .join('\n')
+    const unresolved = pendingMissing.filter((item) => !existingNote.includes(item.label))
+    if (unresolved.length) {
+      const note = `待补充：${unresolved
+        .map((item) => {
+          const filled = aiMissingValues.value[item.field]?.trim()
+          // 无法回填到表单的字段（如模型自由声明的 expected_answer），
+          // 至少把用户手填的值一并落进描述，避免输入了却悄悄消失。
+          return filled
+            ? `${item.label}（用户填写：${filled}；${item.reason}）`
+            : `${item.label}（${item.reason}）`
+        })
+        .join('；')}`
+      payload.description = description ? `${description}\n${note}` : note
+    }
+  }
+
   return payload
 }
 
 function submit(): void {
   const payload = buildPayload()
-  if (payload) emit('submit', payload)
+  if (!payload) return
+  // 已提交保存的草稿不再保留，避免下次编辑时恢复出过期内容。
+  clearStoredDraft()
+  aiRestored.value = false
+  aiRestoredApplied.value = false
+  emit('submit', payload)
 }
 
 // ------------------------------------------------------- AI 帮我填
@@ -1163,15 +1308,28 @@ const AI_CREATE_MULTI_EXAMPLES = [
   '两轮账单核验，第二轮用「这笔账单」指代',
 ]
 
+const AI_CREATE_DYNAMIC_EXAMPLES = [
+  '动态多轮：用户不主动给号码，客服反问后才释放隐藏信息',
+  '动态多轮核对账单总额，最多 6 轮，终止关键词「账单总额」',
+  '动态多轮：用户先问余额，客服反问后释放 13800138000',
+  '动态多轮超套费咨询，隐藏信息是手机号与账期',
+]
+
+const AI_EDIT_DYNAMIC_EXAMPLES = [
+  '最多 8 轮就结束',
+  '补充一条隐藏信息：账期',
+  '用户目标改成「拿到账单总额与费用项数」',
+  '初始提问更口语化',
+]
+
 const aiExamples = computed(() => {
   if (!isEdit.value) {
+    if (form.case_type === 'DYNAMIC_MULTI') return AI_CREATE_DYNAMIC_EXAMPLES
     return form.case_type === 'STATIC_MULTI' ? AI_CREATE_MULTI_EXAMPLES : AI_EXAMPLES
   }
+  if (form.case_type === 'DYNAMIC_MULTI') return AI_EDIT_DYNAMIC_EXAMPLES
   return form.case_type === 'STATIC_MULTI' ? AI_EDIT_MULTI_EXAMPLES : AI_EDIT_EXAMPLES
 })
-
-// 新建支持单轮与静态多轮（多轮至少两轮才保留，否则后端回退单轮）；动态多轮由模拟器实时生成，暂不支持。
-const aiAvailable = computed(() => form.case_type !== 'DYNAMIC_MULTI')
 
 function selectDraft(index: number): void {
   if (index < 0 || index >= aiDrafts.value.length) return
@@ -1217,6 +1375,15 @@ function factRowsSummary(rows: FactRow[]): string {
 
 function draftFactsSummary(facts: DraftFact[]): string {
   return facts.map((fact) => `${fact.label ?? '未命名'}=${factValueText(fact)}`).join('；')
+}
+
+function hiddenSignature(key: string, content: string, hint: string | null): string {
+  return `${key.trim()}|${content.trim()}|${(hint ?? '').trim()}`
+}
+
+function hiddenRuleText(key: string, content: string, hint: string | null): string {
+  const head = key.trim() ? `${key.trim()}：` : ''
+  return `${head}${content.trim()}${hint && hint.trim() ? `（${hint.trim()}）` : ''}`
 }
 
 function factRowSignature(row: FactRow): string {
@@ -1303,6 +1470,95 @@ function factGroupRow(
     source,
     children: children.length ? children : undefined,
     hint: '逐条勾选时按条合并：未勾选的现有事实会保留。',
+  }
+}
+
+/** 动态多轮的隐藏信息：按 key 对齐，逐条可勾选。 */
+function hiddenGroupRow(
+  current: HiddenRule[],
+  draftItems: DraftHiddenContext[],
+  source: DraftSource,
+): AiChangeRow {
+  const currentRows = current.filter((item) => item.key.trim() || item.content.trim())
+  const currentKeys = currentRows.map((item) =>
+    hiddenSignature(item.key, item.content, item.release_hint),
+  )
+  const nextKeys = draftItems.map((item) =>
+    hiddenSignature(item.key, item.content, item.release_hint),
+  )
+  const same =
+    currentKeys.length === nextKeys.length &&
+    currentKeys.every((item, index) => item === nextKeys[index])
+  let status: AiChangeStatus
+  if (!currentKeys.length) status = nextKeys.length ? 'add' : 'same'
+  else if (!nextKeys.length) status = 'clear'
+  else status = same ? 'same' : 'overwrite'
+  const existing = new Set(currentKeys)
+
+  const matched = new Set<number>()
+  const children: AiChangeChild[] = draftItems.map((item, index) => {
+    const signature = hiddenSignature(item.key, item.content, item.release_hint)
+    let currentIndex = currentKeys.indexOf(signature)
+    if (currentIndex < 0) {
+      const targetKey = item.key.trim()
+      currentIndex = targetKey
+        ? currentRows.findIndex((row) => row.key.trim() === targetKey)
+        : -1
+    }
+    if (currentIndex >= 0) matched.add(currentIndex)
+    const childStatus: AiChangeStatus = existing.has(signature)
+      ? 'same'
+      : currentIndex >= 0
+        ? 'overwrite'
+        : 'add'
+    return {
+      key: `hidden:${index}`,
+      label: item.key.trim() || `第 ${index + 1} 条`,
+      current:
+        currentIndex >= 0
+          ? hiddenRuleText(
+              currentRows[currentIndex].key,
+              currentRows[currentIndex].content,
+              currentRows[currentIndex].release_hint,
+            )
+          : '',
+      next: hiddenRuleText(item.key, item.content, item.release_hint),
+      status: childStatus,
+      fillable: childStatus === 'add',
+      source,
+      draftIndex: index,
+      currentIndex: currentIndex >= 0 ? currentIndex : undefined,
+    }
+  })
+  currentRows.forEach((row, index) => {
+    if (matched.has(index)) return
+    children.push({
+      key: `hidden:${draftItems.length + index}`,
+      label: row.key.trim() || `第 ${index + 1} 条`,
+      current: hiddenRuleText(row.key, row.content, row.release_hint),
+      next: '',
+      status: 'clear',
+      fillable: false,
+      source,
+      currentIndex: index,
+    })
+  })
+
+  return {
+    key: 'hidden',
+    label: '隐藏信息',
+    current: currentRows
+      .map((row) => hiddenRuleText(row.key, row.content, row.release_hint))
+      .join('；'),
+    next: draftItems
+      .map((item) => hiddenRuleText(item.key, item.content, item.release_hint))
+      .join('；'),
+    status,
+    // 仅填空白只会追加草稿里新增的隐藏信息。
+    fillable: draftItems.some((item) => !existing.has(hiddenSignature(item.key, item.content, item.release_hint))),
+    source,
+    children: children.length ? children : undefined,
+    hint: '逐条勾选时按条合并：未勾选的现有隐藏信息会保留。',
   }
 }
 
@@ -1405,6 +1661,62 @@ function textRow(
   }
 }
 
+function boolText(value: boolean | null | undefined, fallback = false): string {
+  return (value ?? fallback) ? '是' : '否'
+}
+
+function ruleSummary(rules: RuleConfig | null | undefined): string {
+  if (!rules) return ''
+  const parts: string[] = []
+  for (const item of rules.amounts ?? []) parts.push(`金额·${item.label} ${item.value}`)
+  for (const item of rules.counts ?? []) parts.push(`笔数·${item.label} ${item.value}`)
+  for (const value of rules.dates ?? []) parts.push(`日期 ${value}`)
+  for (const value of rules.must_contain ?? []) parts.push(`必须含 ${value}`)
+  for (const value of rules.must_not_contain ?? []) parts.push(`禁止含 ${value}`)
+  return parts.join('；')
+}
+
+function requestVariableValueText(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+/** 当前表单里的请求变量（行编辑 / JSON 两种模式统一成映射）。 */
+function currentRequestVariables(): Record<string, unknown> {
+  if (form.requestVariablesMode === 'json') {
+    try {
+      const parsed = JSON.parse(form.requestVariablesJson || '{}')
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // 非法 JSON 时按空处理，保存前会再次校验。
+    }
+    return {}
+  }
+  const result: Record<string, unknown> = {}
+  for (const row of form.requestVariables) {
+    const key = row.key.trim()
+    if (key) result[key] = parseRequestVariableValue(row.value)
+  }
+  return result
+}
+
+function requestVariablesSummary(values: Record<string, unknown>): string {
+  return Object.entries(values)
+    .map(([key, value]) => `${key}=${requestVariableValueText(value)}`)
+    .join('；')
+}
+
+function assumptionAmountText(contract: ResponseContract | null): string {
+  const must = contract?.answer_with_assumption?.scenarios?.[0]?.must ?? {}
+  const value = (must as Record<string, unknown>).amount ?? Object.values(must)[0]
+  return value === null || value === undefined ? '' : String(value)
+}
+
+function inputTypeLabel(value: InputType): string {
+  return INPUT_TYPES.find((item) => item.value === value)?.label ?? value
+}
+
 const aiChangeRows = computed<AiChangeRow[]>(() => {
   const draft = aiDraft.value
   if (!draft) return []
@@ -1457,6 +1769,26 @@ const aiChangeRows = computed<AiChangeRow[]>(() => {
     ),
   )
   rows.push(textRow('asOf', '冻结账期', form.asOf, draft.as_of ?? '', draftSource(draft, 'as_of')))
+  rows.push(
+    textRow(
+      'inputType',
+      '输入形态',
+      inputTypeLabel(form.inputType),
+      draft.input_type ? inputTypeLabel(draft.input_type) : '',
+      draftSource(draft, 'input_type'),
+    ),
+  )
+  if (draft.request_variables) {
+    rows.push(
+      textRow(
+        'requestVariables',
+        '请求变量',
+        requestVariablesSummary(currentRequestVariables()),
+        requestVariablesSummary(draft.request_variables),
+        draftSource(draft, 'request_variables'),
+      ),
+    )
+  }
   if (form.case_type === 'SINGLE') {
     rows.push(
       textRow('query', '用户提问', form.query, draft.query ?? '', draftSource(draft, 'query')),
@@ -1500,11 +1832,214 @@ const aiChangeRows = computed<AiChangeRow[]>(() => {
       draftSource(draft, 'forbidden_phrases'),
     ),
   )
+  // 4 维规则（LEGACY）：只在草稿明确给出规则时展示，避免编辑时误清空既有规则。
+  const draftRules = draft.expected_rules
+  if (draftRules) {
+    rows.push(
+      textRow(
+        'expectedRules',
+        '4 维规则',
+        ruleSummary(buildRules()),
+        ruleSummary(draftRules),
+        draftSource(draft, 'expected_rules'),
+      ),
+    )
+  }
+  if (draft.extras_policy) {
+    rows.push(
+      textRow(
+        'extrasPolicy',
+        '包络策略',
+        form.extrasPolicy,
+        draft.extras_policy,
+        draftSource(draft, 'extras_policy'),
+      ),
+    )
+  }
   rows.push(
     textRow('riskLevel', '风险等级', form.riskLevel, draft.risk_level, draftSource(draft, 'risk_level')),
   )
+  if (draft.judge_strategy) {
+    rows.push(
+      textRow(
+        'judgeStrategy',
+        '裁判策略',
+        form.judgeStrategy,
+        draft.judge_strategy,
+        draftSource(draft, 'judge_strategy'),
+      ),
+    )
+  }
+  if (draft.pass_threshold !== null && draft.pass_threshold !== undefined) {
+    rows.push(
+      textRow(
+        'passThreshold',
+        '通过分数线',
+        String(form.pass_threshold ?? ''),
+        String(draft.pass_threshold),
+        draftSource(draft, 'pass_threshold'),
+      ),
+    )
+  }
+  if (isEdit.value && draft.change_summary) {
+    rows.push(
+      textRow(
+        'changeSummary',
+        '变更说明',
+        form.change_summary,
+        draft.change_summary,
+        draftSource(draft, 'change_summary'),
+      ),
+    )
+  }
   if (form.case_type === 'STATIC_MULTI') {
     rows.push(turnGroupRow('turns', '多轮脚本', form.turns, draft.turns, draftSource(draft, 'turns', 'LLM')))
+    if (draft.session_expected) {
+      rows.push(
+        textRow(
+          'sessionExpected',
+          '会话级预期',
+          sessionExpectedText.value,
+          JSON.stringify(draft.session_expected),
+          draftSource(draft, 'session_expected'),
+        ),
+      )
+    }
+    if (draft.fail_fast !== null && draft.fail_fast !== undefined) {
+      rows.push(
+        textRow(
+          'failFast',
+          '失败即停',
+          boolText(form.failFast),
+          boolText(draft.fail_fast),
+          draftSource(draft, 'fail_fast'),
+        ),
+      )
+    }
+  }
+  if (form.case_type === 'DYNAMIC_MULTI') {
+    rows.push(
+      textRow('userGoal', '用户目标', form.userGoal, draft.user_goal ?? '', draftSource(draft, 'user_goal')),
+    )
+    rows.push(
+      textRow(
+        'initialQuery',
+        '初始提问',
+        form.initialQuery,
+        draft.initial_query ?? '',
+        draftSource(draft, 'initial_query'),
+      ),
+    )
+    rows.push(
+      textRow(
+        'persona',
+        '人设描述',
+        form.persona,
+        draft.persona_description ?? '',
+        draftSource(draft, 'persona_description'),
+      ),
+    )
+    rows.push(
+      textRow(
+        'maxTurns',
+        '最大轮次',
+        String(form.maxTurns),
+        draft.max_turns ? String(draft.max_turns) : '',
+        draftSource(draft, 'max_turns'),
+      ),
+    )
+    rows.push(
+      textRow(
+        'terminateKeywords',
+        '终止关键词',
+        form.terminateKeywordsText,
+        (draft.terminate_conditions?.keywords ?? []).join(', '),
+        draftSource(draft, 'terminate_conditions'),
+      ),
+    )
+    rows.push(hiddenGroupRow(form.hidden, draft.hidden_context, draftSource(draft, 'hidden_context')))
+  }
+  // 响应契约：草稿给出契约，或当前表单已处于非清晰输入时展示。
+  const contract = draft.response_contract
+  if (contract) {
+    const allowed = new Set(contract.allowed ?? [])
+    const source = draftSource(draft, 'response_contract')
+    rows.push(
+      textRow('allowClarify', '允许澄清', boolText(form.allowClarify), boolText(allowed.has('clarify')), source),
+    )
+    rows.push(
+      textRow(
+        'clarifySlots',
+        '澄清槽位',
+        form.clarifySlotsText,
+        (contract.clarify?.must_ask_slot ?? []).join(', '),
+        source,
+      ),
+    )
+    rows.push(
+      textRow(
+        'allowAssumption',
+        '允许假设作答',
+        boolText(form.allowAssumption),
+        boolText(allowed.has('answer_with_assumption')),
+        source,
+      ),
+    )
+    rows.push(
+      textRow(
+        'assumptionText',
+        '假设说明',
+        form.assumptionText,
+        contract.answer_with_assumption?.scenarios?.[0]?.assumption ?? '',
+        source,
+      ),
+    )
+    rows.push(
+      textRow(
+        'assumptionAmount',
+        '假设期望值',
+        form.assumptionAmount,
+        assumptionAmountText(contract),
+        source,
+      ),
+    )
+    rows.push(
+      textRow('allowPartial', '允许部分披露', boolText(form.allowPartial), boolText(allowed.has('partial')), source),
+    )
+    rows.push(
+      textRow(
+        'partialFacts',
+        '部分披露事实',
+        form.partialFactsText,
+        (contract.partial?.required_facts ?? []).join(', '),
+        source,
+      ),
+    )
+    rows.push(
+      textRow('allowRefuse', '允许拒绝', boolText(form.allowRefuse), boolText(allowed.has('refuse')), source),
+    )
+  }
+  // 取数计划（诊断）：只在草稿给出时展示。
+  if (draft.plan_spec) {
+    const source = draftSource(draft, 'plan_spec')
+    rows.push(
+      textRow(
+        'planCapabilities',
+        '取数能力',
+        form.planCapabilitiesText,
+        (draft.plan_spec.required_capabilities ?? []).join(', '),
+        source,
+      ),
+    )
+    rows.push(
+      textRow(
+        'maxToolCalls',
+        '工具调用上限',
+        form.maxToolCalls === null ? '' : String(form.maxToolCalls),
+        draft.plan_spec.max_tool_calls ? String(draft.plan_spec.max_tool_calls) : '',
+        source,
+      ),
+    )
   }
   return rows.filter((row) => row.current || row.next)
 })
@@ -1580,8 +2115,9 @@ function toggleRow(row: AiChangeRow): void {
 function toggleChild(row: AiChangeRow, child: AiChangeChild): void {
   if (!childSelectable(child)) return
   const select = !aiSelected.value.has(child.key)
-  if (child.tail) {
-    // 尾部新增轮次整组追加，避免只补中间一轮导致轮次顺序错位。
+  if (child.tail && aiApplyMode.value === 'fillBlank') {
+    // 仅填空白时，尾部新增轮次必须整组追加，避免只补中间一轮导致轮次顺序错位；
+    // 整组替换下每轮都可独立勾选。
     const tail = (row.children ?? []).filter((item) => item.tail && childSelectable(item))
     toggleKeys(tail.map((item) => item.key), select)
     return
@@ -1589,11 +2125,10 @@ function toggleChild(row: AiChangeRow, child: AiChangeChild): void {
   toggleKeys([child.key], select)
 }
 
-/** 逐条状态下，「仅填空白」里不能补的条目按「不变」展示。 */
+/** 逐条状态下，「仅填空白」只会追加，不能补的条目按「不变」展示。 */
 function childStatus(child: AiChangeChild): AiChangeStatus {
   if (aiApplyMode.value !== 'fillBlank') return child.status
-  if (!child.fillable) return 'same'
-  return child.status === 'overwrite' ? 'append' : child.status
+  return child.fillable ? 'append' : 'same'
 }
 
 /** 「仅填空白」下，部分新增的整组写入实际是追加，避免标签仍显示「覆盖」。 */
@@ -1619,8 +2154,38 @@ const aiSelectedCount = computed(() =>
 )
 
 function isMissingFilled(item: DraftMissing): boolean {
-  return Boolean(aiMissingValues.value[item.field]?.trim())
+  return missingFieldSupported(item.field) && Boolean(aiMissingValues.value[item.field]?.trim())
 }
+
+/** 能被自动写回表单的字段白名单。其余字段只能进备注，不能因为填了值就标「已补」。 */
+function missingFieldSupported(field: string): boolean {
+  return (
+    field === 'as_of' ||
+    field === 'turns' ||
+    field === 'must' ||
+    field === 'may' ||
+    field === 'hidden_context' ||
+    field === 'response_contract' ||
+    field === 'plan_spec' ||
+    field.startsWith('must.') ||
+    field.startsWith('may.') ||
+    field.startsWith('must_not.') ||
+    field.startsWith('hidden_context.') ||
+    field.startsWith('request_variables.') ||
+    field.startsWith('expected_rules.') ||
+    field.startsWith('response_contract.') ||
+    /^turns\.\d+\.expected_rules\./.test(field)
+  )
+}
+
+/** 用例备注里已经回写的待补充项：编辑时提示人工补齐，避免反复丢项。 */
+const pendingNotes = computed(() =>
+  form.description
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('待补充：'))
+    .join('\n'),
+)
 
 const aiMissingFilledCount = computed(
   () => aiDraft.value?.missing.filter(isMissingFilled).length ?? 0,
@@ -1633,6 +2198,15 @@ function missingPlaceholder(item: DraftMissing): string {
   if (item.field === 'turns') return '补充一轮用户提问，如：那明细呢？'
   if (item.field === 'must' || item.field.startsWith('must.')) return '补充期望值，如 268.50'
   if (item.field.startsWith('may.')) return '补充可扩展事实的期望值'
+  if (item.field.startsWith('request_variables.')) return '补充取值，如 2026-11 或 13800138000'
+  if (item.field.includes('.dates.')) return '补充账期/日期，如 2026-11'
+  if (item.field.includes('.amounts.') || item.field.includes('.counts.')) {
+    return '补充数值，如 268.50'
+  }
+  if (item.field === 'response_contract') return '填可接受行为，如 clarify,refuse'
+  if (item.field === 'response_contract.partial') return '填必须披露的事实名称'
+  if (item.field === 'response_contract.answer_with_assumption') return '补充假设作答的期望值'
+  if (item.field === 'plan_spec') return '填能力编码，如 bill_query'
   return '补充该字段的实际值'
 }
 
@@ -1649,10 +2223,26 @@ const aiFieldCount = computed(() => {
   if (draft.query) count += 1
   if (draft.expected_answer) count += 1
   if (draft.turns.length) count += 1
+  if (draft.user_goal) count += 1
+  if (draft.initial_query) count += 1
+  if (draft.persona_description) count += 1
+  if (draft.hidden_context.length) count += 1
+  if (draft.max_turns) count += 1
+  if (draft.terminate_conditions?.keywords?.length) count += 1
   if (draft.must.length) count += 1
   if (draft.may.length) count += 1
   if (draft.must_not.length) count += 1
   if (draft.forbidden_phrases.length) count += 1
+  if (draft.request_variables && Object.keys(draft.request_variables).length) count += 1
+  if (draft.expected_rules) count += 1
+  if (draft.session_expected) count += 1
+  if (draft.fail_fast !== null && draft.fail_fast !== undefined) count += 1
+  if (draft.response_contract) count += 1
+  if (draft.plan_spec) count += 1
+  if (draft.extras_policy) count += 1
+  if (draft.judge_strategy) count += 1
+  if (draft.pass_threshold !== null) count += 1
+  if (draft.change_summary) count += 1
   if (draft.risk_level) count += 1
   if (draft.suggested_code && !form.code.trim()) count += 1
   return count
@@ -1670,6 +2260,111 @@ function openAi(): void {
 
 function closeAi(): void {
   aiOpen.value = false
+}
+
+function aiDraftScope(): string {
+  const current = props.caseData
+  if (current?.id) return `edit:${current.id}`
+  if (current?.code) return `edit:${current.code}`
+  return 'create'
+}
+
+function loadStoredDraft(): StoredAiDraft | null {
+  try {
+    const raw = localStorage.getItem(AI_DRAFT_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as StoredAiDraft
+    if (!parsed || parsed.scope !== aiDraftScope()) return null
+    if (!Array.isArray(parsed.drafts) || !parsed.drafts.length) return null
+    if (Date.now() - Number(parsed.savedAt || 0) > AI_DRAFT_TTL_MS) {
+      localStorage.removeItem(AI_DRAFT_STORAGE_KEY)
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function persistAiDraft(): void {
+  if (!aiDrafts.value.length) return
+  try {
+    const payload: StoredAiDraft = {
+      savedAt: Date.now(),
+      scope: aiDraftScope(),
+      prompt: aiPrompt.value,
+      drafts: aiDrafts.value,
+      draftIndex: aiDraftIndex.value,
+      warnings: aiResponseWarnings.value,
+      baseCode: aiBaseCode.value,
+      meta: aiMeta.value,
+      count: aiCount.value,
+      applyMode: aiApplyMode.value,
+      selected: [...aiSelected.value],
+      missingValues: aiMissingValues.value,
+      pane: aiPane.value,
+      // 应用状态用于刷新后提示「表单已重置，请重新应用」：本次已应用写实际条数，
+      // 恢复自「已应用」草稿时保留标记（写 1 即可，仅用于判断是否已应用过）。
+      appliedCount: aiApplied.value ? aiAppliedCount.value : aiRestoredApplied.value ? 1 : 0,
+    }
+    localStorage.setItem(AI_DRAFT_STORAGE_KEY, JSON.stringify(payload))
+  } catch {
+    // 隐私模式或配额不足时静默降级：仅本次会话可用。
+  }
+}
+
+function clearStoredDraft(): void {
+  try {
+    localStorage.removeItem(AI_DRAFT_STORAGE_KEY)
+  } catch {
+    // 忽略本地存储不可用
+  }
+}
+
+function restoreAiDraft(): void {
+  aiRestored.value = false
+  aiRestoredApplied.value = false
+  const stored = loadStoredDraft()
+  if (!stored) return
+  aiPrompt.value = stored.prompt ?? ''
+  aiDrafts.value = stored.drafts
+  aiDraftIndex.value = Math.min(
+    Math.max(Number(stored.draftIndex) || 0, 0),
+    stored.drafts.length - 1,
+  )
+  aiResponseWarnings.value = stored.warnings ?? []
+  aiBaseCode.value = stored.baseCode ?? null
+  aiMeta.value = stored.meta ?? null
+  aiCount.value = Number(stored.count) || 1
+  aiApplyMode.value = stored.applyMode === 'fillBlank' ? 'fillBlank' : 'replace'
+  aiMissingValues.value = stored.missingValues ?? {}
+  aiSelected.value = new Set(stored.selected ?? [])
+  aiPane.value = stored.pane === 'input' ? 'input' : 'result'
+  // 恢复草稿但不自动展开浮窗：抽屉每次打开都保持收起状态。
+  // 草稿仍在（24h 内可继续），按钮上的小圆点提示「有未完成的草稿」，
+  // 用户主动点开 AI 面板才显示，避免「生成过一次就次次弹窗」。
+  aiRestored.value = true
+  aiRestoredApplied.value = Number(stored.appliedCount) > 0
+  // 新建时类型可切换：恢复多轮草稿时同步切到对应类型，否则轮次/动态字段没有落点。
+  const restoredType = aiDrafts.value[aiDraftIndex.value]?.case_type
+  if (
+    !isEdit.value &&
+    (restoredType === 'STATIC_MULTI' || restoredType === 'DYNAMIC_MULTI') &&
+    form.case_type !== restoredType
+  ) {
+    form.case_type = restoredType
+  }
+}
+
+/** 用户主动丢弃草稿：清掉本地缓存并回到输入态。 */
+function discardAiDraft(): void {
+  clearStoredDraft()
+  resetAiState()
+  aiRestored.value = false
+  aiRestoredApplied.value = false
+  aiOpen.value = true
+  aiPane.value = 'input'
+  toast.info('已清除本地保存的 AI 草稿')
 }
 
 function resetAiState(): void {
@@ -1692,6 +2387,8 @@ function resetAiState(): void {
   aiApplyMode.value = 'replace'
   aiSelected.value = new Set()
   aiMissingValues.value = {}
+  aiRestored.value = false
+  aiRestoredApplied.value = false
 }
 
 async function generateDraft(): Promise<void> {
@@ -1716,15 +2413,21 @@ async function generateDraft(): Promise<void> {
     aiResponseWarnings.value = response.warnings
     aiBaseCode.value = response.base_case_code
     if (!isEdit.value) {
-      // 新建时类型仍可切换：草稿给出多轮时就地切换，避免轮次没有落点。
+      // 新建时类型仍可切换：草稿给出多轮时就地切换，避免轮次/动态字段没有落点。
       const draftType = response.drafts[0]?.case_type
-      if (draftType === 'STATIC_MULTI' && form.case_type !== 'STATIC_MULTI') {
+      if (draftType === 'DYNAMIC_MULTI' && form.case_type !== 'DYNAMIC_MULTI') {
+        form.case_type = 'DYNAMIC_MULTI'
+        aiResponseWarnings.value = [
+          ...aiResponseWarnings.value,
+          '草稿是动态多轮，已自动将用例类型切换为动态多轮',
+        ]
+      } else if (draftType === 'STATIC_MULTI' && form.case_type !== 'STATIC_MULTI') {
         form.case_type = 'STATIC_MULTI'
         aiResponseWarnings.value = [
           ...aiResponseWarnings.value,
           '草稿是静态多轮，已自动将用例类型切换为静态多轮',
         ]
-      } else if (draftType === 'SINGLE' && form.case_type === 'STATIC_MULTI') {
+      } else if (draftType === 'SINGLE' && form.case_type !== 'SINGLE') {
         aiResponseWarnings.value = [
           ...aiResponseWarnings.value,
           '草稿是单轮形态，已保留当前多轮脚本；需要多轮请在描述里写明轮次',
@@ -1817,7 +2520,9 @@ function applyTurnsGroup(picked?: AiChangeChild[]): void {
               query: turn.query,
               expected_answer: turn.expected_answer ?? '',
               notes: turn.notes ?? '',
-              rulesJson: existing?.rulesJson ?? '',
+              rulesJson: turn.expected_rules
+                ? JSON.stringify(turn.expected_rules)
+                : (existing?.rulesJson ?? ''),
             }
           })
         : [{ query: '', expected_answer: '', notes: '', rulesJson: '' }]
@@ -1832,7 +2537,7 @@ function applyTurnsGroup(picked?: AiChangeChild[]): void {
         query: turn.query,
         expected_answer: turn.expected_answer ?? '',
         notes: turn.notes ?? '',
-        rulesJson: '',
+        rulesJson: turn.expected_rules ? JSON.stringify(turn.expected_rules) : '',
       }))
     if (additions.length) form.turns = [...form.turns, ...additions]
     return
@@ -1856,18 +2561,214 @@ function applyTurnsGroup(picked?: AiChangeChild[]): void {
       target.query = draftTurn.query
       target.expected_answer = draftTurn.expected_answer ?? ''
       target.notes = draftTurn.notes ?? ''
+      target.rulesJson = draftTurn.expected_rules
+        ? JSON.stringify(draftTurn.expected_rules)
+        : ''
     } else {
       result.push({
         query: draftTurn.query,
         expected_answer: draftTurn.expected_answer ?? '',
         notes: draftTurn.notes ?? '',
-        rulesJson: '',
+        rulesJson: draftTurn.expected_rules ? JSON.stringify(draftTurn.expected_rules) : '',
       })
     }
   }
   form.turns = result.length
     ? result
     : [{ query: '', expected_answer: '', notes: '', rulesJson: '' }]
+}
+
+/** 隐藏信息按条应用：勾选的条目覆盖 / 新增，未勾选的现有条目原样保留。 */
+function applyHiddenGroup(picked?: AiChangeChild[]): void {
+  const draft = aiDraft.value
+  if (!draft) return
+  const draftItems = draft.hidden_context.map((item) => ({
+    key: item.key.trim(),
+    content: item.content.trim(),
+    release_hint: (item.release_hint ?? '').trim(),
+  }))
+  const toRule = (item: { key: string; content: string; release_hint: string }): HiddenRule => ({
+    key: item.key,
+    content: item.content,
+    release_hint: item.release_hint,
+  })
+  const currentRows = form.hidden.filter((item) => item.key.trim() || item.content.trim())
+
+  if (!picked) {
+    if (aiApplyMode.value === 'replace') {
+      form.hidden = draftItems.length
+        ? draftItems.map(toRule)
+        : [{ key: '', content: '', release_hint: '' }]
+      return
+    }
+    const existing = new Set(currentRows.map((item) => item.key.trim()))
+    const additions = draftItems.filter((item) => !existing.has(item.key))
+    const merged = [...currentRows, ...additions.map(toRule)]
+    form.hidden = merged.length ? merged : [{ key: '', content: '', release_hint: '' }]
+    return
+  }
+
+  const replaceAt = new Map<number, number>()
+  const clearAt = new Set<number>()
+  const additions: number[] = []
+  for (const child of picked) {
+    if (child.status === 'add' && child.draftIndex !== undefined) {
+      additions.push(child.draftIndex)
+    } else if (
+      child.status === 'overwrite' &&
+      child.currentIndex !== undefined &&
+      child.draftIndex !== undefined
+    ) {
+      replaceAt.set(child.currentIndex, child.draftIndex)
+    } else if (child.status === 'clear' && child.currentIndex !== undefined) {
+      clearAt.add(child.currentIndex)
+    }
+  }
+  const merged: HiddenRule[] = []
+  currentRows.forEach((row, index) => {
+    if (clearAt.has(index)) return
+    const draftIndex = replaceAt.get(index)
+    merged.push(draftIndex === undefined ? row : toRule(draftItems[draftIndex]))
+  })
+  for (const draftIndex of additions.sort((left, right) => left - right)) {
+    merged.push(toRule(draftItems[draftIndex]))
+  }
+  form.hidden = merged.length ? merged : [{ key: '', content: '', release_hint: '' }]
+}
+
+function writeRequestVariables(values: Record<string, unknown>): void {
+  const rows = Object.entries(values).map(([key, value]) => ({
+    key,
+    value: requestVariableValueText(value),
+  }))
+  form.requestVariables = rows
+  form.requestVariablesJson = rows.length ? JSON.stringify(values, null, 2) : ''
+  form.requestVariablesMode = 'rows'
+}
+
+function applyRequestVariables(): void {
+  const next = aiDraft.value?.request_variables
+  if (!next) return
+  const current = currentRequestVariables()
+  const merged: Record<string, unknown> = aiApplyMode.value === 'fillBlank' ? { ...current } : {}
+  for (const [key, value] of Object.entries(next)) {
+    if (aiApplyMode.value === 'fillBlank') {
+      const existing = current[key]
+      if (existing !== undefined && String(requestVariableValueText(existing)).trim()) continue
+    }
+    merged[key] = value
+  }
+  writeRequestVariables(merged)
+}
+
+function amountRuleFrom(item: NumericExpectation): AmountRule {
+  return {
+    label: item.label,
+    value: item.value,
+    tolerance: item.tolerance ?? 0,
+    aliasesText: (item.aliases ?? []).join(', '),
+    requireName: item.require_name ?? false,
+  }
+}
+
+function applyExpectedRules(): void {
+  const rules = aiDraft.value?.expected_rules
+  if (!rules) return
+  if (aiApplyMode.value === 'replace') {
+    rulesFromCase(rules)
+    return
+  }
+  // 仅填空白：只补当前为空的规则槽位，已有内容保持不动。
+  if (!form.amounts.length) form.amounts = (rules.amounts ?? []).map(amountRuleFrom)
+  if (!form.counts.length) form.counts = (rules.counts ?? []).map(amountRuleFrom)
+  if (!form.datesText.trim()) form.datesText = (rules.dates ?? []).join(', ')
+  if (!form.mustContainText.trim()) form.mustContainText = (rules.must_contain ?? []).join(', ')
+  if (!form.mustNotContainText.trim()) {
+    form.mustNotContainText = (rules.must_not_contain ?? []).join(', ')
+  }
+}
+
+function parseRuleNumber(text: string): number | null {
+  const raw = text.replace(/[,，\s元人民币CNYcny]/g, '')
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
+}
+
+function applyRuleMissing(rest: string, text: string, highlighted: Set<string>): boolean {
+  const [kind, ...labelParts] = rest.split('.')
+  const label = labelParts.join('.') || '数值'
+  if (kind === 'amounts' || kind === 'counts') {
+    const value = parseRuleNumber(text)
+    if (value === null) return false
+    const target = kind === 'amounts' ? form.amounts : form.counts
+    const existing = target.find((rule) => rule.label.trim() === label.trim())
+    if (existing) existing.value = value
+    else {
+      target.push({
+        label,
+        value,
+        tolerance: kind === 'amounts' ? 0.01 : 0,
+        aliasesText: '',
+        requireName: false,
+      })
+    }
+    highlighted.add('expectedRules')
+    return true
+  }
+  if (kind === 'dates') {
+    const dates = splitList(form.datesText)
+    if (!dates.includes(text)) form.datesText = [...dates, text].join(', ')
+    highlighted.add('expectedRules')
+    return true
+  }
+  return false
+}
+
+function applyTurnRuleMissing(field: string, text: string, highlighted: Set<string>): boolean {
+  const match = field.match(/^turns\.(\d+)\.expected_rules\.(.+)$/)
+  if (!match) return false
+  const position = Number(match[1]) - 1
+  const turn = form.turns.filter((item) => item.query.trim())[position]
+  if (!turn) return false
+  let rules: RuleConfig = {
+    amounts: [],
+    counts: [],
+    dates: [],
+    must_contain: [],
+    must_not_contain: [],
+  }
+  if (turn.rulesJson.trim()) {
+    try {
+      rules = { ...rules, ...(JSON.parse(turn.rulesJson) as RuleConfig) }
+    } catch {
+      // 非法 JSON 时按空规则继续补值。
+    }
+  }
+  const [kind, ...labelParts] = match[2].split('.')
+  const label = labelParts.join('.') || '数值'
+  if (kind === 'amounts' || kind === 'counts') {
+    const value = parseRuleNumber(text)
+    if (value === null) return false
+    const list = kind === 'amounts' ? rules.amounts : rules.counts
+    const existing = list.find((rule) => rule.label.trim() === label.trim())
+    if (existing) existing.value = value
+    else {
+      list.push({
+        label,
+        value,
+        tolerance: kind === 'amounts' ? 0.01 : 0,
+        aliases: [],
+        require_name: false,
+      })
+    }
+  } else if (kind === 'dates') {
+    if (!rules.dates.includes(text)) rules.dates.push(text)
+  } else {
+    return false
+  }
+  turn.rulesJson = JSON.stringify(rules)
+  highlighted.add('turns')
+  return true
 }
 
 function inferMissingKind(value: string): FactKind {
@@ -1916,7 +2817,29 @@ function applyMissingValue(
     highlighted.add('turns')
     return true
   }
-  if (item.field === 'must' || item.field.startsWith('must.') || item.field.startsWith('may.')) {
+  if (item.field === 'hidden_context' || item.field.startsWith('hidden_context.')) {
+    const key = item.field.startsWith('hidden_context.')
+      ? item.field.slice('hidden_context.'.length)
+      : item.label
+    form.hidden.push({ key, content: text, release_hint: '' })
+    highlighted.add('hidden')
+    return true
+  }
+  if (item.field === 'must' || item.field === 'may') {
+    const rows = factRows(item.field)
+    const row = emptyFactRow(inferMissingKind(text))
+    row.label = item.label
+    fillFactRowValue(row, text)
+    rows.push(row)
+    highlighted.add(item.field === 'must' ? 'mustFacts' : 'mayFacts')
+    return true
+  }
+  if (item.field.startsWith('must_not.')) {
+    form.mustNotText = [form.mustNotText.trim(), text].filter(Boolean).join(', ')
+    highlighted.add('mustNotText')
+    return true
+  }
+  if (item.field.startsWith('must.') || item.field.startsWith('may.')) {
     const section: 'must' | 'may' = item.field.startsWith('may') ? 'may' : 'must'
     const rows = factRows(section)
     let row = rows.find((candidate) => candidate.label.trim() === item.label.trim())
@@ -1933,6 +2856,58 @@ function applyMissingValue(
     row.verification_note = ''
     row.evidence_ref = ''
     highlighted.add(section === 'must' ? 'mustFacts' : 'mayFacts')
+    return true
+  }
+  if (item.field.startsWith('request_variables.')) {
+    const key = item.field.slice('request_variables.'.length).trim()
+    if (!key) return false
+    const values = currentRequestVariables()
+    values[key] = parseRequestVariableValue(text)
+    writeRequestVariables(values)
+    highlighted.add('requestVariables')
+    return true
+  }
+  if (/^turns\.\d+\.expected_rules\./.test(item.field)) {
+    return applyTurnRuleMissing(item.field, text, highlighted)
+  }
+  if (item.field.startsWith('expected_rules.')) {
+    return applyRuleMissing(item.field.slice('expected_rules.'.length), text, highlighted)
+  }
+  if (item.field === 'response_contract') {
+    const behaviorMap: Record<string, 'allowClarify' | 'allowAssumption' | 'allowPartial' | 'allowRefuse'> = {
+      clarify: 'allowClarify',
+      answer_with_assumption: 'allowAssumption',
+      partial: 'allowPartial',
+      refuse: 'allowRefuse',
+    }
+    let applied = false
+    for (const raw of text.split(/[,，、\s]+/)) {
+      const key = raw.trim().toLowerCase()
+      const target = behaviorMap[key]
+      if (!target) continue
+      form[target] = true
+      highlighted.add(target)
+      applied = true
+    }
+    return applied
+  }
+  if (item.field === 'response_contract.answer_with_assumption') {
+    form.allowAssumption = true
+    form.assumptionAmount = text
+    highlighted.add('allowAssumption')
+    highlighted.add('assumptionAmount')
+    return true
+  }
+  if (item.field === 'response_contract.partial') {
+    form.allowPartial = true
+    form.partialFactsText = text
+    highlighted.add('allowPartial')
+    highlighted.add('partialFactsText')
+    return true
+  }
+  if (item.field === 'plan_spec') {
+    form.planCapabilitiesText = text
+    highlighted.add('planCapabilitiesText')
     return true
   }
   return false
@@ -1983,7 +2958,7 @@ function applyChangeRow(
       highlighted.add('mustFacts')
       break
     case 'mayFacts':
-      applyFactsGroup('may')
+      applyFactsGroup('may', picked)
       highlighted.add('mayFacts')
       break
     case 'mustNotText':
@@ -2005,6 +2980,111 @@ function applyChangeRow(
     case 'turns':
       applyTurnsGroup(picked)
       highlighted.add('turns')
+      break
+    case 'userGoal':
+      form.userGoal = draft.user_goal ?? ''
+      highlighted.add('userGoal')
+      break
+    case 'initialQuery':
+      form.initialQuery = draft.initial_query ?? ''
+      highlighted.add('initialQuery')
+      break
+    case 'persona':
+      form.persona = draft.persona_description ?? ''
+      highlighted.add('persona')
+      break
+    case 'maxTurns':
+      form.maxTurns = draft.max_turns ?? 5
+      highlighted.add('maxTurns')
+      break
+    case 'terminateKeywords':
+      form.terminateKeywordsText = (draft.terminate_conditions?.keywords ?? []).join(', ')
+      highlighted.add('terminateKeywords')
+      break
+    case 'hidden':
+      applyHiddenGroup(picked)
+      highlighted.add('hidden')
+      break
+    case 'inputType':
+      if (draft.input_type) form.inputType = draft.input_type
+      highlighted.add('inputType')
+      break
+    case 'requestVariables':
+      applyRequestVariables()
+      highlighted.add('requestVariables')
+      break
+    case 'expectedRules':
+      applyExpectedRules()
+      highlighted.add('expectedRules')
+      break
+    case 'sessionExpected':
+      sessionExpectedText.value = draft.session_expected
+        ? JSON.stringify(draft.session_expected, null, 2)
+        : ''
+      highlighted.add('sessionExpected')
+      break
+    case 'failFast':
+      form.failFast = Boolean(draft.fail_fast)
+      highlighted.add('failFast')
+      break
+    case 'extrasPolicy':
+      form.extrasPolicy = draft.extras_policy ?? 'lenient'
+      highlighted.add('extrasPolicy')
+      break
+    case 'judgeStrategy':
+      form.judgeStrategy = draft.judge_strategy ?? 'AVG'
+      highlighted.add('judgeStrategy')
+      break
+    case 'passThreshold':
+      form.pass_threshold = draft.pass_threshold ?? 60
+      highlighted.add('pass_threshold')
+      break
+    case 'changeSummary':
+      form.change_summary = draft.change_summary ?? ''
+      highlighted.add('change_summary')
+      break
+    case 'allowClarify':
+      form.allowClarify = (draft.response_contract?.allowed ?? []).includes('clarify')
+      highlighted.add('allowClarify')
+      break
+    case 'clarifySlots':
+      form.clarifySlotsText = (draft.response_contract?.clarify?.must_ask_slot ?? []).join(', ')
+      highlighted.add('clarifySlotsText')
+      break
+    case 'allowAssumption':
+      form.allowAssumption = (draft.response_contract?.allowed ?? []).includes(
+        'answer_with_assumption',
+      )
+      highlighted.add('allowAssumption')
+      break
+    case 'assumptionText':
+      form.assumptionText =
+        draft.response_contract?.answer_with_assumption?.scenarios?.[0]?.assumption ?? ''
+      highlighted.add('assumptionText')
+      break
+    case 'assumptionAmount':
+      form.assumptionAmount = assumptionAmountText(draft.response_contract)
+      highlighted.add('assumptionAmount')
+      break
+    case 'allowPartial':
+      form.allowPartial = (draft.response_contract?.allowed ?? []).includes('partial')
+      highlighted.add('allowPartial')
+      break
+    case 'partialFacts':
+      form.partialFactsText = (draft.response_contract?.partial?.required_facts ?? []).join(', ')
+      highlighted.add('partialFactsText')
+      break
+    case 'allowRefuse':
+      form.allowRefuse = (draft.response_contract?.allowed ?? []).includes('refuse')
+      highlighted.add('allowRefuse')
+      break
+    case 'planCapabilities':
+      form.planCapabilitiesText = (draft.plan_spec?.required_capabilities ?? []).join(', ')
+      highlighted.add('planCapabilitiesText')
+      break
+    case 'maxToolCalls':
+      form.maxToolCalls = draft.plan_spec?.max_tool_calls ?? null
+      highlighted.add('maxToolCalls')
       break
     case 'code':
       if (!form.code.trim() && draft.suggested_code) {
@@ -2050,17 +3130,13 @@ function applyDraft(): void {
     if (applyMissingValue(item, value, highlighted)) count += 1
   }
 
-  if (draft.input_type === 'CLEAR') {
-    form.inputType = 'CLEAR'
-  } else if (draft.input_type) {
-    toast.info('草稿为非清晰输入，需人工配置响应契约后再切换输入形态')
-  }
-
   if (draft.grading_mode === 'ANSWER_CONTRACT') contractTab.value = 'facts'
   aiHighlight.value = highlighted
   aiAppliedCount.value = count
   aiApplied.value = true
   aiAppliedAt.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  aiRestored.value = false
+  aiRestoredApplied.value = false
   aiOpen.value = false
   const remaining = draft.missing.filter((item) => !isMissingFilled(item)).length
   const hints: string[] = []
@@ -2069,6 +3145,27 @@ function applyDraft(): void {
     form.gradingMode !== 'ANSWER_CONTRACT'
   ) {
     hints.push('必答/可扩展事实仅在答案契约模式下落库，请同时勾选「判分方式」')
+  }
+  const contractApplied =
+    highlighted.has('allowClarify') ||
+    highlighted.has('allowAssumption') ||
+    highlighted.has('allowPartial') ||
+    highlighted.has('allowRefuse')
+  if (contractApplied) {
+    if (form.gradingMode !== 'ANSWER_CONTRACT') {
+      hints.push('响应契约仅在答案契约模式落库，请同时勾选「判分方式」')
+    } else if (form.inputType === 'CLEAR') {
+      hints.push('已填入响应契约，但输入形态仍为「清晰明确」，请同时应用「输入形态」')
+    } else {
+      contractTab.value = 'contract'
+    }
+  }
+  if (highlighted.has('planCapabilitiesText') || highlighted.has('maxToolCalls')) {
+    if (form.gradingMode !== 'ANSWER_CONTRACT') {
+      hints.push('取数计划仅在答案契约模式落库，请同时勾选「判分方式」')
+    } else {
+      contractTab.value = 'plan'
+    }
   }
   if (remaining) hints.push(`还有 ${remaining} 项缺依据需人工补充`)
   if (hints.length) {
@@ -2095,17 +3192,51 @@ function undoApply(): void {
 
 function locateMissing(item: DraftMissing): void {
   const field = item.field
-  const needsContract = field === 'as_of' || field === 'must' || field.startsWith('must.')
+  const isMustNot = field.startsWith('must_not.')
+  const isContractField =
+    field === 'response_contract' || field.startsWith('response_contract.')
+  const isPlanField = field === 'plan_spec'
+  const isRuleField = field.startsWith('expected_rules.')
+  const isTurnRuleField = /^turns\.\d+\.expected_rules\./.test(field)
+  const isRequestVariableField = field.startsWith('request_variables.')
+  const needsContract =
+    field === 'as_of' ||
+    field === 'must' ||
+    field.startsWith('must.') ||
+    field.startsWith('may.') ||
+    isMustNot ||
+    isContractField ||
+    isPlanField
   if (needsContract && form.gradingMode !== 'ANSWER_CONTRACT') {
     form.gradingMode = 'ANSWER_CONTRACT'
     toast.info('已切换到答案契约模式以定位该字段')
   }
-  if (needsContract) contractTab.value = 'facts'
+  if (isRuleField && form.gradingMode === 'ANSWER_CONTRACT') {
+    toast.info('规则硬校验仅在 4 维评分模式生效，请切回 4 维评分再补充')
+    return
+  }
+  if (isTurnRuleField && form.case_type !== 'STATIC_MULTI') {
+    toast.info('该字段属于静态多轮脚本，请先切换用例类型')
+    return
+  }
+  if (needsContract) {
+    if (isMustNot) contractTab.value = 'mustnot'
+    else if (isContractField) contractTab.value = 'contract'
+    else if (isPlanField) contractTab.value = 'plan'
+    else contractTab.value = 'facts'
+  }
   aiOpen.value = false
   void nextTick(() => {
     let targetId = ''
     if (field === 'as_of') targetId = 'ai-field-asOf'
     else if (field === 'turns') targetId = 'ai-field-turns'
+    else if (isTurnRuleField) targetId = 'ai-field-turns'
+    else if (isMustNot) targetId = 'ai-field-mustNotText'
+    else if (field.startsWith('hidden_context')) targetId = 'ai-field-hidden'
+    else if (isRequestVariableField) targetId = 'ai-field-requestVariables'
+    else if (isRuleField) targetId = 'ai-field-rules'
+    else if (isContractField) targetId = 'ai-field-contract'
+    else if (isPlanField) targetId = 'ai-field-plan'
     else if (field === 'must' || field.startsWith('must.') || field.startsWith('may.')) {
       const section: 'must' | 'may' = field.startsWith('may') ? 'may' : 'must'
       const index = factRows(section).findIndex(
@@ -2160,7 +3291,6 @@ function openDraftResult(): void {
             </div>
             <div class="flex shrink-0 items-center gap-2">
               <button
-                v-if="aiAvailable"
                 class="inline-flex h-[30px] items-center gap-1.5 rounded-[9px] border border-indigo-200 bg-indigo-50 px-2.5 text-[11.5px] font-semibold text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100"
                 :class="{ '!border-indigo-600 !bg-indigo-600 !text-white': aiOpen }"
                 :title="isEdit ? '基于当前用例改写，AI 帮你填表单' : '用自然语言描述，AI 帮你填表单'"
@@ -2171,6 +3301,11 @@ function openDraftResult(): void {
                   <path stroke-linecap="round" d="M19 15.5 20 18l2.5 1-2.5 1-1 2.5-1-2.5L15.5 19l2.5-1 1-2.5Z" />
                 </svg>
                 AI 帮我填
+                <span
+                  v-if="aiDrafts.length && !aiOpen"
+                  class="ml-0.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500"
+                  title="有未完成的 AI 草稿，点击继续"
+                ></span>
               </button>
               <button
                 class="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
@@ -2185,7 +3320,7 @@ function openDraftResult(): void {
 
           <!-- AI 帮我填：气泡式输入 / 回显 -->
           <div
-            v-if="aiOpen && aiAvailable"
+            v-if="aiOpen"
             class="absolute right-4 top-[76px] z-30 flex max-h-[calc(100vh-140px)] w-[452px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_60px_-22px_rgba(15,23,42,0.38),0_2px_6px_rgba(15,23,42,0.06)]"
           >
             <div class="flex items-start gap-2.5 border-b border-slate-100 bg-gradient-to-b from-indigo-50/80 to-white px-3.5 py-3">
@@ -2212,16 +3347,29 @@ function openDraftResult(): void {
                 <p v-if="isEdit && aiBaseCode" class="mt-0.5 text-[9px] text-indigo-500">
                   改写基线：{{ aiBaseCode }} · 保存后生成新版本
                 </p>
+                <p v-if="aiRestored" class="mt-0.5 text-[9px] leading-relaxed text-amber-600">
+                  已恢复刷新前的草稿{{ aiRestoredApplied ? '（表单已重置，请重新应用）' : '' }}
+                </p>
               </div>
-              <button
-                class="ml-auto grid h-6 w-6 shrink-0 place-items-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-                aria-label="关闭 AI 气泡"
-                @click="closeAi"
-              >
-                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" />
-                </svg>
-              </button>
+              <div class="ml-auto flex shrink-0 items-center gap-1">
+                <button
+                  v-if="aiDrafts.length || aiPrompt.trim()"
+                  class="rounded-md px-1.5 py-1 text-[9px] font-medium text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  title="清除本地保存的 AI 草稿"
+                  @click="discardAiDraft"
+                >
+                  清除草稿
+                </button>
+                <button
+                  class="grid h-6 w-6 shrink-0 place-items-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  aria-label="关闭 AI 气泡"
+                  @click="closeAi"
+                >
+                  <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <div class="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
@@ -2286,6 +3434,18 @@ function openDraftResult(): void {
                 <p v-if="aiError" class="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-[10px] text-rose-700">
                   {{ aiError }}
                 </p>
+                <div
+                  v-if="isEdit && pendingNotes"
+                  class="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5"
+                >
+                  <p class="text-[9px] font-semibold text-amber-800">用例备注里记录的待补充项</p>
+                  <p class="mt-0.5 whitespace-pre-line text-[9px] leading-relaxed text-amber-700">
+                    {{ pendingNotes }}
+                  </p>
+                  <p class="mt-0.5 text-[8.5px] text-amber-600">
+                    补齐后可直接在描述里删掉这条备注。
+                  </p>
+                </div>
               </template>
 
               <template v-else-if="aiDraft">
@@ -2315,6 +3475,13 @@ function openDraftResult(): void {
                   >
                     {{ index + 1 }}
                   </button>
+                  <span
+                    class="rounded px-1.5 py-0.5 text-[8.5px] font-semibold"
+                    :class="aiDraftConfidenceClass"
+                    :title="`AI 自评置信度 ${Math.round((aiDraft.confidence ?? 0) * 100)}%；待补项越多置信度越低`"
+                  >
+                    把握 {{ Math.round((aiDraft.confidence ?? 0) * 100) }}%
+                  </span>
                   <span class="ml-auto text-[9px] text-slate-400">
                     方案 {{ aiDraftIndex + 1 }}/{{ aiDrafts.length }}
                   </span>
@@ -2487,6 +3654,9 @@ function openDraftResult(): void {
                   <p class="text-[10px] font-semibold text-amber-800">
                     待人工补充（{{ aiDraft.missing.length }}）
                   </p>
+                  <p class="text-[9px] leading-relaxed text-amber-700">
+                    保存时仍未补的项会写入用例描述备注（「待补充：…」），方便后续追溯。
+                  </p>
                   <div
                     v-for="item in aiDraft.missing"
                     :key="item.field"
@@ -2651,7 +3821,7 @@ function openDraftResult(): void {
               </div>
             </section>
 
-            <section class="space-y-3">
+            <section id="ai-field-requestVariables" tabindex="-1" class="space-y-3">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">请求变量</h3>
                 <div class="flex items-center gap-1">
@@ -2784,7 +3954,7 @@ function openDraftResult(): void {
                   <button
                     v-if="form.turns.length > 1"
                     class="text-[11px] text-rose-700 hover:text-rose-700"
-                    @click="form.turns.splice(index, 1)"
+                    @click="removeTurn(index)"
                   >
                     删除
                   </button>
@@ -2841,7 +4011,11 @@ function openDraftResult(): void {
                   <input v-model="form.terminateKeywordsText" class="input" placeholder="¥12,345.67, 3 笔" />
                 </div>
               </div>
-              <div class="flex items-center justify-between">
+              <div
+                id="ai-field-hidden"
+                tabindex="-1"
+                class="flex items-center justify-between"
+              >
                 <label class="label !mb-0">隐藏上下文（按提示逐轮释放）</label>
                 <button class="btn-ghost btn-xs" @click="addHidden">添加条目</button>
               </div>
@@ -2853,7 +4027,7 @@ function openDraftResult(): void {
                 <input v-model="item.key" class="input" placeholder="键，如 order_no" />
                 <input v-model="item.content" class="input" placeholder="内容，如 A2024001" />
                 <input v-model="item.release_hint" class="input" placeholder="释放提示" />
-                <button class="btn-danger btn-xs" @click="form.hidden.splice(index, 1)">删除</button>
+                <button class="btn-danger btn-xs" @click="removeHiddenRow(index)">删除</button>
               </div>
             </section>
 
@@ -3113,6 +4287,7 @@ function openDraftResult(): void {
                     <label class="label">禁止出现的事实（品牌/口径/错误结论）</label>
                     <input
                       v-model="form.mustNotText"
+                      id="ai-field-mustNotText"
                       class="input"
                       :class="{ 'ai-fill': aiHighlight.has('mustNotText') }"
                       placeholder="例如：系统异常, 已全额退款"
@@ -3129,7 +4304,7 @@ function openDraftResult(): void {
                   </div>
                 </div>
 
-                <div v-show="contractTab === 'contract'" class="space-y-3">
+                <div v-show="contractTab === 'contract'" id="ai-field-contract" tabindex="-1" class="space-y-3">
                   <p class="text-[11px] text-slate-500">
                     输入不清晰时，「正确」指行为得体：允许澄清，或声明假设后作答，或部分披露，或拒绝。
                     至少选择两种可接受行为。
@@ -3180,7 +4355,7 @@ function openDraftResult(): void {
                   </div>
                 </div>
 
-                <div v-show="contractTab === 'plan'" class="space-y-3">
+                <div v-show="contractTab === 'plan'" id="ai-field-plan" tabindex="-1" class="space-y-3">
                   <p class="text-[11px] text-slate-500">
                     仅用于失败诊断与能力覆盖分析，不参与正确性判定。录入人员无需了解底层实现。
                   </p>
@@ -3208,7 +4383,7 @@ function openDraftResult(): void {
               </div>
             </section>
 
-            <section v-if="form.case_type !== 'STATIC_MULTI' && form.gradingMode !== 'ANSWER_CONTRACT'" class="space-y-3">
+            <section v-if="form.case_type !== 'STATIC_MULTI' && form.gradingMode !== 'ANSWER_CONTRACT'" id="ai-field-rules" tabindex="-1" class="space-y-3">
               <div class="flex items-center justify-between">
                 <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">规则硬校验</h3>
                 <div class="flex gap-2">
@@ -3237,7 +4412,7 @@ function openDraftResult(): void {
                     step="0.01"
                     placeholder="容差"
                   />
-                  <button class="btn-danger btn-xs shrink-0" @click="form.amounts.splice(index, 1)">
+                  <button class="btn-danger btn-xs shrink-0" @click="removeAmountRule(index)">
                     删除
                   </button>
                 </div>
@@ -3266,7 +4441,7 @@ function openDraftResult(): void {
                     type="number"
                     placeholder="期望笔数"
                   />
-                  <button class="btn-danger btn-xs shrink-0" @click="form.counts.splice(index, 1)">
+                  <button class="btn-danger btn-xs shrink-0" @click="removeCountRule(index)">
                     删除
                   </button>
                 </div>
@@ -3355,16 +4530,6 @@ function openDraftResult(): void {
               </div>
 
               <div class="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label class="label">模拟器模型</label>
-                  <select v-model="form.simulator_model_id" class="input">
-                    <button><selectedcontent></selectedcontent></button>
-                    <option :value="null">未指定</option>
-                    <option v-for="item in simulatorModels" :key="item.id" :value="item.id">
-                      {{ item.name }}（{{ item.model_name }}）
-                    </option>
-                  </select>
-                </div>
                 <div>
                   <label class="label">裁判策略</label>
                   <select v-model="form.judgeStrategy" class="input">

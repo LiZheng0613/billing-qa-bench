@@ -32,6 +32,10 @@ class LLMError(AppError):
         super().__init__(message, code="LLM_ERROR", status_code=502)
 
 
+class _LegacyOpenCodeApi(Exception):
+    """当前 serve 不支持 v1 会话接口，需要回退到旧版 SSE 流程。"""
+
+
 @dataclass
 class LLMResult:
     content: str
@@ -327,19 +331,31 @@ class LLMClient:
         extra: dict[str, Any] | None = None,
     ) -> LLMResult:
         # OpenCode 的采样参数由 serve 侧模型配置决定，这里只负责拼接提示与收集事件。
+        system_text, user_text = self._split_messages(messages)
         prompt = self._flatten_messages(messages)
         use_json = self.model.response_format_json if json_mode is None else json_mode
         if use_json:
-            prompt += (
+            suffix = (
                 "\n\n【输出要求】只返回单个合法 JSON 对象，"
                 "不要使用 Markdown 代码块，也不要输出解释性文字。"
             )
+            prompt += suffix
+            user_text += suffix
 
         last_error: Exception | None = None
+        legacy = False
         for attempt in range(self.model.max_retries + 1):
             await self._limiter.acquire()
             started = time.perf_counter()
             try:
+                if not legacy:
+                    try:
+                        return await self._opencode_send_message(
+                            system_text, user_text, started
+                        )
+                    except _LegacyOpenCodeApi:
+                        legacy = True
+                        logger.info("OpenCode Serve 不支持 v1 会话接口，回退旧版 SSE 流程")
                 return await self._opencode_once(prompt, use_json, started)
             except (httpx.HTTPError, LLMError) as exc:
                 last_error = exc
@@ -348,6 +364,23 @@ class LLMClient:
                     backoff = min(2**attempt, 8) * (1 + random.random() * 0.2)
                     await asyncio.sleep(backoff)
         raise LLMError(f"OpenCode 调用失败（已重试 {self.model.max_retries} 次）: {last_error}")
+
+    def _split_messages(self, messages: list[dict[str, str]]) -> tuple[str, str]:
+        """拆分出 system 指令与对话正文。"""
+        systems: list[str] = []
+        parts: list[str] = []
+        for message in messages:
+            role = str(message.get("role") or "user")
+            content = str(message.get("content") or "")
+            if not content:
+                continue
+            if role == "system":
+                systems.append(content)
+            elif role == "assistant":
+                parts.append(f"【历史回答】\n{content}")
+            else:
+                parts.append(content)
+        return "\n\n".join(systems), "\n\n".join(parts)
 
     def _flatten_messages(self, messages: list[dict[str, str]]) -> str:
         parts: list[str] = []
@@ -374,6 +407,112 @@ class LLMClient:
         if self.model.opencode_directory:
             payload["location"] = {"directory": self.model.opencode_directory}
         return payload
+
+    def _session_payload_v1(self) -> dict[str, Any]:
+        """v1 ``POST /session`` 入参（不接受 location，目录走 query）。"""
+        payload: dict[str, Any] = {"title": f"billing-qa · {self.model.code}"}
+        if self.model.opencode_agent:
+            payload["agent"] = self.model.opencode_agent
+        model_ref = self._opencode_model_ref()
+        if model_ref:
+            payload["model"] = model_ref
+        return payload
+
+    def _opencode_params(self) -> dict[str, str]:
+        if self.model.opencode_directory:
+            return {"directory": self.model.opencode_directory}
+        return {}
+
+    @staticmethod
+    def _unwrap_data(payload: Any) -> dict[str, Any]:
+        """兼容 ``{"data": {...}}`` 信封与直接返回对象两种响应。"""
+        if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+            return payload["data"]
+        return payload if isinstance(payload, dict) else {}
+
+    async def _opencode_send_message(
+        self, system_text: str, user_text: str, started: float
+    ) -> LLMResult:
+        """v1 同步接口：建会话 → 发消息 → 直接拿回复文本。"""
+        base = self.opencode_base_url
+        timeout = httpx.Timeout(max(self.model.timeout_seconds, 10.0), connect=15.0)
+        params = self._opencode_params()
+        async with httpx.AsyncClient(timeout=timeout, auth=self._opencode_auth()) as client:
+            created = await client.post(
+                f"{base}/session", params=params, json=self._session_payload_v1()
+            )
+            if created.status_code in (404, 405):
+                raise _LegacyOpenCodeApi()
+            _ensure_ok(created, "创建 OpenCode 会话")
+            session = self._unwrap_data(created.json())
+            session_id = str(session.get("id") or "")
+            if not session_id:
+                raise LLMError(f"OpenCode 未返回 sessionID: {created.text[:300]}")
+
+            try:
+                payload: dict[str, Any] = {
+                    "parts": [{"type": "text", "text": user_text}]
+                }
+                model_ref = self._opencode_model_ref()
+                if model_ref:
+                    payload["model"] = {
+                        "providerID": model_ref["providerID"],
+                        "modelID": model_ref["id"],
+                    }
+                if self.model.opencode_agent:
+                    payload["agent"] = self.model.opencode_agent
+                if system_text:
+                    payload["system"] = system_text
+                response = await client.post(
+                    f"{base}/session/{session_id}/message",
+                    params=params,
+                    json=payload,
+                )
+                _ensure_ok(response, "发送 OpenCode 提示")
+                data = self._unwrap_data(response.json())
+            finally:
+                try:
+                    await client.delete(f"{base}/session/{session_id}", params=params)
+                except httpx.HTTPError:
+                    logger.debug("清理 OpenCode session 失败: %s", session_id)
+
+        info = data.get("info") or {}
+        if isinstance(info, dict) and info.get("error"):
+            error = info["error"]
+            message = (
+                error.get("data", {}).get("message")
+                if isinstance(error, dict)
+                else None
+            ) or str(error)
+            raise LLMError(f"OpenCode 会话执行失败: {message}")
+        parts = data.get("parts") or []
+        texts = [
+            str(part.get("text") or "")
+            for part in parts
+            if isinstance(part, dict)
+            and part.get("type") == "text"
+            and part.get("text")
+        ]
+        content = "\n".join(texts).strip()
+        if not content:
+            raise LLMError(f"OpenCode 未返回文本内容: {str(data)[:300]}")
+
+        tokens = info.get("tokens") or {}
+        provider_id = str(info.get("providerID") or "")
+        model_id = str(info.get("modelID") or "")
+        model_name = (
+            f"{provider_id}/{model_id}"
+            if provider_id and model_id
+            else self.model.opencode_model or self.model.model_name
+        )
+        return LLMResult(
+            content=content,
+            prompt_tokens=int(tokens.get("input") or 0),
+            completion_tokens=int(tokens.get("output") or 0),
+            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            model_name=model_name,
+            raw=data,
+        )
 
     def _opencode_model_ref(self) -> dict[str, str] | None:
         raw = (self.model.opencode_model or "").strip()
@@ -554,7 +693,7 @@ class LLMClient:
             timeout=httpx.Timeout(10.0, connect=5.0), auth=self._opencode_auth()
         ) as client:
             errors: list[str] = []
-            for path in ("/api/info", "/global/health"):
+            for path in ("/global/health", "/api/info"):
                 try:
                     response = await client.get(f"{base}{path}")
                 except httpx.HTTPError as exc:

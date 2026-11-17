@@ -21,6 +21,7 @@ import type {
   PromptListItem,
   TestCase,
 } from '../types'
+import { useConfirm } from '../composables/useConfirm'
 import { errorMessage } from '../utils/errors'
 import {
   caseTypeLabel,
@@ -51,6 +52,7 @@ interface InfoRow {
 const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
+const confirm = useConfirm()
 
 const caseId = computed(() => Number(route.params.id))
 
@@ -229,7 +231,7 @@ const runInfo = computed<InfoRow[]>(() => {
       value: `${current.simulator_template_code || '未指定'} · ${statusLabel(current.simulator_template_strategy)}${simulatorVersion}`,
       mono: true,
     },
-    { label: '模拟器模型', value: modelName(current.simulator_model_id) },
+    { label: '模拟器模型', value: '全局唯一启用' },
     {
       label: '裁判模板',
       value: `${current.judge_template_code || '未指定'} · ${statusLabel(current.judge_template_strategy)}${judgeVersion}`,
@@ -472,7 +474,14 @@ async function submitFreeze(): Promise<void> {
 async function removeCase(): Promise<void> {
   const current = item.value
   if (!current) return
-  if (!window.confirm(`确认删除用例 ${current.code}？删除为软删除，历史执行记录保留。`)) return
+  const ok = await confirm({
+    title: '删除用例',
+    message: `确定删除用例 ${current.code} 吗？`,
+    detail: '删除为软删除，历史执行记录会保留。',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
   try {
     const result = await api.cases.remove(current.id)
     toast.success(result.message)

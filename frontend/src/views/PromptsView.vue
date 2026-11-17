@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -15,11 +15,13 @@ import type {
   SandboxResponse,
   TemplateType,
 } from '../types'
+import { useConfirm } from '../composables/useConfirm'
 import { errorMessage } from '../utils/errors'
 import { parseJsonObject, templateTypeLabel } from '../utils/format'
 import { useToastStore } from '../stores/toast'
 
 const toast = useToastStore()
+const confirm = useConfirm()
 
 const templates = ref<PromptListItem[]>([])
 const models = ref<ModelConfig[]>([])
@@ -72,6 +74,29 @@ const filteredTemplates = computed(() => {
     return item.code.toLowerCase().includes(value) || item.name.toLowerCase().includes(value)
   })
 })
+
+// 沙盒模型与执行链路同一套注册数据：按当前模式过滤角色，避免选到跨角色模型；
+// 按 id 升序排列，使缺省项与后端「id 最小的启用模型」规则一致。
+const sandboxModels = computed(() =>
+  models.value
+    .filter(
+      (item) =>
+        item.is_active &&
+        item.role === (sandboxForm.mode === 'SIMULATOR' ? 'SIMULATOR' : 'JUDGE'),
+    )
+    .slice()
+    .sort((a, b) => a.id - b.id),
+)
+
+function pickSandboxModel(): void {
+  sandboxForm.model_id = sandboxModels.value[0]?.id ?? null
+}
+
+// 切换「模拟器 / 裁判」模式时同步切换角色默认模型，避免残留跨角色 id。
+watch(
+  () => sandboxForm.mode,
+  () => pickSandboxModel(),
+)
 
 function defaultVariables(mode: 'SIMULATOR' | 'JUDGE'): string {
   if (mode === 'SIMULATOR') {
@@ -282,7 +307,14 @@ async function submitMeta(): Promise<void> {
 
 async function removeTemplate(): Promise<void> {
   if (!detail.value) return
-  if (!window.confirm(`确认删除模板 ${detail.value.code}？内置或被引用模板无法删除。`)) return
+  const ok = await confirm({
+    title: '删除模板',
+    message: `确定删除模板 ${detail.value.code} 吗？`,
+    detail: '内置模板或被引用模板无法删除。',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
   try {
     const result = await api.prompts.remove(detail.value.id)
     toast.success(result.message)
@@ -302,10 +334,7 @@ function openSandbox(version?: number): void {
     detail.value.versions[0]
   sandboxForm.mode = detail.value.template_type === 'USER_SIMULATOR' ? 'SIMULATOR' : 'JUDGE'
   sandboxForm.execution_id = null
-  const preferred = models.value.find(
-    (item) => item.role === (sandboxForm.mode === 'SIMULATOR' ? 'SIMULATOR' : 'JUDGE') && item.is_active,
-  )
-  sandboxForm.model_id = preferred?.id ?? models.value[0]?.id ?? null
+  pickSandboxModel()
   sandboxForm.contentOverride = target?.content ?? ''
   sandboxForm.variablesText = defaultVariables(sandboxForm.mode)
   sandboxForm.temperature = null
@@ -582,8 +611,8 @@ onMounted(() => {
               <select v-model="sandboxForm.model_id" class="input">
                 <button><selectedcontent></selectedcontent></button>
                 <option :value="null">按角色默认</option>
-                <option v-for="item in models" :key="item.id" :value="item.id">
-                  {{ item.name }}（{{ item.role === 'SIMULATOR' ? '模拟' : '裁判' }}）
+                <option v-for="item in sandboxModels" :key="item.id" :value="item.id">
+                  {{ item.name }}（{{ item.model_name }}）
                 </option>
               </select>
             </div>

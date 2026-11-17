@@ -130,11 +130,6 @@ async def _validate_references(db: AsyncSession, data: dict[str, Any]) -> None:
         template = await db.get(PromptTemplate, judge_id)
         if template is None or template.template_type != TemplateType.LLM_JUDGE:
             raise ValidationError("裁判模板不存在或类型不匹配")
-    simulator_model_id = data.get("simulator_model_id")
-    if simulator_model_id:
-        model = await db.get(ModelConfig, simulator_model_id)
-        if model is None or model.role != ModelRole.SIMULATOR:
-            raise ValidationError("模拟器模型不存在或角色不匹配")
     for model_id in data.get("judge_model_ids") or []:
         model = await db.get(ModelConfig, int(model_id))
         if model is None or model.role != ModelRole.JUDGE:
@@ -580,14 +575,21 @@ async def ai_draft_case(
 ) -> CaseAIDraftResponse:
     if payload.mode == "EDIT" and not payload.base_case_id:
         raise ValidationError("EDIT 模式必须提供 base_case_id")
+    response = await generate_case_drafts(db, payload)
+    # 生成审计：记录实际使用的模型与结果规模，便于事后复盘「哪次用了哪个模型」。
     logger.info(
-        "AI 用例草稿生成：operator=%s mode=%s count=%s base_case_id=%s",
+        "AI 用例草稿生成：operator=%s mode=%s count=%s base_case_id=%s "
+        "model=%s(id=%s) drafts=%s elapsed_ms=%s",
         operator,
         payload.mode,
         payload.count,
         payload.base_case_id,
+        response.model_code,
+        response.model_id,
+        len(response.drafts),
+        response.elapsed_ms,
     )
-    return await generate_case_drafts(db, payload)
+    return response
 
 
 @router.get("/{case_id}", response_model=CaseOut, summary="用例详情")

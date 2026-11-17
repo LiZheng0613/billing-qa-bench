@@ -15,7 +15,6 @@ from billing_qa.db.seed import extract_variables
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import ModelRole, TemplateType
 from billing_qa.models.execution import ExecutionRecord
-from billing_qa.models.model_config import ModelConfig
 from billing_qa.models.prompt_template import PromptTemplate, PromptTemplateVersion
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.common import MessageResponse, Page
@@ -35,6 +34,7 @@ from billing_qa.services.adapter.renderer import format_history, render_text
 from billing_qa.services.engine.judge import build_judge_variables
 from billing_qa.services.llm.client import LLMClient, ModelContext
 from billing_qa.services.llm.json_parser import parse_json_object
+from billing_qa.services.llm.registry import resolve_context
 
 router = APIRouter(
     prefix="/prompts", tags=["Prompt 资产"], dependencies=[Depends(get_current_operator)]
@@ -344,23 +344,9 @@ async def sandbox_run(
 
 
 async def _pick_model(db: AsyncSession, model_id: int | None, mode: str) -> ModelContext:
-    if model_id:
-        model = await db.get(ModelConfig, model_id)
-        if model is None:
-            raise NotFoundError("指定模型不存在")
-        return ModelContext.from_orm(model)
+    """统一走模型注册表：显式 id 优先，缺省取该模式的角色默认模型。"""
     role = ModelRole.SIMULATOR if mode == "SIMULATOR" else ModelRole.JUDGE
-    model = (
-        await db.execute(
-            select(ModelConfig)
-            .where(ModelConfig.role == role, ModelConfig.is_active.is_(True))
-            .order_by(ModelConfig.id.asc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if model is None:
-        raise ValidationError(f"未配置可用的 {role} 模型")
-    return ModelContext.from_orm(model)
+    return await resolve_context(db, model_id=model_id, roles=(role,))
 
 
 async def _build_sandbox_variables(

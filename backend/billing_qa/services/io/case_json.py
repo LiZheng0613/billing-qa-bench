@@ -54,7 +54,6 @@ EXPORT_ORDER: tuple[str, ...] = (
     "judge_template_strategy",
     "judge_template_version",
     "prompt_overrides",
-    "simulator_model_code",
     "judge_model_codes",
     "judge_strategy",
     "pass_threshold",
@@ -77,7 +76,6 @@ REFERENCE_CODES: dict[str, str] = {
     "environment_code": "environment_id",
     "simulator_template_code": "simulator_template_id",
     "judge_template_code": "judge_template_id",
-    "simulator_model_code": "simulator_model_id",
     "judge_model_codes": "judge_model_ids",
 }
 
@@ -154,9 +152,6 @@ def build_export_payload(
         values["judge_template_code"] = (
             template_map.get(case.judge_template_id) if case.judge_template_id else None
         )
-        values["simulator_model_code"] = (
-            model_map.get(case.simulator_model_id) if case.simulator_model_id else None
-        )
         values["judge_model_codes"] = [
             model_map[int(model_id)]
             for model_id in (case.judge_model_ids or [])
@@ -164,7 +159,6 @@ def build_export_payload(
         ]
         for internal in ("environment_id", "simulator_template_id", "judge_template_id"):
             values.pop(internal, None)
-        values.pop("simulator_model_id", None)
         values.pop("judge_model_ids", None)
 
         item = {key: values[key] for key in EXPORT_ORDER if key in values}
@@ -306,11 +300,6 @@ def resolve_references(
         if code not in template_map:
             raise ValidationError(f"裁判模板编码不存在: {code}")
         resolved["judge_template_id"] = template_map[code]
-    if resolved.get("simulator_model_code"):
-        code = str(resolved.pop("simulator_model_code"))
-        if code not in model_map:
-            raise ValidationError(f"模拟器模型编码不存在: {code}")
-        resolved["simulator_model_id"] = model_map[code]
     codes = resolved.pop("judge_model_codes", None)
     if codes is not None:
         id_list: list[int] = []

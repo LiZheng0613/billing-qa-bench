@@ -234,23 +234,63 @@ def _base_case_type(text: str) -> str:
 
 
 def _base_name(text: str) -> str | None:
-    match = re.search(r"^\[[^\]]+\]\s*(.+)$", (text or "").strip(), re.M)
+    match = re.search(r"^\[[^\]]+\]\s*(.+)$", (text or "").strip(), re.MULTILINE)
     return match.group(1).strip() if match else None
 
 
 def _base_description(text: str) -> str | None:
-    match = re.search(r"^描述：\s*(.+)$", (text or "").strip(), re.M)
+    match = re.search(r"^描述：\s*(.+)$", (text or "").strip(), re.MULTILINE)
     return match.group(1).strip() if match else None
 
 
 def _base_query(text: str) -> str | None:
-    match = re.search(r"^query：\s*(.+)$", (text or "").strip(), re.M)
+    match = re.search(r"^query：\s*(.+)$", (text or "").strip(), re.MULTILINE)
     return match.group(1).strip() if match else None
 
 
 def _base_priority(text: str) -> str | None:
-    match = re.search(r"^优先级：\s*(P[0-3])", (text or "").strip(), re.M)
+    match = re.search(r"^优先级：\s*(P[0-3])", (text or "").strip(), re.MULTILINE)
     return match.group(1) if match else None
+
+
+def _base_dynamic(text: str) -> dict[str, Any] | None:
+    """从基线用例简介里还原动态多轮语义字段。"""
+    if _base_case_type(text) != "DYNAMIC_MULTI":
+        return None
+
+    def line_value(key: str) -> str | None:
+        match = re.search(rf"^{re.escape(key)}：\s*(.+)$", text or "", re.MULTILINE)
+        return match.group(1).strip() if match else None
+
+    hidden: list[dict[str, Any]] = []
+    for raw_line in (text or "").splitlines():
+        match = re.match(r"^隐藏信息：([^｜]*)｜([^｜]*)｜(.*)$", raw_line.strip())
+        if not match:
+            continue
+        key = match.group(1).strip() or "信息"
+        content = match.group(2).strip()
+        if not content:
+            continue
+        hidden.append(
+            {
+                "key": key,
+                "content": content,
+                "release_hint": match.group(3).strip() or None,
+                "source": "CASE",
+            }
+        )
+    max_turns_raw = line_value("max_turns")
+    max_turns = int(max_turns_raw) if max_turns_raw and max_turns_raw.isdigit() else 5
+    keywords_raw = line_value("终止关键词")
+    keywords = [item for item in (keywords_raw or "").split("、") if item.strip()]
+    return {
+        "user_goal": line_value("user_goal"),
+        "initial_query": line_value("initial_query"),
+        "persona_description": line_value("persona"),
+        "hidden_context": hidden,
+        "max_turns": max_turns,
+        "terminate_conditions": {"keywords": keywords} if keywords else None,
+    }
 
 
 def _base_turns(text: str) -> list[dict[str, Any]]:
@@ -320,6 +360,26 @@ def _turn_no(text: str) -> int | None:
     return _CN_TURN_DIGITS.get(raw)
 
 
+def _author_capability(topic: str) -> str | None:
+    """按业务主题给出取数能力编码（与演示用例 plan_spec 的词汇一致）。"""
+    if any(word in topic for word in ("欠费", "停机", "复机")):
+        return "arrears_query"
+    if any(word in topic for word in ("流量", "超套", "套餐", "余量")):
+        return "usage_query"
+    if any(
+        word in topic
+        for word in ("offer", "订购", "可办理", "能办理", "合约", "优惠", "折扣")
+    ):
+        return "offer_query"
+    if any(word in topic for word in ("余额", "预存", "冻结", "赠费")):
+        return "balance_query"
+    if "漫游" in topic:
+        return "roaming_query"
+    if any(word in topic for word in ("账单", "金额", "费用", "明细")):
+        return "bill_query"
+    return None
+
+
 def _author_content(prompt: str) -> dict[str, Any]:
     """确定性生成用例草稿：只使用用户描述中明确出现的信息。"""
     request = _author_request(prompt)
@@ -341,6 +401,7 @@ def _author_content(prompt: str) -> dict[str, Any]:
         topic = f"{user_part} {base_part}"
 
     base_turns = _base_turns(base_part)
+    base_dynamic = _base_dynamic(base_part)
     base_name = _base_name(base_part)
     base_description = _base_description(base_part)
     base_query = _base_query(base_part)
@@ -390,9 +451,11 @@ def _author_content(prompt: str) -> dict[str, Any]:
         base_period = _prompt_period(base_part)
         if period and base_period and period != base_period:
             rewritten = _PERIOD_PATTERN.sub(period, rewritten)
-        if "口语化" in user_part or "口语" in user_part:
-            if not rewritten.startswith("麻烦问下"):
-                rewritten = f"麻烦问下，{rewritten}"
+        if (
+            ("口语化" in user_part or "口语" in user_part)
+            and not rewritten.startswith("麻烦问下")
+        ):
+            rewritten = f"麻烦问下，{rewritten}"
         query = rewritten
 
     grading = "ANSWER_CONTRACT" if (amounts or "契约" in request) else "LEGACY"
@@ -539,14 +602,135 @@ def _author_content(prompt: str) -> dict[str, Any]:
         priority = "P0" if grading == "ANSWER_CONTRACT" else "P1"
         priority_source = "LLM"
 
-    return {
+    # 动态多轮：只给目标 / 初始提问 / 隐藏信息 / 轮次上限，脚本交给模拟器实时生成。
+    dynamic_requested = bool(
+        re.search(r"动态多轮|动态追问|隐藏信息|不主动给|反问后|挤牙膏", user_part)
+    )
+    dynamic: dict[str, Any] | None = None
+    if base_dynamic is not None or (not base_turns and dynamic_requested):
+        seed = base_dynamic or {}
+        hidden = [dict(item) for item in seed.get("hidden_context") or []]
+        # 基线里可能用不同 key 记录了同一实体（如 phone / 手机号），按 key 与取值双重去重。
+        if entity and all(
+            str(item.get("key")) != entity[0] and entity[1] not in str(item.get("content") or "")
+            for item in hidden
+        ):
+            hidden.append(
+                {
+                    "key": entity[0],
+                    "content": entity[1],
+                    "release_hint": f"客服反问{entity[0]}时释放",
+                    "source": "USER",
+                }
+            )
+        goal_quote = re.search(r"用户目标[^「『\"“]*[「『\"“]([^」』\"”]+)[」』\"”]", user_part)
+        if goal_quote:
+            goal = goal_quote.group(1).strip()
+        elif seed.get("user_goal"):
+            goal = str(seed["user_goal"])
+        else:
+            hidden_key = str(hidden[0]["key"]) if hidden else "关键条件"
+            goal = f"不主动提供{hidden_key}，通过反问拿到 {period_text} 的{fact_label}并核对口径"
+        initial_query = seed.get("initial_query") or f"我想核对一下{period_text}的{fact_label}"
+        quotes = re.search(r"初始提问[^「『\"“]*[「『\"“]([^」』\"”]+)[」』\"”]", user_part)
+        if quotes:
+            initial_query = quotes.group(1).strip()
+        max_turns = int(seed.get("max_turns") or 5)
+        turns_match = re.search(r"(?:最多|不超过|最大)\s*(\d{1,2})\s*轮", user_part)
+        if turns_match:
+            max_turns = int(turns_match.group(1))
+        keywords = list((seed.get("terminate_conditions") or {}).get("keywords") or [])
+        if not keywords:
+            keywords = [fact_label]
+        dynamic = {
+            "user_goal": goal,
+            "initial_query": initial_query,
+            "persona_description": seed.get("persona_description")
+            or "普通用户，说话简短，只在客服反问时补充关键条件",
+            "hidden_context": hidden,
+            "max_turns": max_turns,
+            "terminate_conditions": {"keywords": keywords},
+        }
+
+    # 全字段覆盖：请求变量 / 4 维规则 / 响应契约 / 取数计划 / 配置。
+    request_variables: dict[str, Any] = {}
+    if entity:
+        key = {"手机号": "phone", "宽带账号": "account_no", "订单号": "order_no"}.get(
+            entity[0], "entity"
+        )
+        request_variables[key] = entity[1]
+    if period:
+        request_variables["billing_period"] = period
+
+    # 4 维评分规则：LEGACY 下只用有依据的日期，绝不编造金额。
+    expected_rules: dict[str, Any] | None = None
+    if grading == "LEGACY" and period:
+        expected_rules = {
+            "amounts": [],
+            "counts": [],
+            "dates": [period],
+            "must_contain": [],
+            "must_not_contain": [],
+        }
+
+    # 取数计划：能力编码使用系统既有用例的词汇。
+    capability = _author_capability(topic)
+    plan_spec: dict[str, Any] | None = None
+    if capability:
+        plan_spec = {
+            "required_capabilities": [capability],
+            "max_tool_calls": 2,
+            "allow_parallel": True,
+        }
+
+    ambiguous = bool(
+        re.search(r"模糊|歧义|没说清|信息不全|指代不清|不清晰", user_part)
+    )
+    input_type = "UNDERSPECIFIED" if ambiguous else "CLEAR"
+    response_contract: dict[str, Any] | None = None
+    if ambiguous:
+        response_contract = {
+            "allowed": ["clarify", "refuse"],
+            "clarify": {
+                "must_ask_slot": ["time_range"],
+                "must_not_assert": ["amount"],
+            },
+            "refuse": {"must_reason": True},
+        }
+
+    threshold_match = re.search(r"(?:阈值|分数线)\s*(\d{1,3})", user_part)
+    pass_threshold: float | None = None
+    if threshold_match:
+        value = int(threshold_match.group(1))
+        if 0 <= value <= 100:
+            pass_threshold = float(value)
+    if re.search(r"VETO|一票否决", user_part, re.IGNORECASE):
+        judge_strategy: str | None = "VETO"
+    elif re.search(r"AVG|平均分", user_part, re.IGNORECASE):
+        judge_strategy = "AVG"
+    else:
+        judge_strategy = None
+
+    fail_fast: bool | None = None
+    if re.search(r"失败即停|快速失败|fail.?fast", user_part, re.IGNORECASE):
+        fail_fast = True
+    if re.search(r"严格包络|strict", user_part, re.IGNORECASE):
+        extras_policy: str | None = "strict"
+    elif re.search(r"宽松包络|lenient", user_part, re.IGNORECASE):
+        extras_policy = "lenient"
+    else:
+        extras_policy = None
+
+    change_summary = "按用户要求更新了提问与语义字段" if base_part.strip() else None
+
+    payload: dict[str, Any] = {
         "case_type": "STATIC_MULTI" if turns else "SINGLE",
         "name": name,
         "description": description,
         "priority": priority,
         "tags": tags,
         "grading_mode": grading,
-        "input_type": "CLEAR",
+        "input_type": input_type,
         "as_of": period,
         "query": None if turns else query,
         "expected_answer": (
@@ -555,6 +739,15 @@ def _author_content(prompt: str) -> dict[str, Any]:
             else (f"{period_text}{fact_label}为 {amounts[0]} 元" if amounts else None)
         ),
         "turns": turns,
+        "request_variables": request_variables or None,
+        "expected_rules": expected_rules,
+        "plan_spec": plan_spec,
+        "response_contract": response_contract,
+        "fail_fast": fail_fast,
+        "extras_policy": extras_policy,
+        "judge_strategy": judge_strategy,
+        "pass_threshold": pass_threshold,
+        "change_summary": change_summary,
         "risk_level": "HIGH" if grading == "ANSWER_CONTRACT" else "LOW",
         "confidence": 0.72,
         "must": must,
@@ -568,11 +761,37 @@ def _author_content(prompt: str) -> dict[str, Any]:
             "query": "CASE" if base_query and query == base_query else "LLM",
             "turns": "CASE" if base_turns else ("LLM" if turns else "NONE"),
             "as_of": "USER" if period else "NONE",
+            "request_variables": "USER" if request_variables else "NONE",
+            "expected_rules": "USER" if expected_rules else "NONE",
+            "plan_spec": "LLM" if plan_spec else "NONE",
             fact_label: "USER" if amounts else "NONE",
         },
         "missing": missing,
         "warnings": warnings,
     }
+
+    if dynamic is not None:
+        payload.update(dynamic)
+        payload["case_type"] = "DYNAMIC_MULTI"
+        payload["query"] = None
+        payload["expected_answer"] = None
+        payload["turns"] = []
+        payload["field_sources"] = {
+            **payload["field_sources"],
+            "case_type": "CASE" if base_dynamic is not None else "LLM",
+            "query": "NONE",
+            "turns": "NONE",
+            "user_goal": "CASE" if base_dynamic and base_dynamic.get("user_goal") else "LLM",
+            # 编辑场景下隐藏信息沿用基线，来源应标 CASE 而不是 USER。
+            "hidden_context": (
+                "CASE"
+                if base_dynamic is not None
+                else ("USER" if dynamic["hidden_context"] else "NONE")
+            ),
+            "max_turns": "LLM",
+        }
+
+    return payload
 
 
 @app.get("/health")

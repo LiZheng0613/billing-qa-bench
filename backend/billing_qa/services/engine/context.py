@@ -13,10 +13,10 @@ from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ValidationError
 from billing_qa.models.enums import ModelRole, TemplateStrategy, TemplateType
 from billing_qa.models.environment import Environment
-from billing_qa.models.model_config import ModelConfig
 from billing_qa.models.prompt_template import PromptTemplate, PromptTemplateVersion
 from billing_qa.services.adapter.target_api import EnvContext
 from billing_qa.services.llm.client import ModelContext
+from billing_qa.services.llm.registry import resolve_context, resolve_unique_context
 
 DEFAULT_SIMULATOR_CODE = "SIM_DEFAULT_BILLING_USER"
 DEFAULT_JUDGE_CODE = "JUDGE_DEFAULT_ZERO_TOLERANCE"
@@ -88,24 +88,11 @@ async def resolve_template(
     return template, version_row
 
 
-async def _load_model(db: AsyncSession, model_id: int | None, role: ModelRole) -> ModelContext:
-    model: ModelConfig | None = None
-    if model_id:
-        model = await db.get(ModelConfig, model_id)
-    if model is None:
-        model = (
-            await db.execute(
-                select(ModelConfig)
-                .where(ModelConfig.role == role, ModelConfig.is_active.is_(True))
-                .order_by(ModelConfig.id.asc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-    if model is None:
-        raise ValidationError(f"未配置可用的 {role} 模型，请先在模型注册中新增")
-    if not model.is_active:
-        raise ValidationError(f"模型 {model.name} 已停用")
-    return ModelContext.from_orm(model)
+async def _load_model(
+    db: AsyncSession, model_id: int | None, role: ModelRole
+) -> ModelContext:
+    """统一走模型注册表：显式 id 优先，缺省取该角色 id 最小的启用模型。"""
+    return await resolve_context(db, model_id=model_id, roles=(role,))
 
 
 async def load_execution_context(
@@ -130,9 +117,8 @@ async def load_execution_context(
     if not env.is_active:
         raise ValidationError(f"环境 {env.name} 已停用")
 
-    simulator_model = await _load_model(
-        db, snapshot.get("simulator_model_id"), ModelRole.SIMULATOR
-    )
+    # 模拟器模型由系统配置统一决定：取唯一启用的 SIMULATOR，不再按用例选择。
+    simulator_model = await resolve_unique_context(db, ModelRole.SIMULATOR)
 
     judge_ids: list[int] = [
         int(item) for item in (snapshot.get("judge_model_ids") or []) if str(item).isdigit()

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 import ToastHost from './components/ToastHost.vue'
 import { useAuthStore } from './stores/auth'
 import { useToastStore } from './stores/toast'
@@ -28,4 +29,5 @@ onBeforeUnmount(() => {
 <template>
   <RouterView />
   <ToastHost />
+  <ConfirmDialog />
 </template>

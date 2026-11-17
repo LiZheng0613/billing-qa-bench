@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useConfirm } from '../../composables/useConfirm'
 import { api } from '../../api'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 }>()
 
 const toast = useToastStore()
+const confirm = useConfirm()
 const revisions = ref<CaseRevision[]>([])
 const fromVersion = ref<number | null>(null)
 const toVersion = ref<number | null>(null)
@@ -68,7 +70,14 @@ async function loadDiff(): Promise<void> {
 
 async function rollback(version: number): Promise<void> {
   if (!props.caseData) return
-  if (!window.confirm(`确认回滚到 v${version}？回滚会生成一个新版本，历史记录不会丢失。`)) return
+  const ok = await confirm({
+    title: '回滚版本',
+    message: `确定回滚到 v${version} 吗？`,
+    detail: '回滚会生成一个新版本，历史记录不会丢失。',
+    confirmText: '回滚',
+    tone: 'warning',
+  })
+  if (!ok) return
   rolling.value = true
   try {
     await api.cases.rollback(props.caseData.id, version, `回滚至 v${version}`)

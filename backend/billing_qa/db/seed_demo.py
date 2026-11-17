@@ -501,7 +501,6 @@ def _build_cases(
         "simulator_template_id": sim_template_id,
         "simulator_template_strategy": TemplateStrategy.PINNED.value,
         "simulator_template_version": 1,
-        "simulator_model_id": simulator_id,
         "status": "ACTIVE",
         "priority": "P1",
         "owner": TELE_OWNER,
@@ -2369,7 +2368,8 @@ async def seed_demo_data(db: AsyncSession, *, reset: bool = False) -> None:
     await _get_or_create_environment(db, DEMO_ENV_CODE, is_stream=True)
     json_env = await _get_or_create_environment(db, DEMO_JSON_ENV_CODE, is_stream=False)
 
-    simulator = await _get_or_create_model(
+    # MOCK-SIM 作为唯一启用的模拟器模型，供全链路统一取用。
+    await _get_or_create_model(
         db,
         code="MOCK-SIM",
         name="Mock 用户模拟器",
@@ -2415,7 +2415,6 @@ async def seed_demo_data(db: AsyncSession, *, reset: bool = False) -> None:
         env_id=json_env.id,
         sim_template_id=sim_template.id,
         judge_template_id=judge_template.id,
-        simulator_id=simulator.id,
         judge_id=judge.id,
         judge2_id=judge2.id,
     )

@@ -530,7 +530,6 @@ export interface TestCase {
   judge_template_strategy: string
   judge_template_version: number | null
   prompt_overrides: Record<string, string> | null
-  simulator_model_id: number | null
   judge_model_ids: number[] | null
   judge_strategy: string
   pass_threshold: number | null
@@ -586,7 +585,6 @@ export interface CasePayload {
   judge_template_strategy?: TemplateStrategy
   judge_template_version?: number | null
   prompt_overrides?: Record<string, string> | null
-  simulator_model_id?: number | null
   judge_model_ids?: number[]
   judge_strategy?: JudgeStrategy
   pass_threshold?: number | null
@@ -623,6 +621,15 @@ export interface DraftTurn {
   query: string
   expected_answer: string | null
   notes: string | null
+  expected_rules?: RuleConfig | null
+}
+
+/** 动态多轮的隐藏信息：客服反问后才释放的条件。 */
+export interface DraftHiddenContext {
+  key: string
+  content: string
+  release_hint: string | null
+  source: DraftSource
 }
 
 export interface CaseAIDraft {
@@ -637,10 +644,26 @@ export interface CaseAIDraft {
   query: string | null
   expected_answer: string | null
   turns: DraftTurn[]
+  user_goal: string | null
+  initial_query: string | null
+  persona_description: string | null
+  hidden_context: DraftHiddenContext[]
+  max_turns: number | null
+  terminate_conditions: { keywords?: string[] } | null
   must: DraftFact[]
   may: DraftFact[]
   must_not: DraftFact[]
   forbidden_phrases: string[]
+  request_variables: Record<string, unknown> | null
+  expected_rules: RuleConfig | null
+  session_expected: Record<string, unknown> | null
+  fail_fast: boolean | null
+  response_contract: ResponseContract | null
+  plan_spec: PlanSpec | null
+  extras_policy: 'strict' | 'lenient' | null
+  judge_strategy: JudgeStrategy | null
+  pass_threshold: number | null
+  change_summary: string | null
   risk_level: 'LOW' | 'HIGH'
   confidence: number
   field_sources: Partial<Record<string, DraftSource>>

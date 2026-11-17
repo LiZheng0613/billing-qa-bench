@@ -49,7 +49,7 @@ batch_test/
 │   ├── migrations/            # Alembic 迁移脚本
 │   ├── mock_servers/          # 内置 Mock：LLM(8001) 与被测客服系统(8002)
 │   ├── scripts/               # api_smoke.py / e2e_smoke.py / seed_demo_history.py / migrate_mysql_to_postgres.py
-│   ├── tests/                 # 242 项 pytest
+│   ├── tests/                 # 277 项 pytest
 │   ├── alembic.ini
 │   ├── pyproject.toml
 │   └── .env.example
@@ -177,6 +177,37 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 3. **用例资产**：浏览 57 条电信计费演示用例（55 条 `ACTIVE` + 1 条 `DRAFT` + 1 条 `DISABLED`；其中 25 条答案契约、32 条 4 维评分）；勾选行（或「全选筛选结果」）后点右上角「批量执行（N）」，可直接建任务并跳转大盘；行内「历史」查看该用例全部执行记录，打开「趋势 / 对比 / 版本」体验 Diff 与历史分析。
 4. **测试大盘**：也可在「新建批量任务」中勾选用例（支持全选筛选结果，覆盖上百条用例）、设置并发数与 QPS，执行后 WebSocket 实时刷新进度；选中任务即为「批量任务详情」，点击用例行进入单笔执行结果。
 5. **执行记录**：列表查看全部批量 / 调试 / 重跑记录，点击任意记录进入单笔结果页（对话轮次、裁判明细、规则校验、用例快照与原始报文）；对失败任务可断点重跑。
+
+### LLM 模型选择（统一解析）
+
+所有 LLM 场景共用同一份模型注册数据，统一由 `services/llm/registry` 解析，语义保持一致：
+
+- **用例编写 / 动态模拟器**：不再按次或按用例选模型。两者各自只允许**一个启用项**，由系统配置决定，界面上不提供选择。
+  - 模型注册里启用第二个同角色模型会直接 422：「该角色已有启用的模型，请先停用它」。
+  - 存量数据出现多个启用项时，调用会明确报错并列出冲突项，要求只保留一个。
+  - 要换模型：在设置页停用旧的、启用新的。
+- **LLM 裁判**：仍可按用例多选（AVG / VETO 多裁判机制依赖），不受唯一启用约束。
+- **Prompt 沙盒**：保留显式指定模型的能力（调试不同模型对同一 Prompt 的输出）。
+- **连通性测试**：按注册项直测，不受角色与启用状态限制。
+- 调试时的 `case_snapshot_override` 传入跨角色模型会被拒绝并记录为 `ERROR`，而不是悄悄用错模型执行。
+
+> 模拟器模型已从用例字段中移除（原 `simulator_model_id` 列与 API 字段已删除），
+> 执行时统一取全局唯一启用的 `SIMULATOR` 模型。
+
+### AI 帮我填（全字段覆盖）
+
+「AI 帮我填」的目标是：**用例抽屉里能手动填写的语义字段，都能由 AI 生成草稿并回填**。生成结果仍不落库，必须人工确认后应用。
+
+- **基础字段**：名称、描述、优先级、标签、判分方式、输入形态、账期、单轮提问 / 预期答案、静态多轮脚本、动态多轮语义（用户目标 / 初始提问 / 人设 / 隐藏信息 / 最大轮次 / 终止关键词）、Must / May / MustNot 事实、禁用短语、风险等级。
+- **请求变量**：`request_variables` 按 key-value 生成；变量名须匹配 `[A-Za-z_][A-Za-z0-9_]*` 且避开运行时保留字（`query` / `history` / `history_text` / `turn` / `timestamp_iso`）。含数字或日期的取值必须有依据，否则留空并进入「待补充」。
+- **4 维规则**：`expected_rules`（金额 / 笔数 / 日期 / 必须包含 / 禁止包含），以及静态多轮每轮的 `turns[].expected_rules`；数值与日期同样遵守「无依据不落库」。
+- **多轮会话**：静态多轮的 `session_expected` 与 `fail_fast`。
+- **响应契约**：非清晰输入时的 `response_contract`（澄清 / 带假设作答 / 部分披露 / 拒绝 及其子配置）。草稿允许只给出一种行为，保存前会提示补齐至少两种。
+- **取数计划**：`plan_spec` 的 `required_capabilities` / `max_tool_calls`。能力编码只能来自系统能力清单（能力资产为空时退化为既有用例声明过的编码），模型编造的能力会被丢弃。
+- **答案包络与判分配置**：`extras_policy`；`judge_strategy` / `pass_threshold` **仅在用户明确要求时**才生成，避免凭空给出阈值。
+- **变更说明**：编辑既有用例时生成 `change_summary`。
+- **结果面板**：顶部展示 AI 自评「把握 XX%」徽标（待补项越多置信度越低）；每个字段标注来源（用户 / 口径 / 历史用例 / 模型）。
+- **明确不填**：用例编号只在新建且编号为空时给出建议；`environment_id`、模板 ID、`judge_model_ids`、`snapshot_id` 等外键 / 系统 ID 一律不由模型输出；`owner` 与 `status` 不生成，避免编造责任人或状态。
 
 ### 用例评审与冻结
 
@@ -442,7 +473,7 @@ Mock 注入指令（写在用例 `query` / `expected_answer` / 隐藏上下文�
 
 ```powershell
 cd backend
-python -m pytest -q          # 242 passed（Mock / PostgreSQL 依赖不可用时自动 skip）
+python -m pytest -q          # 277 passed（Mock / PostgreSQL 依赖不可用时自动 skip）
 python -m ruff check billing_qa scripts tests
 ```
 
@@ -473,6 +504,17 @@ cd frontend
 npm run typecheck   # vue-tsc，noUnusedLocals / noUnusedParameters 已开启
 npm run build       # 产物在 dist/
 ```
+
+### 9.5 前端 E2E（Playwright）
+
+```powershell
+cd frontend
+npm run test:e2e    # 「AI 帮我填」主链路回归
+```
+
+- 依赖：后端 `127.0.0.1:8000`、Mock LLM `8001`、前端 `5173` 都在运行，且已是演示库数据。
+- 默认用本机 Edge（`channel: 'msedge'`）驱动，不下载 Chromium；其他浏览器可改 `playwright.config.ts`。
+- 用例会真实创建临时用例并在结束时删除，保持演示库 57 条基线；失败时可看 `test-results/` 下的截图与 trace。
 
 ---
 

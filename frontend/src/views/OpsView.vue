@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/PageHeader.vue'
 import BaseModal from '../components/BaseModal.vue'
+import { useConfirm } from '../composables/useConfirm'
 import { api } from '../api'
 import { errorMessage } from '../utils/errors'
 import { formatDateTime } from '../utils/format'
@@ -44,6 +45,7 @@ const TABS: Array<{ value: TabKey; label: string }> = [
 ]
 
 const toast = useToastStore()
+const confirm = useConfirm()
 const route = useRoute()
 const router = useRouter()
 
@@ -368,7 +370,15 @@ async function triageCandidate(item: CaseCandidate): Promise<void> {
 }
 
 async function rejectCandidate(item: CaseCandidate): Promise<void> {
-  if (!window.confirm(`确认拒绝候选「${item.raw_question.slice(0, 40)}」？`)) return
+  const quoted = item.raw_question.slice(0, 40)
+  const ok = await confirm({
+    title: '拒绝候选',
+    message: `确定拒绝候选「${quoted}」吗？`,
+    detail: '拒绝后该候选不会再进入转正流程。',
+    confirmText: '拒绝',
+    tone: 'warning',
+  })
+  if (!ok) return
   loading.value = true
   try {
     await api.candidates.reject(item.id)
@@ -481,7 +491,13 @@ async function submitCaliber(): Promise<void> {
 }
 
 async function removeCaliber(item: Caliber): Promise<void> {
-  if (!window.confirm(`确认删除口径 ${item.key}？`)) return
+  const ok = await confirm({
+    title: '删除口径',
+    message: `确定删除口径 ${item.key} 吗？`,
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
   loading.value = true
   try {
     await api.calibers.remove(item.id)
@@ -592,7 +608,16 @@ async function probeSource(item: DataSource): Promise<void> {
 
 async function toggleSource(item: DataSource): Promise<void> {
   const next = !item.is_active
-  if (!next && !window.confirm(`确认停用数据源 ${item.code}？`)) return
+  if (!next) {
+    const ok = await confirm({
+      title: '停用数据源',
+      message: `确定停用数据源 ${item.code} 吗？`,
+      detail: '停用后依赖该数据源的取数能力将无法执行。',
+      confirmText: '停用',
+      tone: 'warning',
+    })
+    if (!ok) return
+  }
   loading.value = true
   try {
     await api.dataSources.update(item.id, { is_active: next })
@@ -730,7 +755,14 @@ async function submitCapability(): Promise<void> {
 }
 
 async function removeCapability(item: Capability): Promise<void> {
-  if (!window.confirm(`确认删除能力 ${item.key}？已生成的取证记录会保留。`)) return
+  const ok = await confirm({
+    title: '删除能力',
+    message: `确定删除能力 ${item.key} 吗？`,
+    detail: '已生成的取证记录会保留。',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
   loading.value = true
   try {
     await api.capabilities.remove(item.id)

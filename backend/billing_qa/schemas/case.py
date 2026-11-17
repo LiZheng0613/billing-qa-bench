@@ -276,7 +276,6 @@ class CaseBase(BaseModel):
     judge_template_version: int | None = None
     prompt_overrides: dict[str, str] | None = None
 
-    simulator_model_id: int | None = None
     judge_model_ids: list[int] = Field(default_factory=list)
     judge_strategy: JudgeStrategy = JudgeStrategy.AVG
     pass_threshold: float | None = Field(default=None, ge=0, le=100)
@@ -371,7 +370,6 @@ class CaseUpdate(BaseModel):
     judge_template_strategy: TemplateStrategy | None = None
     judge_template_version: int | None = None
     prompt_overrides: dict[str, str] | None = None
-    simulator_model_id: int | None = None
     judge_model_ids: list[int] | None = None
     judge_strategy: JudgeStrategy | None = None
     pass_threshold: float | None = Field(default=None, ge=0, le=100)
@@ -447,7 +445,6 @@ class CaseOut(ORMModel):
     judge_template_strategy: str
     judge_template_version: int | None
     prompt_overrides: dict | None
-    simulator_model_id: int | None
     judge_model_ids: list | None
     judge_strategy: str
     pass_threshold: float | None

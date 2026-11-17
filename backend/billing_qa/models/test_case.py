@@ -91,9 +91,6 @@ class TestCase(Base, TimestampMixin):
     prompt_overrides: Mapped[dict | None] = mapped_column(JSON, comment="单用例局部覆写正文")
 
     # ---- 模型与裁决 ----
-    simulator_model_id: Mapped[int | None] = mapped_column(
-        ForeignKey("model_config.id", ondelete="SET NULL"), nullable=True
-    )
     judge_model_ids: Mapped[list | None] = mapped_column(JSON, comment="多裁判模型 id 列表")
     judge_strategy: Mapped[str] = mapped_column(String(16), default="AVG")
     pass_threshold: Mapped[float | None] = mapped_column(Float, comment="通过分数线")

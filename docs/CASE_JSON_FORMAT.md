@@ -135,7 +135,6 @@
 | `judge_template_strategy` | enum | `LATEST` / `PINNED` |
 | `judge_template_version` | int | `PINNED` 时必填 |
 | `prompt_overrides` | object | 局部 Prompt 覆写 `{judge: "...", simulator: "..."}` |
-| `simulator_model_code` | string | 模拟器模型编码 |
 | `judge_model_codes` | string[] | 裁判模型编码列表 |
 | `judge_strategy` | enum | `AVG` / `VETO` 等 |
 | `pass_threshold` | number | 4 维评分通过线；契约模式不参与通过判定 |
@@ -172,6 +171,12 @@
   不同接口可各自定义；`SERVER_RETURNED` 首轮渲染为空字符串，由目标接口按首轮对话处理；
 - `request_variables` 的 key 需匹配 `[A-Za-z_][A-Za-z0-9_]*`，且不能使用运行时保留字
   （`query` / `history` / `history_text` / `turn` / `timestamp_iso`），否则校验失败；总量上限 16KB。
+
+> 「AI 帮我填」覆盖用例抽屉里的全部可填语义字段：除基础字段与 Must/May/MustNot 外，
+> 还可生成 `request_variables`、`expected_rules`、`turns[].expected_rules`、`session_expected`、
+> `fail_fast`、`response_contract`、`plan_spec`、`extras_policy`、`judge_strategy`、
+> `pass_threshold`、`change_summary`。含数字或日期的取值必须有用户描述 / 业务口径 / 相似用例作为依据，
+> 无依据时进入「待补充」；`plan_spec` 的能力编码只能来自系统能力清单。
 
 会话方式（`SERVER_RETURNED` / `CLIENT_GENERATED`）由**执行环境**统一配置，所有用例跟随，
 用例 JSON 不再接受 `session_mode` 字段：
@@ -219,8 +224,10 @@
 | `environment_code` | `environment_id` | 编码必须存在，否则该条失败 |
 | `simulator_template_code` | `simulator_template_id` | 同上 |
 | `judge_template_code` | `judge_template_id` | 同上 |
-| `simulator_model_code` | `simulator_model_id` | 同上 |
 | `judge_model_codes` | `judge_model_ids` | 逐个解析，任一不存在则该条失败 |
+
+> 模拟器模型自 2026-11 起改为「全局唯一启用」，不再出现在用例/导出文件中；
+> 旧文件里的 `simulator_model_code` 会被当作未知字段忽略（仅告警）。
 
 失败时不会静默置空，错误信息会写明是哪个编码：
 

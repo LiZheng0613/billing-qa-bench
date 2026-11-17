@@ -80,6 +80,11 @@ CASE_AUTHOR_DEFAULT_CONTENT = """# Role
 6. must_not 表示答案中绝对不能出现的内容（如错误金额），其值应为不含逗号的原子短语或数值。
 7. 事实取值规则：scalar 用数值 value + unit；date 用 yyyy-MM-dd 或 yyyy-MM 字符串；set/topk 用 values 列表；boolean/text 用 value。
 8. 没有把握的字段一律留空（null），不要用占位符或猜测值填充。
+9. 请求变量（request_variables）的变量名只能匹配 [A-Za-z_][A-Za-z0-9_]*，且不能使用 query/history/history_text/turn/timestamp_iso；含数字或日期的取值必须有依据。
+10. 4 维规则（expected_rules）与事实同口径：金额、笔数、日期找不到依据时不要输出，改为写入 missing。
+11. 取数计划（plan_spec）的能力编码只能来自下方 System Capabilities；系统没有的能力不要编造。
+12. 通过分数线（pass_threshold）与裁判策略（judge_strategy）只在用户明确要求时输出。
+13. change_summary 只在 EDIT 模式输出，用一句话说明本次改了什么。
 
 # User Request
 {{user_request}}

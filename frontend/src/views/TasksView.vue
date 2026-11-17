@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useConfirm } from '../composables/useConfirm'
 import { api } from '../api'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -15,6 +16,7 @@ import { useToastStore } from '../stores/toast'
 const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
+const confirm = useConfirm()
 
 const PAGE_SIZE = 20
 
@@ -245,7 +247,14 @@ async function startTask(task: BatchTask): Promise<void> {
 }
 
 async function abortTask(task: BatchTask): Promise<void> {
-  if (!window.confirm('确认终止当前任务？已完成的执行记录会保留。')) return
+  const ok = await confirm({
+    title: '终止任务',
+    message: `确定终止任务「${task.name}」吗？`,
+    detail: '已完成的执行记录会保留，可通过「失败断点重跑」继续。',
+    confirmText: '终止',
+    tone: 'warning',
+  })
+  if (!ok) return
   await withAction(task, async () => {
     await api.tasks.abort(task.id)
     toast.success('终止指令已下发')
@@ -253,7 +262,14 @@ async function abortTask(task: BatchTask): Promise<void> {
 }
 
 async function stopPlan(task: BatchTask): Promise<void> {
-  if (!window.confirm('确认停止该定时计划？已生成的历史任务不会删除。')) return
+  const ok = await confirm({
+    title: '停止定时计划',
+    message: `确定停止定时计划「${task.name}」吗？`,
+    detail: '已生成的历史任务与执行记录不会删除。',
+    confirmText: '停止',
+    tone: 'warning',
+  })
+  if (!ok) return
   await withAction(task, async () => {
     await api.tasks.abort(task.id)
     toast.success('定时计划已停止')

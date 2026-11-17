@@ -42,6 +42,38 @@ async def _get_model(db: AsyncSession, model_id: int) -> ModelConfig:
     return model
 
 
+# 只允许一个启用项的角色：用例编写与动态模拟器由系统配置统一决定，
+# 裁判支持多模型 AVG / VETO，不在此列。
+_SINGLE_ACTIVE_ROLES = {ModelRole.CASE_AUTHOR.value, ModelRole.SIMULATOR.value}
+
+
+async def _ensure_single_active(
+    db: AsyncSession,
+    *,
+    role: str,
+    is_active: bool,
+    exclude_id: int | None = None,
+) -> None:
+    """同一角色只允许一个启用项，避免「配了多个、实际用哪个不确定」。"""
+    if not is_active or role not in _SINGLE_ACTIVE_ROLES:
+        return
+    query = select(ModelConfig).where(
+        ModelConfig.role == role, ModelConfig.is_active.is_(True)
+    )
+    if exclude_id is not None:
+        query = query.where(ModelConfig.id != exclude_id)
+    existing = (
+        await db.execute(query.order_by(ModelConfig.id.asc()).limit(1))
+    ).scalar_one_or_none()
+    if existing is None:
+        return
+    label = "用例编写模型" if role == ModelRole.CASE_AUTHOR.value else "模拟器模型"
+    raise ConflictError(
+        f"{label}只允许一个启用项：{existing.name}（id={existing.id}）已启用，"
+        "请先停用它再启用新模型"
+    )
+
+
 def _compose_serve_base(serve_url: str, serve_port: int | None) -> str:
     """把 serve 地址与端口拼成根地址；地址里已带端口时不重复拼接。"""
     base = serve_url.rstrip("/")
@@ -119,6 +151,9 @@ async def create_model(
     ).scalar_one_or_none()
     if exists:
         raise ConflictError(f"模型编码 {payload.code} 已存在")
+    await _ensure_single_active(
+        db, role=payload.role.value, is_active=payload.is_active
+    )
     data = payload.model_dump(exclude={"api_key", "serve_password"})
     model = ModelConfig(**data)
     _apply_connection_defaults(model)
@@ -204,6 +239,16 @@ async def update_model(
 ) -> ModelConfigOut:
     model = await _get_model(db, model_id)
     data = payload.model_dump(exclude_unset=True, exclude={"api_key", "serve_password"})
+    final_role = data.get("role", model.role)
+    if isinstance(final_role, ModelRole):
+        final_role = final_role.value
+    final_active = data.get("is_active", model.is_active)
+    await _ensure_single_active(
+        db,
+        role=str(final_role),
+        is_active=bool(final_active),
+        exclude_id=model.id,
+    )
     for key, value in data.items():
         setattr(model, key, value)
     _apply_connection_defaults(model)

@@ -23,6 +23,7 @@ import type {
   TestCase,
   VariableOrigin,
 } from '../types'
+import { useConfirm } from '../composables/useConfirm'
 import { errorMessage } from '../utils/errors'
 import {
   formatDateTime,
@@ -33,6 +34,7 @@ import {
 import { useToastStore } from '../stores/toast'
 
 const toast = useToastStore()
+const confirm = useConfirm()
 
 type TabKey = 'environments' | 'models'
 const activeTab = ref<TabKey>('environments')
@@ -389,7 +391,14 @@ async function submitEnv(): Promise<void> {
 }
 
 async function removeEnv(item: Environment): Promise<void> {
-  if (!window.confirm(`确认删除环境 ${item.code}？若仍被用例或任务引用将无法删除。`)) return
+  const ok = await confirm({
+    title: '删除环境',
+    message: `确定删除环境 ${item.code} 吗？`,
+    detail: '若仍被用例或任务引用将无法删除。',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
   try {
     const result = await api.environments.remove(item.id)
     toast.success(result.message)
@@ -429,6 +438,19 @@ function openVariables(item: Environment): void {
 
 function addVariableRow(): void {
   variableRows.value.push({ key: '', value: '', is_secret: false, description: '' })
+}
+
+async function removeVariableRow(index: number): Promise<void> {
+  const key = variableRows.value[index]?.key?.trim()
+  const ok = await confirm({
+    title: '删除环境变量',
+    message: key ? `确定删除环境变量 ${key} 吗？` : '确定删除这条环境变量吗？',
+    detail: '保存后该变量将从环境中移除。',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
+  variableRows.value.splice(index, 1)
 }
 
 async function submitVariables(): Promise<void> {
@@ -803,7 +825,14 @@ async function submitModel(): Promise<void> {
 }
 
 async function removeModel(item: ModelConfig): Promise<void> {
-  if (!window.confirm(`确认删除模型 ${item.code}？若仍被用例引用将无法删除。`)) return
+  const ok = await confirm({
+    title: '删除模型',
+    message: `确定删除模型 ${item.code} 吗？`,
+    detail: '若仍被用例引用将无法删除。',
+    confirmText: '删除',
+    icon: 'trash',
+  })
+  if (!ok) return
   try {
     const result = await api.models.remove(item.id)
     toast.success(result.message)
@@ -1420,7 +1449,7 @@ onMounted(() => {
             密钥
           </label>
           <input v-model="row.description" class="input text-xs" placeholder="说明" />
-          <button class="btn-danger btn-xs" @click="variableRows.splice(index, 1)">删除</button>
+          <button class="btn-danger btn-xs" @click="removeVariableRow(index)">删除</button>
         </div>
         <EmptyState v-if="variableRows.length === 0" compact title="暂无变量" description="添加变量后可用于请求头、请求体与鉴权钩子。" />
         <button class="btn-ghost btn-xs" @click="addVariableRow">添加变量</button>

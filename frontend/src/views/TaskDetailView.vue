@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
+import { useConfirm } from '../composables/useConfirm'
 import { buildWebSocketUrl } from '../api/client'
 import EmptyState from '../components/EmptyState.vue'
 import MetricCard from '../components/MetricCard.vue'
@@ -23,6 +24,7 @@ import { useToastStore } from '../stores/toast'
 const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
+const confirm = useConfirm()
 
 const rootId = computed(() => Number(route.params.id))
 
@@ -392,7 +394,14 @@ async function startTask(): Promise<void> {
 
 async function abortTask(): Promise<void> {
   if (!task.value) return
-  if (!window.confirm('确认终止当前任务？已完成的执行记录会保留。')) return
+  const ok = await confirm({
+    title: '终止任务',
+    message: '确定终止当前任务吗？',
+    detail: '已完成的执行记录会保留，可通过「失败断点重跑」继续。',
+    confirmText: '终止',
+    tone: 'warning',
+  })
+  if (!ok) return
   try {
     await api.tasks.abort(task.value.id)
     toast.success('终止指令已下发')
@@ -461,7 +470,14 @@ async function togglePlan(active: boolean): Promise<void> {
 
 async function stopPlan(): Promise<void> {
   if (!plan.value) return
-  if (!window.confirm('确认停止该定时计划？已生成的历史任务不会删除。')) return
+  const ok = await confirm({
+    title: '停止定时计划',
+    message: '确定停止该定时计划吗？',
+    detail: '已生成的历史任务与执行记录不会删除。',
+    confirmText: '停止',
+    tone: 'warning',
+  })
+  if (!ok) return
   try {
     await api.tasks.abort(plan.value.id)
     plan.value = await api.tasks.get(plan.value.id)

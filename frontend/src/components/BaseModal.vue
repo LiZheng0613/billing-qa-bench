@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { isConfirmOpen } from '../composables/useConfirm'
+
 const props = withDefaults(
   defineProps<{
     modelValue: boolean
@@ -36,6 +38,8 @@ function close(): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  // 确认弹窗叠在上层时，Esc 由 ConfirmDialog 处理，避免同时关闭两层弹窗
+  if (isConfirmOpen()) return
   if (event.key === 'Escape' && props.modelValue) close()
 }
 

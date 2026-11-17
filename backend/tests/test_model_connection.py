@@ -160,6 +160,110 @@ def test_opencode_model_ref_requires_provider() -> None:
         client._session_payload()
 
 
+def _opencode_client(model_name: str = "anthropic/claude-sonnet-4") -> LLMClient:
+    model = ModelConfig(
+        id=9,
+        code="OC-CASE",
+        name="OpenCode 编写",
+        role="CASE_AUTHOR",
+        connection_type=ModelConnectionType.OPENCODE_SERVE.value,
+        provider="opencode-serve",
+        base_url="http://127.0.0.1:4096",
+        model_name=model_name,
+        serve_url="http://127.0.0.1",
+        serve_port=4096,
+        opencode_model=model_name,
+        opencode_directory="D:/workspace/qa",
+        timeout_seconds=30,
+        rpm_limit=10,
+        max_retries=0,
+        response_format_json=True,
+    )
+    return LLMClient(ModelContext.from_orm(model))
+
+
+def test_opencode_v1_session_payload_uses_query_directory() -> None:
+    client = _opencode_client()
+    # v1 接口不接受 location，目录只能通过 query 传递。
+    assert client._session_payload_v1() == {
+        "title": "billing-qa · OC-CASE",
+        "model": {"providerID": "anthropic", "id": "claude-sonnet-4"},
+    }
+    assert client._opencode_params() == {"directory": "D:/workspace/qa"}
+    assert client._unwrap_data({"data": {"id": "ses_1"}}) == {"id": "ses_1"}
+    assert client._unwrap_data({"id": "ses_2"}) == {"id": "ses_2"}
+
+
+@pytest.mark.asyncio
+async def test_opencode_send_message_uses_sync_v1_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+
+    class FakeResponse:
+        def __init__(self, status_code: int, payload: dict) -> None:
+            self.status_code = status_code
+            self._payload = payload
+            self.text = json.dumps(payload)
+
+        def json(self) -> dict:
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info) -> None:
+            return None
+
+        async def post(self, url, params=None, json=None):
+            calls.append({"method": "POST", "url": url, "params": params, "json": json})
+            if url.endswith("/session"):
+                return FakeResponse(200, {"data": {"id": "ses_test"}})
+            return FakeResponse(
+                200,
+                {
+                    "info": {
+                        "providerID": "anthropic",
+                        "modelID": "claude-sonnet-4",
+                        "tokens": {"input": 120, "output": 30},
+                    },
+                    "parts": [
+                        {"type": "step-start"},
+                        {"type": "text", "text": '{"ok": true}'},
+                    ],
+                },
+            )
+
+        async def delete(self, url, params=None):
+            calls.append({"method": "DELETE", "url": url, "params": params})
+            return FakeResponse(200, {})
+
+    monkeypatch.setattr("billing_qa.services.llm.client.httpx.AsyncClient", FakeClient)
+
+    client = _opencode_client()
+    result = await client._opencode_send_message("系统指令", "用户问题", 0.0)
+
+    assert result.content == '{"ok": true}'
+    assert result.prompt_tokens == 120
+    assert result.completion_tokens == 30
+    assert result.model_name == "anthropic/claude-sonnet-4"
+    assert calls[0]["url"].endswith("/session")
+    assert calls[0]["params"] == {"directory": "D:/workspace/qa"}
+    message_call = calls[1]
+    assert message_call["url"].endswith("/session/ses_test/message")
+    assert message_call["json"]["model"] == {
+        "providerID": "anthropic",
+        "modelID": "claude-sonnet-4",
+    }
+    assert message_call["json"]["parts"] == [{"type": "text", "text": "用户问题"}]
+    assert message_call["json"]["system"] == "系统指令"
+    assert calls[-1]["method"] == "DELETE"
+
+
 @pytest.mark.asyncio
 async def test_validation_error_handler_returns_422_json() -> None:
     """模型校验失败必须返回 422，而不是被 ValueError 序列化问题改写成 500。"""
