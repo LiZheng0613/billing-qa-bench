@@ -250,7 +250,8 @@ def main() -> int:
     check(len(trend["points"]) >= 1, "用例趋势聚合")
 
     # 9. 任务终止
-    case_ids = [item["id"] for item in cases["items"][:5]]
+    active_cases = [item for item in cases["items"] if item["status"] == "ACTIVE"]
+    case_ids = [item["id"] for item in active_cases[:5]]
     control_task = client.post(
         "/tasks",
         json={
