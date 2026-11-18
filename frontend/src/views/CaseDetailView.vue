@@ -34,6 +34,7 @@ import {
   statusLabel,
   truncate,
 } from '../utils/format'
+import { useDebugStore } from '../stores/debug'
 import { useToastStore } from '../stores/toast'
 
 interface StatCard {
@@ -53,6 +54,7 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
 const confirm = useConfirm()
+const debugStore = useDebugStore()
 
 const caseId = computed(() => Number(route.params.id))
 
@@ -70,7 +72,6 @@ const models = ref<ModelConfig[]>([])
 
 const loading = ref(true)
 const loadError = ref('')
-const debugging = ref(false)
 const saving = ref(false)
 
 const drawerOpen = ref(false)
@@ -386,24 +387,16 @@ async function submitCase(payload: CasePayload): Promise<void> {
   }
 }
 
-async function debugCase(): Promise<void> {
-  if (!item.value || debugging.value) return
-  debugging.value = true
-  toast.info(`正在执行 ${item.value.code} 单条调试，请稍候…`)
-  try {
-    const detail = await api.cases.debug(item.value.id, {
-      environment_id: item.value.environment_id,
-    })
-    toast.success(`调试完成：${statusLabel(detail.status)}，得分 ${detail.total_score ?? '—'}`)
-    await router.push({
-      name: 'trace',
-      query: { execution: String(detail.id), from: 'case' },
-    })
-  } catch (exc) {
-    toast.error(errorMessage(exc))
-  } finally {
-    debugging.value = false
-  }
+function debugCase(): void {
+  const current = item.value
+  if (!current || debugStore.isRunning(current.id)) return
+  // 请求生命周期归全局 debug store：跨页面保持「调试中」防重复发起；
+  // 完成时仍在本页 → 自动跳转 trace；已离开 → 底部胶囊常驻提示
+  void debugStore.run({
+    id: current.id,
+    code: current.code,
+    environmentId: current.environment_id,
+  })
 }
 
 function openReview(): void {
@@ -601,8 +594,12 @@ onBeforeUnmount(() => {
       <template #actions>
         <button class="btn-ghost" :disabled="!item" @click="refreshFromButton">刷新</button>
         <button class="btn-ghost" :disabled="!item" @click="openEdit">编辑</button>
-        <button class="btn-primary" :disabled="!item || debugging" @click="debugCase">
-          {{ debugging ? '调试中…' : '单条调试' }}
+        <button
+          class="btn-primary"
+          :disabled="!item || debugStore.isRunning(caseId)"
+          @click="debugCase"
+        >
+          {{ debugStore.isRunning(caseId) ? '调试中…' : '单条调试' }}
         </button>
         <details ref="menuRef" class="relative">
           <summary

@@ -20,7 +20,6 @@ import { errorMessage } from '../utils/errors'
 import {
   caseTypeLabel,
   formatDateTime,
-  statusLabel,
   truncate,
 } from '../utils/format'
 import {
@@ -30,10 +29,12 @@ import {
   scheduleSummary,
   scheduleValidationError,
 } from '../utils/schedule'
+import { useDebugStore } from '../stores/debug'
 import { useToastStore } from '../stores/toast'
 
 const router = useRouter()
 const toast = useToastStore()
+const debugStore = useDebugStore()
 
 const cases = ref<TestCase[]>([])
 const total = ref(0)
@@ -66,7 +67,6 @@ const models = ref<ModelConfig[]>([])
 
 const drawerOpen = ref(false)
 const saving = ref(false)
-const debuggingId = ref<number | null>(null)
 const importInput = ref<HTMLInputElement | null>(null)
 const importOpen = ref(false)
 const importFile = ref<File | null>(null)
@@ -242,21 +242,14 @@ async function submitCase(payload: CasePayload): Promise<void> {
   }
 }
 
-async function debugCase(item: TestCase): Promise<void> {
-  debuggingId.value = item.id
-  toast.info(`正在执行 ${item.code} 单条调试，请稍候…`)
-  try {
-    const detail = await api.cases.debug(item.id, { environment_id: item.environment_id })
-    toast.success(`调试完成：${statusLabel(detail.status)}，得分 ${detail.total_score ?? '—'}`)
-    await router.push({
-      name: 'trace',
-      query: { execution: String(detail.id), from: 'case' },
-    })
-  } catch (exc) {
-    toast.error(errorMessage(exc))
-  } finally {
-    debuggingId.value = null
-  }
+function debugCase(item: TestCase): void {
+  // 请求生命周期归全局 debug store：跨页面保持「调试中」防重复发起；
+  // 完成时仍在本页 → 自动跳转 trace；已离开 → 底部胶囊常驻提示
+  void debugStore.run({
+    id: item.id,
+    code: item.code,
+    environmentId: item.environment_id,
+  })
 }
 
 function triggerImport(): void {
@@ -682,10 +675,10 @@ onMounted(() => {
                   <button class="btn-ghost btn-xs" @click="openDetail(item)">详情</button>
                   <button
                     class="btn-ghost btn-xs"
-                    :disabled="debuggingId === item.id"
+                    :disabled="debugStore.isRunning(item.id)"
                     @click="debugCase(item)"
                   >
-                    {{ debuggingId === item.id ? '执行中…' : '调试' }}
+                    {{ debugStore.isRunning(item.id) ? '调试中…' : '调试' }}
                   </button>
                 </div>
               </td>
