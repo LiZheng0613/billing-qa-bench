@@ -68,11 +68,15 @@ def case_to_out(
     env_name: str | None = None,
     simulator_code: str | None = None,
     judge_code: str | None = None,
+    simulator_name: str | None = None,
+    judge_name: str | None = None,
 ) -> CaseOut:
     data = CaseOut.model_validate(case)
     data.environment_name = env_name
     data.simulator_template_code = simulator_code
     data.judge_template_code = judge_code
+    data.simulator_template_name = simulator_name
+    data.judge_template_name = judge_name
     return data
 
 

@@ -192,23 +192,35 @@ async def _enrich_cases(db: AsyncSession, cases: list[TestCase]) -> list[CaseOut
             await db.execute(select(Environment.id, Environment.name).where(Environment.id.in_(env_ids)))
         ).all()
         env_map = {row[0]: row[1] for row in rows}
-    template_map: dict[int, str] = {}
+    template_map: dict[int, tuple[str | None, str | None]] = {}
     if template_ids:
         rows = (
             await db.execute(
-                select(PromptTemplate.id, PromptTemplate.code).where(PromptTemplate.id.in_(template_ids))
+                select(PromptTemplate.id, PromptTemplate.code, PromptTemplate.name).where(
+                    PromptTemplate.id.in_(template_ids)
+                )
             )
         ).all()
-        template_map = {row[0]: row[1] for row in rows}
-    return [
-        case_to_out(
-            case,
-            env_name=env_map.get(case.environment_id or 0),
-            simulator_code=template_map.get(case.simulator_template_id or 0),
-            judge_code=template_map.get(case.judge_template_id or 0),
+        template_map = {row[0]: (row[1], row[2]) for row in rows}
+
+    def _template_info(template_id: int | None) -> tuple[str | None, str | None]:
+        return template_map.get(template_id or 0, (None, None))
+
+    enriched: list[CaseOut] = []
+    for case in cases:
+        simulator_code, simulator_name = _template_info(case.simulator_template_id)
+        judge_code, judge_name = _template_info(case.judge_template_id)
+        enriched.append(
+            case_to_out(
+                case,
+                env_name=env_map.get(case.environment_id or 0),
+                simulator_code=simulator_code,
+                judge_code=judge_code,
+                simulator_name=simulator_name,
+                judge_name=judge_name,
+            )
         )
-        for case in cases
-    ]
+    return enriched
 
 
 def _case_conditions(

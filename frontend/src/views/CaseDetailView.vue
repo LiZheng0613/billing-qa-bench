@@ -228,14 +228,12 @@ const runInfo = computed<InfoRow[]>(() => {
     { label: '执行环境', value: current.environment_name || '未绑定环境' },
     {
       label: '模拟器模板',
-      value: `${current.simulator_template_code || '未指定'} · ${statusLabel(current.simulator_template_strategy)}${simulatorVersion}`,
-      mono: true,
+      value: `${current.simulator_template_name || '未指定'} · ${statusLabel(current.simulator_template_strategy)}${simulatorVersion}`,
     },
     { label: '模拟器模型', value: '全局唯一启用' },
     {
       label: '裁判模板',
-      value: `${current.judge_template_code || '未指定'} · ${statusLabel(current.judge_template_strategy)}${judgeVersion}`,
-      mono: true,
+      value: `${current.judge_template_name || '未指定'} · ${statusLabel(current.judge_template_strategy)}${judgeVersion}`,
     },
     { label: '裁判模型', value: judgeModels.length ? judgeModels.join('、') : '按角色默认' },
     { label: '裁判策略', value: statusLabel(current.judge_strategy) },

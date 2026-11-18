@@ -553,6 +553,8 @@ export interface TestCase {
   updated_at: string
   simulator_template_code: string | null
   judge_template_code: string | null
+  simulator_template_name: string | null
+  judge_template_name: string | null
   environment_name: string | null
 }
 

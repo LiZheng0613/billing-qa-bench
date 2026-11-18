@@ -468,6 +468,8 @@ class CaseOut(ORMModel):
     dedupe_hash: str | None = None
     simulator_template_code: str | None = None
     judge_template_code: str | None = None
+    simulator_template_name: str | None = None
+    judge_template_name: str | None = None
     environment_name: str | None = None
 
 

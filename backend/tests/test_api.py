@@ -210,6 +210,45 @@ async def test_case_revision_flow(client: httpx.AsyncClient) -> None:
         assert deleted.status_code == 200
 
 
+async def test_case_returns_template_names(client: httpx.AsyncClient) -> None:
+    """用例响应需同时携带模板 code 与 name，界面展示名称而非编码。"""
+    prompts = (await client.get("/prompts", params={"page_size": 200})).json()["items"]
+    simulator = next(item for item in prompts if item["code"] == "SIM_DEFAULT_BILLING_USER")
+    judge = next(item for item in prompts if item["code"] == "JUDGE_DEFAULT_ZERO_TOLERANCE")
+
+    stamp = uuid.uuid4().hex[:8]
+    code = f"PYTEST-{stamp}"
+    created = await client.post(
+        "/cases",
+        json={
+            "code": code,
+            "name": "pytest 模板名称回归",
+            "case_type": "SINGLE",
+            "priority": "P2",
+            "query": "订单 A2024001 的含税金额是多少？",
+            "expected_answer": "¥12,345.67，共 3 笔",
+            "simulator_template_id": simulator["id"],
+            "judge_template_id": judge["id"],
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    try:
+        assert body["simulator_template_code"] == simulator["code"]
+        assert body["simulator_template_name"] == simulator["name"]
+        assert body["judge_template_code"] == judge["code"]
+        assert body["judge_template_name"] == judge["name"]
+
+        listed = (await client.get("/cases", params={"keyword": code})).json()
+        assert listed["items"], "列表应能按编号检索到新建用例"
+        item = listed["items"][0]
+        assert item["simulator_template_name"] == simulator["name"]
+        assert item["judge_template_name"] == judge["name"]
+    finally:
+        deleted = await client.delete(f"/cases/{body['id']}")
+        assert deleted.status_code == 200
+
+
 async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     if not await _mock_target_ready():
         pytest.skip("Mock 被测系统未启动")

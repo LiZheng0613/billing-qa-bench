@@ -4482,7 +4482,7 @@ function openDraftResult(): void {
                     <button><selectedcontent></selectedcontent></button>
                     <option :value="null">未指定</option>
                     <option v-for="item in simulatorTemplates" :key="item.id" :value="item.id">
-                      {{ item.code }} · v{{ item.current_version }}
+                      {{ item.name }} · v{{ item.current_version }}
                     </option>
                   </select>
                   <select v-model="form.simulatorStrategy" class="input">
@@ -4511,7 +4511,7 @@ function openDraftResult(): void {
                     <button><selectedcontent></selectedcontent></button>
                     <option :value="null">未指定</option>
                     <option v-for="item in judgeTemplates" :key="item.id" :value="item.id">
-                      {{ item.code }} · v{{ item.current_version }}
+                      {{ item.name }} · v{{ item.current_version }}
                     </option>
                   </select>
                   <select v-model="form.judgeTemplateStrategy" class="input">

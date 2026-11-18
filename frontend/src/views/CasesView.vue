@@ -673,8 +673,8 @@ onMounted(() => {
               </td>
               <td class="td max-w-[220px] text-[11px] text-slate-500">
                 <p class="truncate text-slate-600">{{ item.environment_name || '未绑定环境' }}</p>
-                <p class="truncate">模拟：{{ item.simulator_template_code || '—' }}</p>
-                <p class="truncate">裁判：{{ item.judge_template_code || '—' }}</p>
+                <p class="truncate">模拟：{{ item.simulator_template_name || '—' }}</p>
+                <p class="truncate">裁判：{{ item.judge_template_name || '—' }}</p>
               </td>
               <td class="td text-xs text-slate-500">{{ formatDateTime(item.updated_at) }}</td>
               <td class="td sticky right-0 z-10 bg-white">
