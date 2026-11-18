@@ -265,6 +265,16 @@ class ExecutionListItem(BaseModel):
     finished_at: datetime | None
 
 
+class ExecutionPassRate(BaseModel):
+    """时间窗内的执行通过率（大盘「最近执行通过率」）。"""
+
+    window_hours: int
+    total: int
+    measured: int
+    passed: int
+    pass_rate: float | None
+
+
 class ExecutionDetail(ExecutionListItem):
     environment_id: int | None
     max_turns: int | None

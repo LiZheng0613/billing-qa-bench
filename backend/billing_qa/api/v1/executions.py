@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,7 +18,7 @@ from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.common import Page
-from billing_qa.schemas.task import ExecutionDetail, ExecutionListItem
+from billing_qa.schemas.task import ExecutionDetail, ExecutionListItem, ExecutionPassRate
 
 router = APIRouter(
     prefix="/executions", tags=["执行追踪"], dependencies=[Depends(get_current_operator)]
@@ -65,6 +66,39 @@ async def list_executions(
     ]
     return Page[ExecutionListItem](
         items=items, total=int(total), page=page, page_size=page_size
+    )
+
+
+@router.get(
+    "/pass-rate",
+    response_model=ExecutionPassRate,
+    summary="时间窗内的执行通过率",
+)
+async def execution_pass_rate(
+    hours: int = Query(default=24, ge=1, le=24 * 30, description="统计窗口（小时）"),
+    db: AsyncSession = Depends(get_db),
+) -> ExecutionPassRate:
+    """按 started_at 统计最近 N 小时内的执行通过率，仅统计已判定（pass_flag 非空）的执行。"""
+    since = datetime.now() - timedelta(hours=hours)
+    row = (
+        await db.execute(
+            select(
+                func.count(ExecutionRecord.id).label("total"),
+                func.count(ExecutionRecord.pass_flag).label("measured"),
+                func.sum(case((ExecutionRecord.pass_flag.is_(True), 1), else_=0)).label(
+                    "passed"
+                ),
+            ).where(ExecutionRecord.started_at >= since)
+        )
+    ).one()
+    measured = int(row.measured or 0)
+    passed = int(row.passed or 0)
+    return ExecutionPassRate(
+        window_hours=hours,
+        total=int(row.total or 0),
+        measured=measured,
+        passed=passed,
+        pass_rate=round(passed / measured * 100, 2) if measured else None,
     )
 
 

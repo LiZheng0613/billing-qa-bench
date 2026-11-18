@@ -971,6 +971,14 @@ export interface ExecutionListItem {
   finished_at: string | null
 }
 
+export interface ExecutionPassRate {
+  window_hours: number
+  total: number
+  measured: number
+  passed: number
+  pass_rate: number | null
+}
+
 export interface ExecutionDetail extends ExecutionListItem {
   environment_id: number | null
   max_turns: number | null

@@ -10,6 +10,7 @@ import type {
   BatchTask,
   Environment,
   ExecutionListItem,
+  ExecutionPassRate,
   FactStatsOverview,
   GraderEval,
   TaskStatus,
@@ -35,6 +36,7 @@ const tasks = ref<BatchTask[]>([])
 const taskTotal = ref(0)
 const recentExecutions = ref<ExecutionListItem[]>([])
 const executionTotal = ref(0)
+const passRateSummary = ref<ExecutionPassRate | null>(null)
 const environments = ref<Environment[]>([])
 const loading = ref(true)
 // 运营后台概览
@@ -81,11 +83,7 @@ const taskStatusTotal = computed(() =>
   taskStatusSegments.value.reduce((sum, item) => sum + item.count, 0),
 )
 
-const recentPassRate = computed(() => {
-  const measured = recentExecutions.value.filter((item) => item.pass_flag !== null)
-  if (measured.length === 0) return null
-  return (measured.filter((item) => item.pass_flag).length / measured.length) * 100
-})
+const recentPassRate = computed(() => passRateSummary.value?.pass_rate ?? null)
 
 const recentTaskList = computed(() => tasks.value.slice(0, 8))
 const recentRunList = computed(() => recentExecutions.value.slice(0, 8))
@@ -120,6 +118,7 @@ async function load(silent = false): Promise<boolean> {
       activeCases,
       taskPage,
       execPage,
+      passRate,
       envPage,
       promptPage,
       modelPage,
@@ -135,6 +134,7 @@ async function load(silent = false): Promise<boolean> {
       api.cases.list({ page: 1, page_size: 1, status: 'ACTIVE' }),
       api.tasks.list({ page_size: 50, include_runs: true }),
       api.executions.list({ page_size: 20 }),
+      api.executions.passRate(24),
       api.environments.list({ page_size: 100 }),
       api.prompts.list({ page: 1, page_size: 1 }),
       api.models.list({ page: 1, page_size: 1 }),
@@ -152,6 +152,7 @@ async function load(silent = false): Promise<boolean> {
     taskTotal.value = taskPage.total
     recentExecutions.value = execPage.items
     executionTotal.value = execPage.total
+    passRateSummary.value = passRate
     environments.value = envPage.items
     promptTotal.value = promptPage.total
     modelTotal.value = modelPage.total
@@ -247,7 +248,11 @@ onBeforeUnmount(() => {
       <MetricCard
         label="最近执行通过率"
         :value="formatPercent(recentPassRate, 1)"
-        :hint="`基于最近 ${recentExecutions.length} 次执行`"
+        :hint="
+          passRateSummary && passRateSummary.measured > 0
+            ? `基于最近 24 小时 ${passRateSummary.measured} 次已判定执行`
+            : '最近 24 小时暂无已判定执行'
+        "
         accent="emerald"
         :progress="recentPassRate"
       />

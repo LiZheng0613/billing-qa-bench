@@ -332,6 +332,28 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     assert len(trend["points"]) >= 1
 
 
+async def test_execution_pass_rate_window(client: httpx.AsyncClient) -> None:
+    """大盘最近执行通过率以时间窗内（默认 24 小时）的已判定执行为基准。"""
+    payload = (await client.get("/executions/pass-rate")).json()
+    assert payload["window_hours"] == 24
+    assert payload["total"] >= 1
+    assert 0 <= payload["passed"] <= payload["measured"] <= payload["total"]
+    if payload["measured"]:
+        assert payload["pass_rate"] is not None
+        assert 0 <= payload["pass_rate"] <= 100
+    else:
+        assert payload["pass_rate"] is None
+
+    custom = (
+        await client.get("/executions/pass-rate", params={"hours": 48})
+    ).json()
+    assert custom["window_hours"] == 48
+    assert custom["total"] >= payload["total"]
+
+    invalid = await client.get("/executions/pass-rate", params={"hours": 0})
+    assert invalid.status_code == 422
+
+
 async def test_task_result_export_missing_task(client: httpx.AsyncClient) -> None:
     response = await client.get("/tasks/999999/export")
     assert response.status_code == 404

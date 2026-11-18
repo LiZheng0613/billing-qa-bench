@@ -27,6 +27,7 @@ import type {
   EnvVariableInput,
   ExecutionDetail,
   ExecutionListItem,
+  ExecutionPassRate,
   FactAtomView,
   FactStatItem,
   FactStatsOverview,
@@ -306,6 +307,8 @@ export const api = {
       page?: number
       page_size?: number
     }) => http.get<Page<ExecutionListItem>>('/executions', query),
+    passRate: (hours = 24) =>
+      http.get<ExecutionPassRate>('/executions/pass-rate', { hours }),
     get: (id: number) => http.get<ExecutionDetail>(`/executions/${id}`),
     raw: (id: number) => http.get<RawExecution>(`/executions/${id}/raw`),
   },
