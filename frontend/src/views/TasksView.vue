@@ -10,7 +10,13 @@ import TaskCreateModal from './components/TaskCreateModal.vue'
 import type { BatchTask, TaskScheduleType } from '../types'
 import { errorMessage } from '../utils/errors'
 import { formatDateTime, formatPercent, statusLabel } from '../utils/format'
-import { isPlanTask, taskScheduleLabel } from '../utils/schedule'
+import {
+  canStopPlanTask,
+  isContinuousPlanTask,
+  isPlanStopped,
+  isPlanTask,
+  taskScheduleLabel,
+} from '../utils/schedule'
 import { useToastStore } from '../stores/toast'
 
 const route = useRoute()
@@ -281,16 +287,16 @@ async function abortTask(task: BatchTask): Promise<void> {
 
 async function stopPlan(task: BatchTask): Promise<void> {
   const ok = await confirm({
-    title: '停止定时计划',
-    message: `确定停止定时计划「${task.name}」吗？`,
-    detail: '已生成的历史任务与执行记录不会删除。',
+    title: '停止计划',
+    message: `确定停止计划「${task.name}」吗？`,
+    detail: '停止后不再自动触发；连续多轮计划会同时终止尚未完成的轮次，已生成的执行记录保留。',
     confirmText: '停止',
     tone: 'warning',
   })
   if (!ok) return
   await withAction(task, async () => {
-    await api.tasks.abort(task.id)
-    toast.success('定时计划已停止')
+    await api.tasks.stopPlan(task.id)
+    toast.success('计划已停止')
   })
 }
 
@@ -453,7 +459,11 @@ onBeforeUnmount(() => {
                 <StatusPill
                   :status="item.status"
                   size="sm"
-                  :label="planWaiting(item) && !planActive(item) ? '已停止' : null"
+                  :label="
+                    (planWaiting(item) && !planActive(item)) || isPlanStopped(item)
+                      ? '已停止'
+                      : null
+                  "
                 />
                 <p v-if="item.error_message" class="mt-1 max-w-[200px] truncate text-[10px] text-rose-600">
                   {{ item.error_message }}
@@ -532,7 +542,7 @@ onBeforeUnmount(() => {
                     立即执行
                   </button>
                   <button
-                    v-if="planWaiting(item) && planActive(item)"
+                    v-if="canStopPlanTask(item)"
                     class="btn-ghost btn-xs"
                     :disabled="busyId === item.id"
                     @click="stopPlan(item)"
@@ -556,7 +566,11 @@ onBeforeUnmount(() => {
                     启动
                   </button>
                   <button
-                    v-if="['RUNNING', 'PENDING'].includes(item.status) && !isPlanTask(item)"
+                    v-if="
+                      ['RUNNING', 'PENDING'].includes(item.status) &&
+                      !isPlanTask(item) &&
+                      !isContinuousPlanTask(item)
+                    "
                     class="btn-danger btn-xs"
                     :disabled="busyId === item.id"
                     @click="abortTask(item)"

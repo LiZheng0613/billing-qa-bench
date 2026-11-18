@@ -18,7 +18,7 @@ import type {
 } from '../types'
 import { errorMessage } from '../utils/errors'
 import { formatDateTime, formatPercent } from '../utils/format'
-import { taskScheduleLabel } from '../utils/schedule'
+import { canStopPlanTask, isPlanStopped, taskScheduleLabel } from '../utils/schedule'
 import { useToastStore } from '../stores/toast'
 
 const route = useRoute()
@@ -62,6 +62,8 @@ const runsPageCount = computed(() => Math.max(1, Math.ceil(runsTotal.value / run
 const planActive = computed(
   () => Boolean(plan.value?.schedule_active && plan.value.status === 'SCHEDULED'),
 )
+/** 计划是否已被手动停止。 */
+const planStopped = computed(() => isPlanStopped(plan.value))
 
 function isPeriodic(task: BatchTask): boolean {
   return ['DAILY', 'WEEKLY'].includes(task.schedule_type)
@@ -75,6 +77,8 @@ function isMultiRunRoot(task: BatchTask): boolean {
 const isSchedulePlan = computed(
   () => Boolean(plan.value && plan.value.schedule_type !== 'IMMEDIATE'),
 )
+/** 计划是否仍有可停止的内容：等待触发、执行中，或轮次链继续。 */
+const planStoppable = computed(() => canStopPlanTask(plan.value))
 const planHeading = computed(() => {
   const current = plan.value
   if (!current) return '批量任务'
@@ -86,6 +90,9 @@ const planRounds = computed(() => Math.max(1, plan.value?.repeat_rounds ?? 1))
 const planHint = computed(() => {
   const current = plan.value
   if (!current) return ''
+  if (planStopped.value) {
+    return '计划已停止，不再自动触发或继续轮次；已生成的执行记录不受影响。'
+  }
   if (!isSchedulePlan.value) {
     return planRounds.value > 1
       ? `连续 ${planRounds.value} 轮执行：每轮跑完后立即自动开始下一轮，各轮独立保留结果。`
@@ -509,16 +516,24 @@ async function exportResults(): Promise<void> {
 }
 
 async function runPlanNow(): Promise<void> {
-  if (!plan.value) return
-  if (!planActive.value) {
+  const target = plan.value ?? task.value
+  if (!target) return
+  const active = plan.value
+    ? planActive.value
+    : Boolean(target.schedule_active && target.status === 'SCHEDULED')
+  if (!active) {
     toast.error('计划已停止，请先启用计划再立即执行')
     return
   }
   try {
-    const run = await api.tasks.runNow(plan.value.id)
+    const run = await api.tasks.runNow(target.id)
     toast.success(`已按计划立即执行一次：${run.code}`)
-    runsPage.value = 1
-    await loadRuns(true)
+    if (plan.value) {
+      runsPage.value = 1
+      await loadRuns(true)
+    } else {
+      await loadTaskDetail(run.id)
+    }
   } catch (exc) {
     reportError(exc)
   }
@@ -538,29 +553,38 @@ async function startRootTask(): Promise<void> {
 }
 
 async function togglePlan(active: boolean): Promise<void> {
-  if (!plan.value) return
+  const target = plan.value ?? task.value
+  if (!target) return
   try {
-    plan.value = await api.tasks.updateSchedule(plan.value.id, { active })
-    toast.success(active ? '定时计划已启用' : '定时计划已停用')
+    const updated = await api.tasks.updateSchedule(target.id, { active })
+    if (plan.value) plan.value = updated
+    else task.value = updated
+    toast.success(active ? '计划已启用' : '计划已停用')
   } catch (exc) {
     reportError(exc)
   }
 }
 
 async function stopPlan(): Promise<void> {
-  if (!plan.value) return
+  const target = plan.value ?? task.value
+  if (!target) return
   const ok = await confirm({
-    title: '停止定时计划',
-    message: '确定停止该定时计划吗？',
-    detail: '已生成的历史任务与执行记录不会删除。',
+    title: '停止计划',
+    message: `确定停止计划「${target.name}」吗？`,
+    detail: '停止后不再自动触发；连续多轮计划会同时终止尚未完成的轮次，已生成的执行记录保留。',
     confirmText: '停止',
     tone: 'warning',
   })
   if (!ok) return
   try {
-    await api.tasks.abort(plan.value.id)
-    plan.value = await api.tasks.get(plan.value.id)
-    toast.success('定时计划已停止')
+    const updated = await api.tasks.stopPlan(target.id)
+    if (plan.value) {
+      plan.value = updated
+      if (isPeriodicPlan.value) await loadRuns()
+    } else {
+      await loadTaskDetail(updated.id)
+    }
+    toast.success('计划已停止')
   } catch (exc) {
     reportError(exc)
   }
@@ -667,7 +691,7 @@ onBeforeUnmount(() => {
               </span>
               <StatusPill
                 :status="plan.status"
-                :label="planActive || plan.status !== 'ABORTED' ? null : '已停止'"
+                :label="planStopped ? '已停止' : null"
               />
             </div>
             <p class="mt-1 text-xs text-slate-600">{{ taskScheduleLabel(plan) }}</p>
@@ -691,7 +715,7 @@ onBeforeUnmount(() => {
             >
               启用计划
             </button>
-            <button v-if="isSchedulePlan && planActive" class="btn-danger btn-xs" @click="stopPlan">
+            <button v-if="planStoppable" class="btn-danger btn-xs" @click="stopPlan">
               停止计划
             </button>
           </div>

@@ -273,7 +273,7 @@ async def test_scheduler_chains_next_round(monkeypatch: pytest.MonkeyPatch) -> N
             case_ids=[1],
             total_cases=1,
             schedule_type=TaskScheduleType.IMMEDIATE,
-            schedule_active=False,
+            schedule_active=True,
             repeat_rounds=3,
             round_index=1,
         )
@@ -315,6 +315,99 @@ async def test_scheduler_chains_next_round(monkeypatch: pytest.MonkeyPatch) -> N
         await _cleanup(root_id, *created)
 
 
+@pytest.mark.asyncio
+async def test_start_next_round_skips_stopped_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """停止计划后不再派生下一轮。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    root_id = await _complete_root(3, name="已停止连续多轮")
+    try:
+        async with SessionLocal() as db:
+            root = await db.get(BatchTask, root_id)
+            root.schedule_active = False
+            await db.commit()
+        await scheduler._start_next_round(root_id)
+        assert started == []
+        async with SessionLocal() as db:
+            children = (
+                (
+                    await db.execute(
+                        select(BatchTask).where(BatchTask.round_prev_id == root_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert children == []
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(
+                delete(BatchTask).where(
+                    (BatchTask.round_prev_id == root_id) | (BatchTask.id == root_id)
+                )
+            )
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_resume_round_chains_aborts_pending_after_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """计划停止后，恢复扫描不会拉起待执行轮次，并把它作废。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    root_id = await _complete_root(3, name="停止后待恢复")
+    child_id: int | None = None
+    try:
+        async with SessionLocal() as db:
+            root = await db.get(BatchTask, root_id)
+            root.schedule_active = False
+            child = BatchTask(
+                code=f"STOPPED-{uuid.uuid4().hex[:6]}",
+                name="停止后待恢复 · 第 2/3 轮",
+                status=TaskStatus.PENDING,
+                control_state="RUNNING",
+                case_ids=[1],
+                total_cases=1,
+                schedule_type=TaskScheduleType.IMMEDIATE,
+                schedule_active=False,
+                schedule_source_id=root_id,
+                repeat_rounds=3,
+                round_index=2,
+                round_prev_id=root_id,
+            )
+            db.add(child)
+            await db.commit()
+            child_id = int(child.id)
+
+        await scheduler.resume_round_chains()
+        assert child_id not in started
+        async with SessionLocal() as db:
+            child = await db.get(BatchTask, child_id)
+            assert child is not None
+            assert child.status == TaskStatus.ABORTED
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(
+                delete(BatchTask).where(
+                    (BatchTask.round_prev_id == root_id) | (BatchTask.id == root_id)
+                )
+            )
+            await db.commit()
+
+
 async def _complete_root(rounds: int, name: str = "连续多轮") -> int:
     async with SessionLocal() as db:
         root = BatchTask(
@@ -325,7 +418,7 @@ async def _complete_root(rounds: int, name: str = "连续多轮") -> int:
             case_ids=[1],
             total_cases=1,
             schedule_type=TaskScheduleType.IMMEDIATE,
-            schedule_active=False,
+            schedule_active=True,
             repeat_rounds=rounds,
             round_index=1,
             finished_at=datetime.now(),
@@ -608,7 +701,8 @@ async def test_run_due_tasks_clones_first_round_for_multi_round_plan(
             run = await db.get(BatchTask, run_id)
             assert plan is not None and run is not None
             assert plan.status == TaskStatus.COMPLETED
-            assert plan.schedule_active is False
+            # 多轮计划的 schedule_active 表示轮次链继续，直到跑满或手动停止
+            assert plan.schedule_active is True
             assert plan.next_run_at is None
             assert plan.last_run_at is not None
             assert run.schedule_source_id == plan_id

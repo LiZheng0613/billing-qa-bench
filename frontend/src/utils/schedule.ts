@@ -153,3 +153,43 @@ export function taskScheduleLabel(task: BatchTask): string {
 export function isPlanTask(task: BatchTask | null | undefined): boolean {
   return Boolean(task && task.schedule_type !== 'IMMEDIATE')
 }
+
+/** 立即执行的连续多轮同样是一条计划（轮次链）。 */
+export function isContinuousPlanTask(task: BatchTask | null | undefined): boolean {
+  return Boolean(
+    task &&
+      task.schedule_source_id == null &&
+      task.schedule_type === 'IMMEDIATE' &&
+      (task.repeat_rounds ?? 1) > 1,
+  )
+}
+
+/** 计划根任务：定时/周期计划，或立即执行的连续多轮任务。 */
+export function isPlanRootTask(task: BatchTask | null | undefined): boolean {
+  return Boolean(
+    task &&
+      task.schedule_source_id == null &&
+      (isPlanTask(task) || (task.repeat_rounds ?? 1) > 1),
+  )
+}
+
+/** 计划是否已被手动停止。 */
+export function isPlanStopped(task: BatchTask | null | undefined): boolean {
+  if (!task) return false
+  if (task.schedule_type === 'DAILY' || task.schedule_type === 'WEEKLY') {
+    return task.status === 'ABORTED'
+  }
+  if (!isPlanRootTask(task)) return false
+  return !task.schedule_active && task.control_state === 'ABORTED'
+}
+
+/** 计划是否仍有可停止的内容：等待触发、执行中，或轮次链继续。 */
+export function canStopPlanTask(task: BatchTask | null | undefined): boolean {
+  if (!task || !isPlanRootTask(task)) return false
+  if (task.schedule_type === 'DAILY' || task.schedule_type === 'WEEKLY') {
+    return Boolean(task.schedule_active && task.status === 'SCHEDULED')
+  }
+  if (task.status === 'SCHEDULED') return Boolean(task.schedule_active)
+  if (task.status === 'PENDING' || task.status === 'RUNNING') return true
+  return (task.repeat_rounds ?? 1) > 1 && Boolean(task.schedule_active)
+}

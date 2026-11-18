@@ -252,8 +252,29 @@ async def get_task(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskOut:
     return task_to_out(task, env_name=await _env_name(db, task.environment_id))
 
 
+PERIODIC_PLAN_TYPES = {TaskScheduleType.DAILY.value, TaskScheduleType.WEEKLY.value}
+
+
 def _is_plan(task: BatchTask) -> bool:
     return task.schedule_type != TaskScheduleType.IMMEDIATE.value
+
+
+def _is_plan_root(task: BatchTask) -> bool:
+    """计划根任务：定时/周期计划，或立即执行的连续多轮任务。"""
+    if task.schedule_source_id is not None:
+        return False
+    return _is_plan(task) or max(1, int(task.repeat_rounds or 1)) > 1
+
+
+async def _plan_inflight_tasks(db: AsyncSession, plan_id: int) -> list[BatchTask]:
+    """计划根任务自身或其派生批次中仍在等待/执行的记录。"""
+    rows = await db.execute(
+        select(BatchTask).where(
+            or_(BatchTask.id == plan_id, BatchTask.schedule_source_id == plan_id),
+            BatchTask.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING]),
+        )
+    )
+    return list(rows.scalars().all())
 
 
 async def _trigger_plan(db: AsyncSession, task: BatchTask) -> BatchTask:
@@ -270,7 +291,9 @@ async def _trigger_plan(db: AsyncSession, task: BatchTask) -> BatchTask:
         }:
             raise ConflictError("该一次性计划已执行过，请重新创建或调整计划时间")
         total = max(1, int(task.repeat_rounds or 1))
-        task.schedule_active = False
+        # 连续多轮：计划行保留为「轮次链是否继续」的开关，链跑满或手动停止后关闭；
+        # 一次性单轮计划触发后即不再需要计划标记。
+        task.schedule_active = total > 1
         task.next_run_at = None
         task.last_run_at = now()
         if total > 1:
@@ -418,6 +441,55 @@ async def abort_task(task_id: int, db: AsyncSession = Depends(get_db)) -> Messag
         raise ConflictError("任务已结束，无需终止")
     await scheduler.abort(task_id)
     return MessageResponse(message="终止指令已下发")
+
+
+@router.post("/{task_id}/stop-plan", response_model=TaskOut, summary="停止计划")
+async def stop_plan(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskOut:
+    """停止计划的后续触发；连续多轮计划同时终止当前/待执行的轮次。
+
+    与「终止」的区别：终止针对一次正在跑的批次；停止计划针对计划本身，
+    周期计划停止后续每天的触发，指定时间/连续多轮计划则收口整条轮次链。
+    """
+    task = await _get_task(db, task_id)
+    if not _is_plan_root(task):
+        raise ConflictError("当前任务不是计划任务，请在任务运行中使用终止")
+
+    if task.schedule_type in PERIODIC_PLAN_TYPES:
+        if not task.schedule_active:
+            raise ConflictError("计划已停止")
+        task.schedule_active = False
+        task.next_run_at = None
+        if task.status == TaskStatus.SCHEDULED:
+            task.status = TaskStatus.ABORTED
+            task.control_state = "ABORTED"
+            task.finished_at = now()
+        await db.commit()
+        await db.refresh(task)
+        return task_to_out(task, env_name=await _env_name(db, task.environment_id))
+
+    if not task.schedule_active and task.status == TaskStatus.ABORTED:
+        raise ConflictError("计划已停止")
+    if task.status in {TaskStatus.COMPLETED, TaskStatus.FAILED} and not task.schedule_active:
+        raise ConflictError("计划已结束，无需停止")
+
+    inflight = await _plan_inflight_tasks(db, task.id)
+    task.schedule_active = False
+    task.next_run_at = None
+    if task.status == TaskStatus.SCHEDULED:
+        # 指定时间计划尚未触发：直接作废，不再进入调度器。
+        task.status = TaskStatus.ABORTED
+        task.control_state = "ABORTED"
+        task.finished_at = now()
+    elif task.status == TaskStatus.COMPLETED:
+        # 计划行本身已完成、轮次链仍在执行：保留历史状态，只标记链已停止。
+        task.control_state = "ABORTED"
+    await db.commit()
+
+    for run in inflight:
+        await scheduler.abort(run.id)
+
+    await db.refresh(task)
+    return task_to_out(task, env_name=await _env_name(db, task.environment_id))
 
 
 @router.post(

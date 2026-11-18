@@ -12,7 +12,7 @@ import {
   formatScore,
   statusLabel,
 } from '../../utils/format'
-import { taskScheduleLabel } from '../../utils/schedule'
+import { canStopPlanTask, isPlanRootTask, isPlanStopped, taskScheduleLabel } from '../../utils/schedule'
 
 const props = withDefaults(
   defineProps<{
@@ -66,23 +66,27 @@ const distributionTotal = computed(() =>
 
 // 定时计划行：只保留配置与下次触发时间，历史执行都在克隆出的批量任务里
 const isPlan = computed(() => Boolean(props.task && props.task.schedule_type !== 'IMMEDIATE'))
+const isPlanRoot = computed(() => isPlanRootTask(props.task))
 const planWaiting = computed(() =>
   Boolean(props.task && isPlan.value && ['SCHEDULED', 'ABORTED'].includes(props.task.status)),
 )
 const canStart = computed(
   () => !planWaiting.value && props.task?.status === 'PENDING',
 )
-const canAbort = computed(() =>
-  !planWaiting.value &&
-  Boolean(props.task && ['RUNNING', 'PENDING'].includes(props.task.status)),
+const canStopPlan = computed(() => canStopPlanTask(props.task))
+const canAbort = computed(
+  () =>
+    !planWaiting.value &&
+    !isPlanRoot.value &&
+    Boolean(props.task && ['RUNNING', 'PENDING'].includes(props.task.status)),
 )
-const canRetry = computed(() =>
-  !planWaiting.value &&
-  !isPlan.value &&
-  Boolean(props.task && ['COMPLETED', 'ABORTED', 'FAILED'].includes(props.task.status)),
+const canRetry = computed(
+  () =>
+    !planWaiting.value &&
+    !isPlan.value &&
+    Boolean(props.task && ['COMPLETED', 'ABORTED', 'FAILED'].includes(props.task.status)),
 )
 const canRunNow = computed(() => planWaiting.value && planActive.value)
-const canStopPlan = computed(() => planWaiting.value)
 const canEnablePlan = computed(() => planWaiting.value && !planActive.value)
 const planActive = computed(
   () => Boolean(props.task?.schedule_active && props.task.status === 'SCHEDULED'),
@@ -254,7 +258,7 @@ onBeforeUnmount(clearKeywordTimer)
         <StatusPill
           v-if="task"
           :status="task.status"
-          :label="planWaiting && !planActive ? '已停止' : null"
+          :label="(planWaiting && !planActive) || isPlanStopped(task) ? '已停止' : null"
         />
         <button
           class="btn-ghost btn-xs"
@@ -273,7 +277,7 @@ onBeforeUnmount(clearKeywordTimer)
         >
           启用计划
         </button>
-        <button v-if="canStopPlan && planActive" class="btn-danger btn-xs" @click="emit('stop-plan')">
+        <button v-if="canStopPlan" class="btn-danger btn-xs" @click="emit('stop-plan')">
           停止计划
         </button>
         <button v-if="canStart" class="btn-primary btn-xs" @click="emit('start')">启动</button>

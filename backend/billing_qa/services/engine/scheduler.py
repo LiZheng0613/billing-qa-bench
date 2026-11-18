@@ -17,7 +17,7 @@ from billing_qa.core.logging import get_logger
 from billing_qa.core.rate_limiter import QpsLimiter
 from billing_qa.db.base import now
 from billing_qa.db.session import SessionLocal
-from billing_qa.models.enums import ExecutionSource, ExecutionStatus, TaskStatus
+from billing_qa.models.enums import ExecutionSource, ExecutionStatus, TaskScheduleType, TaskStatus
 from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase, TestCaseRevision
@@ -339,8 +339,25 @@ class BatchScheduler:
             if task is None or task.status != TaskStatus.COMPLETED:
                 return None
             total = max(1, int(task.repeat_rounds or 1))
+            if total <= 1:
+                return None
             current_index = max(1, int(task.round_index or 1))
+            plan_id = task.schedule_source_id or task.id
+            root = task if plan_id == task.id else await db.get(BatchTask, plan_id)
+            # 周期计划停止只影响后续天的触发，当天已派生的轮次链应正常跑完；
+            # 指定时间/立即执行的连续多轮则用 schedule_active 表示链是否继续。
+            periodic = root is not None and root.schedule_type in {
+                TaskScheduleType.DAILY.value,
+                TaskScheduleType.WEEKLY.value,
+            }
+            if not periodic and root is not None and not root.schedule_active:
+                logger.info("计划已停止，不再派生下一轮 task=%s plan=%s", task_id, plan_id)
+                return None
             if current_index >= total:
+                if not periodic and root is not None and root.schedule_active:
+                    # 最后一轮正常跑完：轮次链收口，停止按钮随之消失。
+                    root.schedule_active = False
+                    await db.commit()
                 return None
             existing = (
                 await db.execute(
@@ -388,21 +405,36 @@ class BatchScheduler:
         """
         started: list[int] = []
         async with SessionLocal() as db:
-            pending_ids = (
-                await db.execute(
-                    select(BatchTask.id)
-                    .where(
-                        BatchTask.round_prev_id.is_not(None),
-                        BatchTask.status == TaskStatus.PENDING.value,
+            pending_runs = (
+                (
+                    await db.execute(
+                        select(BatchTask)
+                        .where(
+                            BatchTask.round_prev_id.is_not(None),
+                            BatchTask.status == TaskStatus.PENDING.value,
+                        )
+                        .order_by(BatchTask.id)
+                        .limit(limit)
                     )
-                    .order_by(BatchTask.id)
-                    .limit(limit)
                 )
-            ).scalars().all()
-        for run_id in pending_ids:
-            if await self.start(int(run_id)):
-                started.append(int(run_id))
-                logger.info("恢复扫描：已启动待执行的轮次 task=%s", run_id)
+                .scalars()
+                .all()
+            )
+        for run in pending_runs:
+            if not await self._chain_active(run):
+                # 计划已停止：作废待执行轮次，避免恢复扫描反复拉起。
+                async with SessionLocal() as db:
+                    fresh = await db.get(BatchTask, run.id)
+                    if fresh is not None and fresh.status == TaskStatus.PENDING.value:
+                        fresh.status = TaskStatus.ABORTED
+                        fresh.control_state = "ABORTED"
+                        fresh.finished_at = now()
+                        await db.commit()
+                logger.info("恢复扫描：计划已停止，跳过并作废待执行轮次 task=%s", run.id)
+                continue
+            if await self.start(int(run.id)):
+                started.append(int(run.id))
+                logger.info("恢复扫描：已启动待执行的轮次 task=%s", run.id)
 
         child_table = aliased(BatchTask)
         child_exists = exists().where(child_table.round_prev_id == BatchTask.id)
@@ -424,9 +456,32 @@ class BatchScheduler:
             ).scalars().all()
         for task_id in stalled_ids:
             if not self.is_running(int(task_id)):
+                async with SessionLocal() as db:
+                    task = await db.get(BatchTask, task_id)
+                if task is None or not await self._chain_active(task):
+                    logger.info("恢复扫描：计划已停止，跳过补链 task=%s", task_id)
+                    continue
                 logger.warning("恢复扫描：轮次链中断，补派生下一轮 task=%s", task_id)
                 await self._start_next_round(int(task_id))
         return started
+
+    @staticmethod
+    async def _chain_active(task: BatchTask) -> bool:
+        """轮次链是否仍可继续：周期计划当天批次不受计划启停影响。"""
+        total = max(1, int(task.repeat_rounds or 1))
+        if total <= 1:
+            return False
+        plan_id = task.schedule_source_id or task.id
+        async with SessionLocal() as db:
+            root = task if plan_id == task.id else await db.get(BatchTask, plan_id)
+        if root is None:
+            return False
+        if root.schedule_type in {
+            TaskScheduleType.DAILY.value,
+            TaskScheduleType.WEEKLY.value,
+        }:
+            return True
+        return bool(root.schedule_active)
 
     async def _select_case_ids(
         self, db: AsyncSession, task: BatchTask, retry_failed: bool

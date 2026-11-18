@@ -164,7 +164,9 @@ async def run_due_tasks(reference: datetime | None = None) -> list[int]:
                 total = max(1, int(plan.repeat_rounds or 1))
                 plan.next_run_at = None
                 plan.last_run_at = current
-                plan.schedule_active = False
+                # 连续多轮计划保留 schedule_active 表示轮次链继续；
+                # 单轮计划触发后即收口，不再参与任何触发。
+                plan.schedule_active = total > 1
                 if total > 1:
                     # 连续多轮：计划行本身只保留配置，第一轮也克隆成独立执行
                     run = clone_for_run(plan, current=current)

@@ -287,6 +287,7 @@ export const api = {
       },
     ) => http.put<BatchTask>(`/tasks/${id}/schedule`, payload),
     abort: (id: number) => http.post<MessageResponse>(`/tasks/${id}/abort`),
+    stopPlan: (id: number) => http.post<BatchTask>(`/tasks/${id}/stop-plan`),
     retryFailed: (id: number) => http.post<MessageResponse>(`/tasks/${id}/retry-failed`),
     metrics: (id: number) => http.get<TaskMetrics>(`/tasks/${id}/metrics`),
     runs: (id: number, query?: { page?: number; page_size?: number }) =>

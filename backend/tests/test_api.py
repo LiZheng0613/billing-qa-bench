@@ -553,6 +553,134 @@ async def test_task_repeat_rounds_create_and_validation(client: httpx.AsyncClien
             await db.commit()
 
 
+async def test_stop_plan_for_all_schedule_modes(client: httpx.AsyncClient) -> None:
+    """指定时间、连续多轮、每天定时都支持停止计划。"""
+    cases = (await client.get("/cases", params={"page_size": 200})).json()
+    target = next(item for item in cases["items"] if item["code"] == "DEMO-SINGLE-001")
+    moment = (datetime.now() + timedelta(hours=2)).replace(microsecond=0)
+    created_ids: list[int] = []
+    try:
+        payloads = [
+            {
+                "name": f"pytest 停止指定时间 {uuid.uuid4().hex[:6]}",
+                "case_ids": [target["id"]],
+                "schedule_type": "SCHEDULED",
+                "scheduled_at": moment.isoformat(),
+                "auto_start": False,
+            },
+            {
+                "name": f"pytest 停止连续多轮 {uuid.uuid4().hex[:6]}",
+                "case_ids": [target["id"]],
+                "schedule_type": "IMMEDIATE",
+                "repeat_rounds": 3,
+                "auto_start": False,
+            },
+            {
+                "name": f"pytest 停止每天定时 {uuid.uuid4().hex[:6]}",
+                "case_ids": [target["id"]],
+                "schedule_type": "DAILY",
+                "schedule_time": "09:00",
+                "repeat_rounds": 2,
+                "auto_start": False,
+            },
+        ]
+        for payload in payloads:
+            created = await client.post("/tasks", json=payload)
+            assert created.status_code == 200, created.text
+            task_id = created.json()["id"]
+            created_ids.append(task_id)
+            stopped = await client.post(f"/tasks/{task_id}/stop-plan")
+            assert stopped.status_code == 200, stopped.text
+            body = stopped.json()
+            assert body["schedule_active"] is False
+            assert body["next_run_at"] is None
+            assert body["status"] == "ABORTED"
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(delete(BatchTask).where(BatchTask.id.in_(created_ids)))
+            await db.commit()
+
+
+async def test_stop_plan_rejects_plain_task(client: httpx.AsyncClient) -> None:
+    cases = (await client.get("/cases", params={"page_size": 200})).json()
+    target = next(item for item in cases["items"] if item["code"] == "DEMO-SINGLE-001")
+    created = await client.post(
+        "/tasks",
+        json={
+            "name": f"pytest 普通任务 {uuid.uuid4().hex[:6]}",
+            "case_ids": [target["id"]],
+            "schedule_type": "IMMEDIATE",
+            "auto_start": False,
+        },
+    )
+    assert created.status_code == 200, created.text
+    task_id = created.json()["id"]
+    try:
+        response = await client.post(f"/tasks/{task_id}/stop-plan")
+        assert response.status_code == 409
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(delete(BatchTask).where(BatchTask.id == task_id))
+            await db.commit()
+
+
+async def test_stop_plan_terminates_inflight_round(client: httpx.AsyncClient) -> None:
+    """连续多轮计划执行中停止：根任务标记停止，在跑/待跑轮次被终止。"""
+    cases = (await client.get("/cases", params={"page_size": 200})).json()
+    target = next(item for item in cases["items"] if item["code"] == "DEMO-SINGLE-001")
+    created = await client.post(
+        "/tasks",
+        json={
+            "name": f"pytest 停止执行中多轮 {uuid.uuid4().hex[:6]}",
+            "case_ids": [target["id"]],
+            "schedule_type": "IMMEDIATE",
+            "repeat_rounds": 3,
+            "auto_start": False,
+        },
+    )
+    assert created.status_code == 200, created.text
+    root_id = created.json()["id"]
+    child_id: int | None = None
+    try:
+        async with SessionLocal() as db:
+            root = await db.get(BatchTask, root_id)
+            root.status = "COMPLETED"
+            root.control_state = "FINISHED"
+            root.schedule_active = True
+            root.started_at = datetime.now()
+            child = BatchTask(
+                code=f"RUN-{uuid.uuid4().hex[:6]}",
+                name="停止执行中多轮 · 第 2/3 轮",
+                status="PENDING",
+                control_state="RUNNING",
+                case_ids=[target["id"]],
+                total_cases=1,
+                schedule_type="IMMEDIATE",
+                schedule_active=False,
+                schedule_source_id=root_id,
+                repeat_rounds=3,
+                round_index=2,
+                round_prev_id=root_id,
+            )
+            db.add(child)
+            await db.commit()
+            child_id = int(child.id)
+
+        stopped = await client.post(f"/tasks/{root_id}/stop-plan")
+        assert stopped.status_code == 200, stopped.text
+        assert stopped.json()["schedule_active"] is False
+        assert stopped.json()["control_state"] == "ABORTED"
+        async with SessionLocal() as db:
+            child = await db.get(BatchTask, child_id)
+            assert child is not None
+            assert child.status == "ABORTED"
+    finally:
+        async with SessionLocal() as db:
+            ids = [root_id] + ([child_id] if child_id else [])
+            await db.execute(delete(BatchTask).where(BatchTask.id.in_(ids)))
+            await db.commit()
+
+
 async def test_sandbox_template_type_guard(client: httpx.AsyncClient) -> None:
     prompts = (await client.get("/prompts", params={"page_size": 200})).json()
     simulator = next(item for item in prompts["items"] if item["code"] == "SIM_DEFAULT_BILLING_USER")
