@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import AnimatedNumber from './AnimatedNumber.vue'
 import { router } from '../router'
 import { useDebugStore } from '../stores/debug'
 import type { DebugTask } from '../stores/debug'
@@ -60,6 +61,44 @@ const visible = computed<DebugTask[]>(() =>
   collapsed.value ? ordered.value.slice(-2) : ordered.value,
 )
 
+/** 关闭/收起动画进行中的任务：180ms 淡出后再执行移除，避免胶囊瞬间消失 */
+const leavingIds = ref<Set<number>>(new Set())
+
+function markLeaving(id: number, action: () => void): void {
+  if (leavingIds.value.has(id)) return
+  leavingIds.value = new Set(leavingIds.value).add(id)
+  window.setTimeout(() => {
+    action()
+    const next = new Set(leavingIds.value)
+    next.delete(id)
+    leavingIds.value = next
+  }, 180)
+}
+
+/** 关闭提示（结果态 ×、「查看结果」跳转后） */
+function closeTask(task: DebugTask): void {
+  markLeaving(task.id, () => debug.remove(task.id))
+}
+
+/** 收起运行提示：调试继续后台执行，完成后仍弹结果胶囊 */
+function dismissRunning(task: DebugTask): void {
+  markLeaving(task.id, () => debug.dismissRunning(task.id))
+}
+
+/** 胶囊状态类：运行态流光扫 / 完成态底色 + 一次性光晕 / 关闭淡出 */
+function pillClass(task: DebugTask): string[] {
+  const classes: string[] = []
+  if (task.status === 'running') {
+    classes.push('bubble--running')
+  } else {
+    const bad = task.passed === false || task.status === 'failed'
+    classes.push(bad ? 'bubble--bad' : 'bubble--ok')
+    classes.push(bad ? 'bubble--flash-bad' : 'bubble--flash-ok')
+  }
+  if (leavingIds.value.has(task.id)) classes.push('bubble--leaving')
+  return classes
+}
+
 function elapsedText(task: DebugTask): string {
   const seconds = Math.max(0, Math.round((now.value - task.startedAt) / 1000))
   return `已用时 ${seconds}s`
@@ -70,13 +109,11 @@ function durationText(task: DebugTask): string {
   return `用时 ${seconds}s`
 }
 
-/** 结果态：通过 / 未通过（带分数）；pass_flag 缺失时退化为执行状态文案 */
-function resultLabel(task: DebugTask): string {
-  const score = task.totalScore !== null ? ` · ${task.totalScore} 分` : ''
-  if (task.passed === true) return `通过${score}`
-  if (task.passed === false) return `未通过${score}`
-  const label = task.executionStatus ? statusText(task.executionStatus) : '已完成'
-  return `${label}${score}`
+/** 结果态文案（分数单独滚动渲染）：通过 / 未通过；pass_flag 缺失时退化为执行状态 */
+function verdictText(task: DebugTask): string {
+  if (task.passed === true) return '通过'
+  if (task.passed === false) return '未通过'
+  return task.executionStatus ? statusText(task.executionStatus) : '已完成'
 }
 
 function statusText(status: string): string {
@@ -102,12 +139,12 @@ function openCase(task: DebugTask): void {
 
 function viewResult(task: DebugTask): void {
   if (task.executionId === null) return
-  // 「查看结果」与 × 等价：跳转 trace 的同时关闭该胶囊
+  // 「查看结果」与 × 等价：跳转 trace 的同时关闭该胶囊（带淡出）
   void router.push({
     name: 'trace',
     query: { execution: String(task.executionId), from: 'case' },
   })
-  debug.remove(task.id)
+  closeTask(task)
 }
 </script>
 
@@ -147,12 +184,12 @@ function viewResult(task: DebugTask): void {
       </template>
     </div>
 
-    <div v-for="task in visible" :key="task.id" class="bubble">
+    <div v-for="task in visible" :key="task.id" class="bubble" :class="pillClass(task)">
       <!-- 调试中 -->
       <template v-if="task.status === 'running'">
         <span class="bubble-icon bubble-icon--run">
           <svg
-            class="h-3.5 w-3.5 animate-spin"
+            class="h-3.5 w-3.5 bubble-spin"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -168,7 +205,7 @@ function viewResult(task: DebugTask): void {
         <button
           class="bubble-close"
           aria-label="关闭运行提示"
-          @click="debug.dismissRunning(task.id)"
+          @click="dismissRunning(task)"
         >
           <svg
             class="h-3.5 w-3.5"
@@ -184,7 +221,7 @@ function viewResult(task: DebugTask): void {
 
       <!-- 调试失败（请求异常） -->
       <template v-else-if="task.status === 'failed'">
-        <span class="bubble-icon bubble-icon--bad">
+        <span class="bubble-icon bubble-icon--in bubble-icon--bad">
           <svg
             class="h-3.5 w-3.5"
             viewBox="0 0 24 24"
@@ -199,8 +236,12 @@ function viewResult(task: DebugTask): void {
         <span class="bubble-sub" :title="task.errorText ?? undefined">
           {{ truncate(task.errorText ?? '请求异常') }}
         </span>
-        <span class="bubble-sep"></span>
-        <button class="bubble-close" aria-label="关闭提示" @click="debug.remove(task.id)">
+        <span class="bubble-sep bubble-in"></span>
+        <button
+          class="bubble-close bubble-in"
+          aria-label="关闭提示"
+          @click="closeTask(task)"
+        >
           <svg
             class="h-3.5 w-3.5"
             viewBox="0 0 24 24"
@@ -216,7 +257,7 @@ function viewResult(task: DebugTask): void {
       <!-- 调试完成（含未通过） -->
       <template v-else>
         <span
-          class="bubble-icon"
+          class="bubble-icon bubble-icon--in"
           :class="task.passed === false ? 'bubble-icon--bad' : 'bubble-icon--ok'"
         >
           <svg
@@ -246,13 +287,25 @@ function viewResult(task: DebugTask): void {
             class="font-bold"
             :class="task.passed === false ? 'text-rose-600' : 'text-emerald-600'"
           >
-            {{ resultLabel(task) }}
+            {{ verdictText(task) }}<template v-if="task.totalScore !== null">
+              · <AnimatedNumber :value="task.totalScore" /> 分</template>
           </span>
         </span>
         <span class="bubble-sub">{{ durationText(task) }}</span>
-        <span class="bubble-sep"></span>
-        <button class="bubble-cta" @click="viewResult(task)">查看结果 →</button>
-        <button class="bubble-close" aria-label="关闭提示" @click="debug.remove(task.id)">
+        <span class="bubble-sep bubble-in"></span>
+        <button
+          class="bubble-cta bubble-in"
+          style="animation-delay: 40ms"
+          @click="viewResult(task)"
+        >
+          查看结果 →
+        </button>
+        <button
+          class="bubble-close bubble-in"
+          style="animation-delay: 80ms"
+          aria-label="关闭提示"
+          @click="closeTask(task)"
+        >
           <svg
             class="h-3.5 w-3.5"
             viewBox="0 0 24 24"
@@ -284,17 +337,181 @@ function viewResult(task: DebugTask): void {
     0 2px 6px -3px rgba(15, 23, 42, 0.1);
   /* 纯 CSS 关键帧入场：元素插入即播放，不依赖 Vue 的过渡类轮换，
      在后台标签页 / rAF 被节流的环境下也能正常显示 */
-  animation: bubble-rise 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: bubble-rise 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
+  overflow: hidden;
+  transition:
+    background-color 0.32s ease,
+    border-color 0.32s ease;
+}
+
+/* 内容层级压在流光 / 底色之上 */
+.bubble > * {
+  position: relative;
+  z-index: 1;
 }
 
 @keyframes bubble-rise {
   from {
     opacity: 0;
-    transform: translateY(16px);
+    transform: translateY(14px) scale(0.96);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
+  }
+}
+
+/* 运行态（方案 A · 流光扫）：淡靛蓝高光缓慢扫过胶囊表面，扫完停顿一拍再循环 */
+.bubble--running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 22%,
+    rgba(99, 102, 241, 0.1) 42%,
+    rgba(99, 102, 241, 0.2) 50%,
+    rgba(99, 102, 241, 0.07) 58%,
+    transparent 76%
+  );
+  background-size: 240% 100%;
+  background-repeat: no-repeat;
+  animation: bubble-sheen 2.6s ease-in-out infinite;
+}
+
+@keyframes bubble-sheen {
+  0% {
+    background-position: 175% 0;
+  }
+  62% {
+    background-position: -85% 0;
+  }
+  100% {
+    background-position: -85% 0;
+  }
+}
+
+/* 运行图标：细弧慢转 1.4s / 圈 */
+.bubble-spin {
+  animation: bubble-rot 1.4s linear infinite;
+}
+
+@keyframes bubble-rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 完成态：底色过渡 + 一次性光晕（只播 1 次，之后完全静止） */
+.bubble--ok {
+  background: #f2fdf7;
+  border-color: #d1fae5;
+}
+
+.bubble--bad {
+  background: #fff6f7;
+  border-color: #fecdd3;
+}
+
+.bubble--flash-ok {
+  animation: bubble-flash-ok 0.72s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.bubble--flash-bad {
+  animation: bubble-flash-bad 0.72s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes bubble-flash-ok {
+  0% {
+    box-shadow:
+      0 18px 34px -18px rgba(15, 23, 42, 0.4),
+      0 2px 6px -3px rgba(15, 23, 42, 0.1),
+      0 0 0 0 rgba(16, 185, 129, 0.38);
+  }
+  35% {
+    box-shadow:
+      0 18px 34px -18px rgba(15, 23, 42, 0.4),
+      0 2px 6px -3px rgba(15, 23, 42, 0.1),
+      0 0 0 9px rgba(16, 185, 129, 0);
+    transform: translateY(-2px);
+  }
+  100% {
+    box-shadow:
+      0 18px 34px -18px rgba(15, 23, 42, 0.4),
+      0 2px 6px -3px rgba(15, 23, 42, 0.1),
+      0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes bubble-flash-bad {
+  0% {
+    box-shadow:
+      0 18px 34px -18px rgba(15, 23, 42, 0.4),
+      0 2px 6px -3px rgba(15, 23, 42, 0.1),
+      0 0 0 0 rgba(225, 29, 72, 0.38);
+  }
+  35% {
+    box-shadow:
+      0 18px 34px -18px rgba(15, 23, 42, 0.4),
+      0 2px 6px -3px rgba(15, 23, 42, 0.1),
+      0 0 0 9px rgba(225, 29, 72, 0);
+    transform: translateY(-2px);
+  }
+  100% {
+    box-shadow:
+      0 18px 34px -18px rgba(15, 23, 42, 0.4),
+      0 2px 6px -3px rgba(15, 23, 42, 0.1),
+      0 0 0 0 rgba(225, 29, 72, 0);
+  }
+}
+
+/* 完成瞬间：图标弹性弹出、操作区错峰淡入 */
+.bubble-icon--in {
+  animation: bubble-icon-pop 0.26s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes bubble-icon-pop {
+  0% {
+    transform: scale(0.4) rotate(-30deg);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.12) rotate(2deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(0);
+  }
+}
+
+.bubble-in {
+  animation: bubble-fade-up 0.22s ease-out both;
+}
+
+@keyframes bubble-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 关闭 / 收起：淡出下沉 180ms，结束后从 store 移除 */
+.bubble--leaving {
+  pointer-events: none;
+  animation: bubble-out 0.18s ease-in forwards;
+}
+
+@keyframes bubble-out {
+  to {
+    opacity: 0;
+    transform: scale(0.94) translateY(8px);
   }
 }
 
