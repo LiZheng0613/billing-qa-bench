@@ -13,6 +13,7 @@ import {
   sourceLabel,
   statusLabel,
 } from '../../utils/format'
+import { copyText } from '../../utils/clipboard'
 import { useToastStore } from '../../stores/toast'
 
 const props = defineProps<{ detail: ExecutionDetail | null; loading: boolean }>()
@@ -318,6 +319,19 @@ function toggleTurn(turnId: number): void {
   collapsedTurnIds.value = next
 }
 
+const allTurnsCollapsed = computed(() => {
+  const turns = props.detail?.turns ?? []
+  return turns.length > 0 && turns.every((turn) => collapsedTurnIds.value.has(turn.id))
+})
+
+/** 全部折叠 / 全部展开 */
+function toggleAllTurns(): void {
+  const turns = props.detail?.turns ?? []
+  collapsedTurnIds.value = allTurnsCollapsed.value
+    ? new Set()
+    : new Set(turns.map((turn) => turn.id))
+}
+
 watch(
   () => props.detail?.id,
   () => {
@@ -437,12 +451,9 @@ function judgeDimensions(judge: JudgeResult): Array<{ key: string; label: string
 
 async function copyTraceUid(): Promise<void> {
   if (!props.detail) return
-  try {
-    await navigator.clipboard.writeText(props.detail.trace_uid)
-    toast.success('Trace UID 已复制')
-  } catch {
-    toast.error('复制失败')
-  }
+  const ok = await copyText(props.detail.trace_uid)
+  if (ok) toast.success('Trace UID 已复制')
+  else toast.error('复制失败')
 }
 
 // ---- 多轮会话绑定：执行期会话链与用例变量来源 ----
@@ -662,6 +673,12 @@ function turnRequestKeys(turn: TurnTrace): string[] {
                   {{ key }}={{ variableText(value) }}
                 </span>
               </div>
+            </div>
+            <div class="flex items-center justify-between">
+              <p class="text-[11px] text-slate-500">共 {{ detail.turns.length }} 轮</p>
+              <button class="btn-ghost btn-xs" @click="toggleAllTurns">
+                {{ allTurnsCollapsed ? '全部展开' : '全部折叠' }}
+              </button>
             </div>
             <article
               v-for="turn in detail.turns"
