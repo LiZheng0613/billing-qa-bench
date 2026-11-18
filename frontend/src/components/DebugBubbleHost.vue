@@ -11,7 +11,8 @@ import type { DebugTask } from '../stores/debug'
  * - 1 条结果：基准单条胶囊
  * - 2 条：直接垂直堆叠
  * - ≥3 条：顶部「+N 条更早结果」虚线胶囊，下方最多平铺 2 条，点击可展开全部
- * - 运行中的胶囊始终钉在堆叠最底部，完成后原位变为结果胶囊
+ * - 运行中的胶囊始终钉在堆叠最底部，完成后原位变为结果胶囊；
+ *   带「查看结果 →」（跳用例详情）与 ×（收起运行提示，调试继续、完成后仍弹结果）
  * - 结果/失败胶囊常驻，不自动消失；× 手动关闭，「查看结果」跳转后同样关闭该胶囊
  */
 const debug = useDebugStore()
@@ -42,7 +43,12 @@ const ordered = computed<DebugTask[]>(() => {
     .slice()
     .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0))
   const running = debug.tasks
-    .filter((task) => task.status === 'running' && !debug.isOnOrigin(task))
+    .filter(
+      (task) =>
+        task.status === 'running' &&
+        !task.runningDismissed &&
+        !debug.isOnOrigin(task),
+    )
     .slice()
     .sort((a, b) => a.startedAt - b.startedAt)
   return [...finished, ...running]
@@ -87,6 +93,11 @@ function statusText(status: string): string {
 
 function truncate(text: string, max = 36): string {
   return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
+/** 运行中胶囊的「查看结果」：结果尚未产生，先跳转该用例详情页 */
+function openCase(task: DebugTask): void {
+  void router.push({ name: 'case-detail', params: { id: String(task.caseId) } })
 }
 
 function viewResult(task: DebugTask): void {
@@ -152,6 +163,23 @@ function viewResult(task: DebugTask): void {
         </span>
         <span class="bubble-title">{{ task.caseCode }} 调试中…</span>
         <span class="bubble-sub">{{ elapsedText(task) }}</span>
+        <span class="bubble-sep"></span>
+        <button class="bubble-cta" @click="openCase(task)">查看结果 →</button>
+        <button
+          class="bubble-close"
+          aria-label="关闭运行提示"
+          @click="debug.dismissRunning(task.id)"
+        >
+          <svg
+            class="h-3.5 w-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" />
+          </svg>
+        </button>
       </template>
 
       <!-- 调试失败（请求异常） -->

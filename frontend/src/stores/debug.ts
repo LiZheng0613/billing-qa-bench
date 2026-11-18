@@ -21,6 +21,8 @@ export interface DebugTask {
   /** 发起页面路由（name + params.id）：胶囊展示与完成跳转都以它为基准 */
   originName: string
   originParamsId: string
+  /** 用户已收起「调试中」胶囊：仅隐藏运行提示，完成后仍弹出结果胶囊 */
+  runningDismissed: boolean
   status: DebugTaskStatus
   startedAt: number
   finishedAt: number | null
@@ -67,6 +69,15 @@ export const useDebugStore = defineStore('debug', () => {
     tasks.value = tasks.value.map((task) => (task.id === id ? { ...task, ...changes } : task))
   }
 
+  /** 收起「调试中」胶囊：调试继续后台执行，完成后仍会弹出结果胶囊 */
+  function dismissRunning(id: number): void {
+    tasks.value = tasks.value.map((task) =>
+      task.id === id && task.status === 'running'
+        ? { ...task, runningDismissed: true }
+        : task,
+    )
+  }
+
   /**
    * 发起单条调试。请求生命周期归全局 store 管：
    * - 运行中：状态跨页面保持，同用例不可重复发起；
@@ -90,6 +101,7 @@ export const useDebugStore = defineStore('debug', () => {
       caseCode: input.code,
       originName: String(origin.name ?? ''),
       originParamsId: String(origin.params.id ?? ''),
+      runningDismissed: false,
       status: 'running',
       startedAt: Date.now(),
       finishedAt: null,
@@ -138,5 +150,5 @@ export const useDebugStore = defineStore('debug', () => {
     }
   }
 
-  return { tasks, isRunning, isOnOrigin, remove, run }
+  return { tasks, isRunning, isOnOrigin, dismissRunning, remove, run }
 })
