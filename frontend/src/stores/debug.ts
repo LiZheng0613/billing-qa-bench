@@ -18,6 +18,9 @@ export interface DebugTask {
   id: number
   caseId: number
   caseCode: string
+  /** 发起页面路由（name + params.id）：胶囊展示与完成跳转都以它为基准 */
+  originName: string
+  originParamsId: string
   status: DebugTaskStatus
   startedAt: number
   finishedAt: number | null
@@ -43,6 +46,19 @@ export const useDebugStore = defineStore('debug', () => {
     return tasks.value.some((task) => task.caseId === caseId && task.status === 'running')
   }
 
+  /**
+   * 用户是否仍停留在该任务的发起页：
+   * - 运行中：发起页用按钮「调试中…」自行提示，底部不出胶囊；
+   * - 完成时：仍在发起页 → toast + 自动跳转（原有体验），不进胶囊流。
+   */
+  function isOnOrigin(task: DebugTask): boolean {
+    const current = router.currentRoute.value
+    return (
+      String(current.name ?? '') === task.originName &&
+      String(current.params.id ?? '') === task.originParamsId
+    )
+  }
+
   function remove(id: number): void {
     tasks.value = tasks.value.filter((task) => task.id !== id)
   }
@@ -54,6 +70,7 @@ export const useDebugStore = defineStore('debug', () => {
   /**
    * 发起单条调试。请求生命周期归全局 store 管：
    * - 运行中：状态跨页面保持，同用例不可重复发起；
+   *   留在发起页时不展示底部胶囊，切走页面后才由胶囊展示运行进度；
    * - 完成时仍在发起页 → 保持原有体验（toast + 自动跳转 trace，不出气泡）；
    * - 完成时已离开发起页 → 不跳转，底部胶囊常驻展示结果，仅手动关闭；
    * - 请求异常 → 不跳转，胶囊展示错误摘要。
@@ -65,10 +82,14 @@ export const useDebugStore = defineStore('debug', () => {
   }): Promise<void> {
     if (isRunning(input.id)) return
     seed += 1
+    // 记录发起页面：胶囊只在用户离开它之后展示；完成时「仍在原页」才自动跳转
+    const origin = router.currentRoute.value
     const task: DebugTask = {
       id: seed,
       caseId: input.id,
       caseCode: input.code,
+      originName: String(origin.name ?? ''),
+      originParamsId: String(origin.params.id ?? ''),
       status: 'running',
       startedAt: Date.now(),
       finishedAt: null,
@@ -80,16 +101,6 @@ export const useDebugStore = defineStore('debug', () => {
       errorText: null,
     }
     tasks.value = [...tasks.value, task]
-
-    // 记录发起页面：完成后「仍在原页」才自动跳转，否则只出胶囊提示
-    const origin = router.currentRoute.value
-    const stillOnOrigin = (): boolean => {
-      const current = router.currentRoute.value
-      return (
-        current.name === origin.name &&
-        String(current.params.id ?? '') === String(origin.params.id ?? '')
-      )
-    }
 
     toast.info(`正在执行 ${input.code} 单条调试，请稍候…`)
 
@@ -107,13 +118,14 @@ export const useDebugStore = defineStore('debug', () => {
         passed: detail.pass_flag,
         totalScore: detail.total_score,
       })
-      if (stillOnOrigin()) {
+      if (isOnOrigin(task)) {
+        // 先移除任务再跳转，避免完成瞬间「结果胶囊」在原页面闪现
         toast.success(`调试完成：${statusLabel(detail.status)}，得分 ${detail.total_score ?? '—'}`)
+        remove(task.id)
         await router.push({
           name: 'trace',
           query: { execution: String(detail.id), from: 'case' },
         })
-        remove(task.id)
       }
     } catch (exc) {
       const finishedAt = Date.now()
@@ -126,5 +138,5 @@ export const useDebugStore = defineStore('debug', () => {
     }
   }
 
-  return { tasks, isRunning, remove, run }
+  return { tasks, isRunning, isOnOrigin, remove, run }
 })

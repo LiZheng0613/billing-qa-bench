@@ -6,11 +6,13 @@ import type { DebugTask } from '../stores/debug'
 
 /**
  * 单条调试底部胶囊提示（定稿设计：底部居中胶囊 + 分级堆叠）。
+ * - 用户仍停留在发起页时不展示「调试中」胶囊（发起页按钮态负责提示），
+ *   切走页面后才由胶囊接管运行进度
  * - 1 条结果：基准单条胶囊
  * - 2 条：直接垂直堆叠
  * - ≥3 条：顶部「+N 条更早结果」虚线胶囊，下方最多平铺 2 条，点击可展开全部
  * - 运行中的胶囊始终钉在堆叠最底部，完成后原位变为结果胶囊
- * - 结果/失败胶囊常驻，不自动消失，仅 × 手动关闭
+ * - 结果/失败胶囊常驻，不自动消失；× 手动关闭，「查看结果」跳转后同样关闭该胶囊
  */
 const debug = useDebugStore()
 
@@ -29,14 +31,18 @@ onBeforeUnmount(() => {
   if (timer !== null) window.clearInterval(timer)
 })
 
-/** 展示顺序：已完成在上（越新越靠下），运行中钉在最底部 */
+/**
+ * 展示顺序：已完成在上（越新越靠下），运行中钉在最底部。
+ * 运行中的任务只在用户已离开发起页时才展示 —— 留在发起页时由
+ * 按钮态 + 完成后 toast/跳转负责提示，回到发起页时胶囊自动隐藏。
+ */
 const ordered = computed<DebugTask[]>(() => {
   const finished = debug.tasks
     .filter((task) => task.status !== 'running')
     .slice()
     .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0))
   const running = debug.tasks
-    .filter((task) => task.status === 'running')
+    .filter((task) => task.status === 'running' && !debug.isOnOrigin(task))
     .slice()
     .sort((a, b) => a.startedAt - b.startedAt)
   return [...finished, ...running]
@@ -85,10 +91,12 @@ function truncate(text: string, max = 36): string {
 
 function viewResult(task: DebugTask): void {
   if (task.executionId === null) return
+  // 「查看结果」与 × 等价：跳转 trace 的同时关闭该胶囊
   void router.push({
     name: 'trace',
     query: { execution: String(task.executionId), from: 'case' },
   })
+  debug.remove(task.id)
 }
 </script>
 
