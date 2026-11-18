@@ -304,10 +304,25 @@ const rootCauseText = computed(() => {
   return ROOT_CAUSE_LABEL[raw] ?? raw
 })
 
+/** 逐轮折叠：默认展开，点击轮次头折叠 / 展开整轮内容 */
+const collapsedTurnIds = ref<Set<number>>(new Set())
+
+function isTurnCollapsed(turnId: number): boolean {
+  return collapsedTurnIds.value.has(turnId)
+}
+
+function toggleTurn(turnId: number): void {
+  const next = new Set(collapsedTurnIds.value)
+  if (next.has(turnId)) next.delete(turnId)
+  else next.add(turnId)
+  collapsedTurnIds.value = next
+}
+
 watch(
   () => props.detail?.id,
   () => {
     activeTab.value = 'turns'
+    collapsedTurnIds.value = new Set()
   },
 )
 
@@ -653,7 +668,11 @@ function turnRequestKeys(turn: TurnTrace): string[] {
               :key="turn.id"
               class="rounded-xl border border-slate-200 bg-slate-50"
             >
-              <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+              <header
+                class="flex cursor-pointer select-none flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2"
+                :aria-expanded="!isTurnCollapsed(turn.id)"
+                @click="toggleTurn(turn.id)"
+              >
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="font-mono text-xs font-semibold text-indigo-600">T{{ turn.turn_index }}</span>
                   <span class="rounded-full border px-2 py-0.5 text-[10px]" :class="turnTone(turn)">
@@ -683,72 +702,85 @@ function turnRequestKeys(turn: TurnTrace): string[] {
                   <span>
                     Tokens {{ formatNumber(turn.simulator_prompt_tokens + turn.simulator_completion_tokens) }}
                   </span>
+                  <svg
+                    class="h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform duration-200"
+                    :class="isTurnCollapsed(turn.id) ? '' : 'rotate-180'"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    aria-hidden="true"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6" />
+                  </svg>
                 </div>
               </header>
 
-              <div class="grid gap-3 px-3 py-3 lg:grid-cols-2">
-                <div>
-                  <p class="text-[10px] uppercase tracking-wider text-slate-500">用户提问</p>
-                  <p class="mt-1 whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-sm text-slate-800">
-                    {{ turn.query }}
-                  </p>
-                  <div v-if="turn.simulator_thought" class="mt-2 rounded-lg border border-fuchsia-500/20 bg-fuchsia-500/5 p-2">
-                    <p class="text-[10px] uppercase tracking-wider text-fuchsia-400/80">模拟器思考</p>
-                    <p class="mt-1 whitespace-pre-wrap break-words text-xs text-slate-600">{{ turn.simulator_thought }}</p>
+              <div v-show="!isTurnCollapsed(turn.id)">
+                <div class="grid gap-3 px-3 py-3 lg:grid-cols-2">
+                  <div>
+                    <p class="text-[10px] uppercase tracking-wider text-slate-500">用户提问</p>
+                    <p class="mt-1 whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-sm text-slate-800">
+                      {{ turn.query }}
+                    </p>
+                    <div v-if="turn.simulator_thought" class="mt-2 rounded-lg border border-fuchsia-500/20 bg-fuchsia-500/5 p-2">
+                      <p class="text-[10px] uppercase tracking-wider text-fuchsia-400/80">模拟器思考</p>
+                      <p class="mt-1 whitespace-pre-wrap break-words text-xs text-slate-600">{{ turn.simulator_thought }}</p>
+                    </div>
+                    <div v-if="turn.hidden_context_released?.length" class="mt-2">
+                      <p class="text-[10px] uppercase tracking-wider text-slate-500">本轮释放隐藏上下文</p>
+                      <pre class="mono mt-1 rounded-lg bg-white p-2 text-slate-600">{{ safeJson(turn.hidden_context_released) }}</pre>
+                    </div>
                   </div>
-                  <div v-if="turn.hidden_context_released?.length" class="mt-2">
-                    <p class="text-[10px] uppercase tracking-wider text-slate-500">本轮释放隐藏上下文</p>
-                    <pre class="mono mt-1 rounded-lg bg-white p-2 text-slate-600">{{ safeJson(turn.hidden_context_released) }}</pre>
+                  <div>
+                    <p class="text-[10px] uppercase tracking-wider text-slate-500">客服最终回复</p>
+                    <p class="mt-1 whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-sm text-slate-800">
+                      {{ turn.final_answer || '—' }}
+                    </p>
+                    <div v-if="turn.generated_sql" class="mt-2">
+                      <p class="text-[10px] uppercase tracking-wider text-slate-500">生成 SQL</p>
+                      <pre class="mono mt-1 overflow-auto rounded-lg bg-white p-2 text-sky-700">{{ turn.generated_sql }}</pre>
+                    </div>
+                    <div v-if="turn.api_params" class="mt-2">
+                      <JsonViewer :value="turn.api_params" label="API 参数" max-height="120px" />
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <p class="text-[10px] uppercase tracking-wider text-slate-500">客服最终回复</p>
-                  <p class="mt-1 whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-sm text-slate-800">
-                    {{ turn.final_answer || '—' }}
-                  </p>
-                  <div v-if="turn.generated_sql" class="mt-2">
-                    <p class="text-[10px] uppercase tracking-wider text-slate-500">生成 SQL</p>
-                    <pre class="mono mt-1 overflow-auto rounded-lg bg-white p-2 text-sky-700">{{ turn.generated_sql }}</pre>
-                  </div>
-                  <div v-if="turn.api_params" class="mt-2">
-                    <JsonViewer :value="turn.api_params" label="API 参数" max-height="120px" />
-                  </div>
+
+                <div v-if="turn.raw_db_data" class="border-t border-slate-200 px-3 py-2">
+                  <JsonViewer :value="turn.raw_db_data" label="底层取数 raw_db_data" max-height="160px" />
                 </div>
+
+                <details
+                  v-if="turn.rule_check && detail.grading_mode !== 'ANSWER_CONTRACT'"
+                  class="border-t border-slate-200 px-3 py-2"
+                >
+                  <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">
+                    本轮规则校验
+                    <span :class="turn.rule_check.passed ? 'text-emerald-700' : 'text-rose-700'">
+                      {{ turn.rule_check.passed ? '通过' : '未通过' }}
+                    </span>
+                  </summary>
+                  <pre class="mono mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-slate-600">{{ safeJson(turn.rule_check) }}</pre>
+                </details>
+
+                <details class="border-t border-slate-200 px-3 py-2">
+                  <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">
+                    请求 / 响应原始报文
+                  </summary>
+                  <div class="mt-2 grid gap-2 lg:grid-cols-2">
+                    <JsonViewer :value="turn.request_payload" label="请求" max-height="220px" />
+                    <JsonViewer :value="turn.response_raw" label="响应" max-height="220px" />
+                  </div>
+                </details>
+
+                <details v-if="turn.rendered_prompt" class="border-t border-slate-200 px-3 py-2">
+                  <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">
+                    模拟器渲染 Prompt
+                  </summary>
+                  <pre class="mono mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 text-slate-600">{{ turn.rendered_prompt }}</pre>
+                </details>
               </div>
-
-              <div v-if="turn.raw_db_data" class="border-t border-slate-200 px-3 py-2">
-                <JsonViewer :value="turn.raw_db_data" label="底层取数 raw_db_data" max-height="160px" />
-              </div>
-
-              <details
-                v-if="turn.rule_check && detail.grading_mode !== 'ANSWER_CONTRACT'"
-                class="border-t border-slate-200 px-3 py-2"
-              >
-                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">
-                  本轮规则校验
-                  <span :class="turn.rule_check.passed ? 'text-emerald-700' : 'text-rose-700'">
-                    {{ turn.rule_check.passed ? '通过' : '未通过' }}
-                  </span>
-                </summary>
-                <pre class="mono mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-slate-600">{{ safeJson(turn.rule_check) }}</pre>
-              </details>
-
-              <details class="border-t border-slate-200 px-3 py-2">
-                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">
-                  请求 / 响应原始报文
-                </summary>
-                <div class="mt-2 grid gap-2 lg:grid-cols-2">
-                  <JsonViewer :value="turn.request_payload" label="请求" max-height="220px" />
-                  <JsonViewer :value="turn.response_raw" label="响应" max-height="220px" />
-                </div>
-              </details>
-
-              <details v-if="turn.rendered_prompt" class="border-t border-slate-200 px-3 py-2">
-                <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">
-                  模拟器渲染 Prompt
-                </summary>
-                <pre class="mono mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 text-slate-600">{{ turn.rendered_prompt }}</pre>
-              </details>
             </article>
           </div>
         </template>
