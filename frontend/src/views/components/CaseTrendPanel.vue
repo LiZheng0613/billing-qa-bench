@@ -10,9 +10,9 @@ import type { CaseExecutionItem, CaseTrend, TestCase } from '../../types'
 import { errorMessage } from '../../utils/errors'
 import {
   formatDateTime,
-  formatMs,
   formatPercent,
   formatScore,
+  formatSeconds,
   formatTime,
 } from '../../utils/format'
 import { useToastStore } from '../../stores/toast'
@@ -36,13 +36,19 @@ useEChart(chartEl, chartOption)
 const stats = computed(() => [
   { label: '通过率', value: formatPercent(trend.value?.pass_rate, 1), tone: 'text-emerald-700' },
   { label: '平均分', value: formatScore(trend.value?.avg_score), tone: 'text-indigo-600' },
-  { label: '平均时延', value: formatMs(trend.value?.avg_latency_ms), tone: 'text-sky-700' },
+  { label: '平均时延', value: formatSeconds(msToSeconds(trend.value?.avg_latency_ms)), tone: 'text-sky-700' },
   {
     label: '稳定性',
     value: trend.value?.flaky ? '波动 / Flaky' : '稳定',
     tone: trend.value?.flaky ? 'text-amber-700' : 'text-emerald-700',
   },
 ])
+
+/** 后端时延字段统一为毫秒，趋势视图内全部换算成秒展示。 */
+function msToSeconds(ms?: number | null): number | null {
+  if (ms === null || ms === undefined) return null
+  return Math.round((ms / 1000) * 100) / 100
+}
 
 function buildOption(): void {
   const points = trend.value?.points ?? []
@@ -84,7 +90,7 @@ function buildOption(): void {
       },
       {
         type: 'value',
-        name: 'ms',
+        name: 's',
         nameTextStyle: { color: '#6b7280', fontSize: 10 },
         splitLine: { show: false },
         axisLabel: { color: '#6b7280', fontSize: 10 },
@@ -119,9 +125,10 @@ function buildOption(): void {
         smooth: true,
         yAxisIndex: 1,
         symbolSize: 5,
-        data: points.map((point) => point.latency_ms),
+        data: points.map((point) => msToSeconds(point.latency_ms)),
         itemStyle: { color: '#0ea5e9' },
         lineStyle: { width: 1.5, type: 'dashed', color: '#0ea5e9' },
+        tooltip: { valueFormatter: (value) => `${value} s` },
       },
     ],
   }
@@ -203,7 +210,7 @@ watch(
                 <td class="td font-mono text-xs text-slate-500">{{ item.id }}</td>
                 <td class="td"><StatusPill :status="item.status" size="sm" /></td>
                 <td class="td tabular-nums">{{ formatScore(item.total_score) }}</td>
-                <td class="td tabular-nums">{{ formatMs(item.latency_ms) }}</td>
+                <td class="td tabular-nums">{{ formatSeconds(msToSeconds(item.latency_ms)) }}</td>
                 <td class="td tabular-nums">{{ item.turns_used }}</td>
                 <td class="td text-xs text-slate-500">{{ formatDateTime(item.started_at) }}</td>
                 <td class="td text-right">
