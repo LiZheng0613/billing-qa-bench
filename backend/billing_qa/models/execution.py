@@ -77,6 +77,10 @@ class ExecutionRecord(Base):
     root_cause: Mapped[str | None] = mapped_column(String(32), comment="失败根因（仅诊断）")
     grader_version: Mapped[str | None] = mapped_column(String(32), comment="判分器版本")
     as_of: Mapped[str | None] = mapped_column(String(32), comment="执行时冻结时间")
+    # ---- 失败追问自检（LLM 裁决失败后追问被测 Agent 的自检结论）----
+    self_check: Mapped[dict | None] = mapped_column(
+        JSON, comment="追问自检结果（状态/触发原因/会话/Prompt/结论）"
+    )
 
     turns: Mapped[list[TurnTrace]] = relationship(
         back_populates="execution",

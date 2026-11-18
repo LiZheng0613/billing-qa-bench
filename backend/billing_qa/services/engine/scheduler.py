@@ -159,6 +159,7 @@ class BatchScheduler:
                 retry_enabled = bool(task.retry_on_env_error)
                 max_env_retries = max(0, min(int(task.max_env_retries or 0), 10))
                 backoff_base = max(0.0, min(float(task.retry_backoff_seconds or 0), 60.0))
+                enable_self_check = bool(task.enable_self_check)
                 task_name = task.name
 
             await control_store.set_state(task_id, "RUNNING")
@@ -205,6 +206,7 @@ class BatchScheduler:
                             source=source,
                             environment_id=environment_id,
                             attempt_no=attempt + 1,
+                            enable_self_check=enable_self_check,
                         )
                         await self._publish_progress(
                             task_id, execution_id, case_id, version

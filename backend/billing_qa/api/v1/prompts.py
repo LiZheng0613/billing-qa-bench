@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.security import get_current_operator
 from billing_qa.db.seed import extract_variables
@@ -32,6 +33,7 @@ from billing_qa.schemas.prompt import (
 )
 from billing_qa.services.adapter.renderer import format_history, render_text
 from billing_qa.services.engine.judge import build_judge_variables
+from billing_qa.services.engine.self_check import build_self_check_variables
 from billing_qa.services.llm.client import LLMClient, ModelContext
 from billing_qa.services.llm.json_parser import parse_json_object
 from billing_qa.services.llm.registry import resolve_context
@@ -42,11 +44,15 @@ _SANDBOX_TEMPLATE_TYPES: dict[str, TemplateType] = {
     "SIMULATOR": TemplateType.USER_SIMULATOR,
     "JUDGE": TemplateType.LLM_JUDGE,
     "CASE_AUTHOR": TemplateType.CASE_AUTHOR,
+    "SELF_CHECK": TemplateType.SELF_CHECK,
 }
 _SANDBOX_MODEL_ROLES: dict[str, ModelRole] = {
     "SIMULATOR": ModelRole.SIMULATOR,
     "JUDGE": ModelRole.JUDGE,
     "CASE_AUTHOR": ModelRole.CASE_AUTHOR,
+    # SELF_CHECK 的追问对象是被测系统（Agent），不调用平台模型，
+    # 沙盒只做变量渲染预览，无模型调用。
+    "SELF_CHECK": ModelRole.JUDGE,
 }
 
 router = APIRouter(
@@ -321,6 +327,20 @@ async def sandbox_run(
 
     rendered, missing = render_text(content, variables)
 
+    if payload.mode == "SELF_CHECK":
+        # 自检模板的追问对象是被测系统（Agent），沙盒仅做渲染预览：
+        # 校验占位符与变量拼装是否正确，不调用任何模型。
+        return SandboxResponse(
+            rendered_prompt=rendered,
+            output=None,
+            raw_content="（自检模板发送给被测 Agent，沙盒仅预览渲染结果）",
+            missing_variables=missing,
+            latency_ms=0.0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            model_name="渲染预览（无模型调用）",
+        )
+
     model = await _pick_model(db, payload.model_id, payload.mode)
     started = time.perf_counter()
     async with LLMClient(model) as client:
@@ -385,6 +405,7 @@ async def _build_sandbox_variables(
                 "turn_index": turn.turn_index,
                 "query": turn.query,
                 "final_answer": turn.final_answer,
+                "session_id": turn.session_id,
                 "raw_db_data": turn.raw_db_data,
             }
             for turn in record.turns
@@ -392,6 +413,21 @@ async def _build_sandbox_variables(
         if payload.mode == "JUDGE":
             variables = build_judge_variables(
                 record.case_snapshot, turns, record.termination_status or "COMPLETED"
+            )
+        elif payload.mode == "SELF_CHECK":
+            snapshot = record.case_snapshot or {}
+            variables = build_self_check_variables(
+                snapshot=snapshot,
+                turn_records=turns,
+                judge_result=record.judge_result,
+                judges=record.judges,
+                fact_results=record.fact_results,
+                rule_result=record.rule_result,
+                total_score=record.total_score or 0.0,
+                pass_threshold=float(
+                    snapshot.get("pass_threshold") or settings.pass_threshold
+                ),
+                termination_status=record.termination_status or "COMPLETED",
             )
         else:
             snapshot = record.case_snapshot or {}
@@ -420,6 +456,22 @@ async def _build_sandbox_variables(
             "actual_turns": 0,
             "max_turns": 1,
             "termination_status": "COMPLETED",
+        }
+    elif payload.mode == "SELF_CHECK":
+        variables = {
+            "case_name": "（未选择历史执行，无法回放真实上下文）",
+            "case_type": "SINGLE",
+            "judge_total_score": 0,
+            "pass_threshold": settings.pass_threshold,
+            "termination_status": "COMPLETED",
+            "actual_turns": 0,
+            "max_turns": 1,
+            "judge_error_tags": "（无）",
+            "judge_reasons": "（未产出裁判理由，可绑定一条历史失败执行回放真实理由）",
+            "rule_failures": "（本用例未执行规则硬校验）",
+            "expected_answer": "（未提供）",
+            "chat_history": "（暂无对话）",
+            "final_answer": "（无回复）",
         }
     else:
         variables = {

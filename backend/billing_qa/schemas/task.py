@@ -29,6 +29,8 @@ class TaskCreate(BaseModel):
     retry_on_env_error: bool = True
     max_env_retries: int = Field(default=2, ge=0, le=10)
     retry_backoff_seconds: float = Field(default=3.0, ge=0, le=60)
+    # LLM 裁决判失败时，在同一会话内追问被测 Agent 自检原因（追问自检）
+    enable_self_check: bool = False
     # 执行方式：立即 / 指定时间一次 / 每天 / 每周
     schedule_type: TaskScheduleType = TaskScheduleType.IMMEDIATE
     scheduled_at: datetime | None = Field(default=None, description="指定时间执行的时间点")
@@ -104,6 +106,7 @@ class TaskOut(ORMModel):
     retry_on_env_error: bool
     max_env_retries: int
     retry_backoff_seconds: float
+    enable_self_check: bool = False
     schedule_type: str
     scheduled_at: datetime | None
     schedule_time: str | None
@@ -297,4 +300,6 @@ class ExecutionDetail(ExecutionListItem):
     diagnostics: dict | None = None
     grader_version: str | None = None
     as_of: str | None = None
+    # 失败追问自检结果（状态 / 触发原因 / 会话 / Prompt / Agent 结论）
+    self_check: dict | None = None
     raw_request_response: list[dict[str, Any]] = Field(default_factory=list)

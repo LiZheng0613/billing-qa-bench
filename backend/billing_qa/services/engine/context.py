@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ValidationError
+from billing_qa.core.logging import get_logger
 from billing_qa.models.enums import ModelRole, TemplateStrategy, TemplateType
 from billing_qa.models.environment import Environment
 from billing_qa.models.prompt_template import PromptTemplate, PromptTemplateVersion
@@ -20,6 +21,9 @@ from billing_qa.services.llm.registry import resolve_context, resolve_unique_con
 
 DEFAULT_SIMULATOR_CODE = "SIM_DEFAULT_BILLING_USER"
 DEFAULT_JUDGE_CODE = "JUDGE_DEFAULT_ZERO_TOLERANCE"
+DEFAULT_SELF_CHECK_CODE = "SELF_CHECK_DEFAULT"
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -34,6 +38,10 @@ class ExecutionContext:
     judge_strategy: str
     pass_threshold: float
     judge_temperature: float | None = None
+    # ---- 失败追问自检模板（LLM 裁决失败后追问被测 Agent）----
+    self_check_prompt: str | None = None
+    self_check_prompt_version: int | None = None
+    self_check_template_code: str | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -164,6 +172,34 @@ async def load_execution_context(
         judge_version = judge_row.version
 
     threshold = snapshot.get("pass_threshold")
+
+    # 追问自检模板：单用例 prompt_overrides.self_check 可覆写正文；
+    # 内置模板缺失时降级为「自检不可用」，不阻塞正常执行。
+    warnings: list[str] = []
+    self_check_override = (overrides.get("self_check") or "").strip()
+    self_check_prompt: str | None = None
+    self_check_version: int | None = None
+    self_check_code: str | None = None
+    if self_check_override:
+        self_check_prompt = self_check_override
+        self_check_code = "PROMPT_OVERRIDE"
+    else:
+        try:
+            self_check_tpl, self_check_row = await resolve_template(
+                db,
+                snapshot.get("self_check_template_id"),
+                snapshot.get("self_check_template_strategy") or TemplateStrategy.LATEST,
+                snapshot.get("self_check_template_version"),
+                TemplateType.SELF_CHECK,
+                DEFAULT_SELF_CHECK_CODE,
+            )
+            self_check_prompt = self_check_row.content
+            self_check_version = self_check_row.version
+            self_check_code = self_check_tpl.code
+        except ValidationError as exc:
+            logger.warning("追问自检模板不可用，自检将被跳过: %s", exc)
+            warnings.append(f"追问自检模板不可用: {exc}")
+
     return ExecutionContext(
         env=EnvContext.from_orm(env),
         simulator_model=simulator_model,
@@ -174,4 +210,8 @@ async def load_execution_context(
         judge_prompt_version=judge_version,
         judge_strategy=snapshot.get("judge_strategy") or "AVG",
         pass_threshold=float(threshold) if threshold is not None else settings.pass_threshold,
+        self_check_prompt=self_check_prompt,
+        self_check_prompt_version=self_check_version,
+        self_check_template_code=self_check_code,
+        warnings=warnings,
     )

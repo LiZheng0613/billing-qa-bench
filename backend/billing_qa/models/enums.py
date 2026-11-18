@@ -21,6 +21,7 @@ class TemplateType(StrEnum):
     USER_SIMULATOR = "USER_SIMULATOR"
     LLM_JUDGE = "LLM_JUDGE"
     CASE_AUTHOR = "CASE_AUTHOR"
+    SELF_CHECK = "SELF_CHECK"
 
 
 class TemplateStrategy(StrEnum):

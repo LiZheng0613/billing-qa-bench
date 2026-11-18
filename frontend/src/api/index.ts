@@ -211,8 +211,10 @@ export const api = {
     trend: (id: number) => http.get<CaseTrend>(`/cases/${id}/trend`),
     compareRuns: (runA: number, runB: number) =>
       http.get<RunCompare>('/cases/compare/runs', { run_a: runA, run_b: runB }),
-    debug: (id: number, payload?: { environment_id?: number | null }) =>
-      http.post<ExecutionDetail>(`/cases/${id}/debug`, payload ?? {}),
+    debug: (
+      id: number,
+      payload?: { environment_id?: number | null; enable_self_check?: boolean },
+    ) => http.post<ExecutionDetail>(`/cases/${id}/debug`, payload ?? {}),
     facts: (id: number) => http.get<FactAtomView[]>(`/cases/${id}/facts`),
     verifyFact: (id: number, factId: string, payload: FactVerifyPayload) =>
       http.post<TestCase>(`/cases/${id}/facts/${encodeURIComponent(factId)}/verify`, payload),
@@ -264,6 +266,7 @@ export const api = {
       retry_on_env_error?: boolean
       max_env_retries?: number
       retry_backoff_seconds?: number
+      enable_self_check?: boolean
       schedule_type?: TaskScheduleType
       scheduled_at?: string | null
       schedule_time?: string | null
@@ -290,7 +293,13 @@ export const api = {
       http.get<TaskRunsPage>(`/tasks/${id}/runs`, query),
     executions: (
       id: number,
-      query?: { status?: string; latest_per_case?: boolean; page?: number; page_size?: number },
+      query?: {
+        status?: string
+        keyword?: string
+        latest_per_case?: boolean
+        page?: number
+        page_size?: number
+      },
     ) => http.get<Page<CaseExecutionItem>>(`/tasks/${id}/executions`, query),
     exportResults: (id: number, latestPerCase: boolean, filename: string) =>
       downloadFile(`/tasks/${id}/export`, filename, {

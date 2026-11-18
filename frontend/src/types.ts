@@ -748,6 +748,8 @@ export interface CaseExecutionItem {
   ttft_ms: number | null
   started_at: string
   finished_at: string | null
+  /** 失败追问自检状态（DONE / SKIPPED / ERROR），未开启自检为 null */
+  self_check_status?: string | null
 }
 
 export interface TrendPoint {
@@ -813,6 +815,8 @@ export interface BatchTask {
   retry_on_env_error: boolean
   max_env_retries: number
   retry_backoff_seconds: number
+  /** LLM 裁决判失败时，在同一会话内追问被测 Agent 自检原因（追问自检） */
+  enable_self_check: boolean
   schedule_type: TaskScheduleType
   scheduled_at: string | null
   schedule_time: string | null
@@ -998,7 +1002,27 @@ export interface ExecutionDetail extends ExecutionListItem {
   diagnostics?: Record<string, unknown> | null
   grader_version?: string | null
   as_of?: string | null
+  /** 失败追问自检结果（status / trigger / skip_reason / prompt / conclusion…） */
+  self_check?: SelfCheckResult | null
   raw_request_response: Array<Record<string, unknown>>
+}
+
+/** ExecutionRecord.self_check JSON 的前端结构 */
+export interface SelfCheckResult {
+  status: string
+  trigger?: string | null
+  skip_reason?: string | null
+  session_id?: string | null
+  template_code?: string | null
+  template_version?: number | null
+  prompt?: string | null
+  conclusion?: string | null
+  latency_ms?: number | null
+  error?: string | null
+  performed_at?: string | null
+  notes?: string[]
+  request_payload?: Record<string, unknown> | null
+  response_raw?: Record<string, unknown> | null
 }
 
 export interface RawExecution {

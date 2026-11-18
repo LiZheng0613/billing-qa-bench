@@ -39,6 +39,7 @@ const form = reactive({
   retry_on_env_error: true,
   max_env_retries: 2,
   retry_backoff_seconds: 3,
+  enable_self_check: false,
   case_scope: 'SELECTED' as 'SELECTED' | 'ALL_ACTIVE',
   case_ids: [] as number[],
   auto_start: true,
@@ -103,6 +104,7 @@ function resetForm(): void {
   form.retry_on_env_error = true
   form.max_env_retries = 2
   form.retry_backoff_seconds = 3
+  form.enable_self_check = false
   form.case_scope = 'SELECTED'
   form.case_ids = []
   form.auto_start = true
@@ -164,6 +166,7 @@ async function submitCreate(): Promise<void> {
       retry_on_env_error: form.retry_on_env_error,
       max_env_retries: form.max_env_retries,
       retry_backoff_seconds: form.retry_backoff_seconds,
+      enable_self_check: form.enable_self_check,
       ...schedulePayload(schedule),
       repeat_rounds: schedule.repeatRounds,
       auto_start: form.schedule.type === 'IMMEDIATE' && form.auto_start,
@@ -281,6 +284,20 @@ watch(
             第 n 次重试前等待 = 基础退避 × 2^(n-1)，重试同样受并发数与 QPS 限制，终止会立即生效。
           </p>
         </div>
+        <label class="flex items-start gap-2 text-sm text-slate-700">
+          <input
+            v-model="form.enable_self_check"
+            type="checkbox"
+            class="mt-0.5 h-4 w-4 rounded border-slate-300 bg-white"
+          />
+          <span>
+            失败追问自检
+            <span class="block text-[11px] text-slate-500">
+              LLM 裁决判失败的用例，会在同一会话内追加一轮追问，让被测 Agent
+              自查错误原因并留存自检结论；通过、异常与被终止的用例不受影响。
+            </span>
+          </span>
+        </label>
         <label
           v-if="form.schedule.type === 'IMMEDIATE'"
           class="flex items-center gap-2 text-sm text-slate-700"

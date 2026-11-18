@@ -67,6 +67,9 @@ class BatchTask(Base, TimestampMixin):
     retry_backoff_seconds: Mapped[float] = mapped_column(
         Float, default=3.0, comment="环境类失败重试基础退避秒数（指数递增）"
     )
+    enable_self_check: Mapped[bool] = mapped_column(
+        Boolean, default=False, comment="LLM 裁决失败时在同一会话追问被测 Agent 自检"
+    )
     # ---------- 执行方式：立即 / 指定时间 / 每日 / 每周 ----------
     schedule_type: Mapped[str] = mapped_column(
         String(16), default="IMMEDIATE", comment="IMMEDIATE / SCHEDULED / DAILY / WEEKLY"

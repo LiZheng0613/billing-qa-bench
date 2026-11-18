@@ -36,6 +36,10 @@ from billing_qa.services.engine.rule_evaluator import (
     evaluate_rules,
     merge_rule_results,
 )
+from billing_qa.services.engine.self_check import (
+    SelfCheckResult,
+    run_self_check,
+)
 from billing_qa.services.llm.client import LLMClient
 from billing_qa.services.llm.json_parser import parse_structured
 
@@ -89,6 +93,8 @@ class RunOutcome:
     root_cause: str | None = None
     grader_version: str | None = None
     as_of: str | None = None
+    # ---- 失败追问自检（LLM 裁决失败后追问被测 Agent 的结论）----
+    self_check: SelfCheckResult | None = None
 
 
 class CaseExecutor:
@@ -104,6 +110,7 @@ class CaseExecutor:
         source: str = ExecutionSource.BATCH,
         environment_id: int | None = None,
         attempt_no: int = 1,
+        enable_self_check: bool = False,
     ) -> int:
         execution_id = await self._create_execution(
             case_id=case_id,
@@ -135,6 +142,36 @@ class CaseExecutor:
 
             wall_ms = round((time.perf_counter() - wall_started) * 1000, 2)
             outcome = await self._complete(ctx, snapshot, conversation, wall_ms)
+            if enable_self_check:
+                # 失败追问自检：LLM 裁决判失败时在同一会话追问被测 Agent。
+                # 自检自身的异常不回滚执行结果，仅记录为自检失败。
+                try:
+                    outcome.self_check = await run_self_check(
+                        adapter=adapter,
+                        prompt=ctx.self_check_prompt,
+                        template_code=ctx.self_check_template_code,
+                        template_version=ctx.self_check_prompt_version,
+                        snapshot=snapshot,
+                        turn_records=conversation.records,
+                        judge_result=outcome.judge_result,
+                        judges=outcome.judges,
+                        fact_results=outcome.fact_results,
+                        rule_result=outcome.rule_result,
+                        total_score=outcome.total_score,
+                        pass_threshold=ctx.pass_threshold,
+                        status=outcome.status,
+                        termination_status=outcome.termination_status,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.exception("追问自检执行失败 execution=%s", execution_id)
+                    outcome.self_check = SelfCheckResult.failed(
+                        f"{type(exc).__name__}: {exc}",
+                        trigger="自检追问调用异常",
+                        template_code=ctx.self_check_template_code,
+                        template_version=ctx.self_check_prompt_version,
+                    )
             await self._finalize(execution_id, outcome, ctx)
         except asyncio.CancelledError:
             logger.warning("执行被取消 execution=%s", execution_id)
@@ -649,6 +686,9 @@ class CaseExecutor:
             record.root_cause = outcome.root_cause
             record.grader_version = outcome.grader_version
             record.as_of = outcome.as_of
+            record.self_check = (
+                outcome.self_check.to_dict() if outcome.self_check is not None else None
+            )
             record.finished_at = now()
             for item in outcome.fact_results or []:
                 db.add(

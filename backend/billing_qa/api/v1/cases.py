@@ -988,6 +988,7 @@ async def case_executions(
     ).all()
     items: list[CaseExecutionItem] = []
     for record, task_name in rows:
+        self_check = record.self_check if isinstance(record.self_check, dict) else None
         items.append(
             CaseExecutionItem(
                 id=record.id,
@@ -1005,6 +1006,11 @@ async def case_executions(
                 ttft_ms=record.ttft_ms,
                 started_at=record.started_at,
                 finished_at=record.finished_at,
+                self_check_status=(
+                    str(self_check.get("status"))
+                    if self_check and self_check.get("status")
+                    else None
+                ),
             )
         )
     return Page[CaseExecutionItem](
@@ -1159,6 +1165,7 @@ async def debug_case(
         snapshot=snapshot,
         source="DEBUG",
         environment_id=payload.environment_id or case.environment_id,
+        enable_self_check=payload.enable_self_check,
     )
     record = await db.get(ExecutionRecord, execution_id)
     if record is None:

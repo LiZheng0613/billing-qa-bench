@@ -553,6 +553,8 @@ class CaseExecutionItem(BaseModel):
     ttft_ms: float | None
     started_at: datetime
     finished_at: datetime | None
+    # 失败追问自检状态（DONE / SKIPPED / ERROR；未开启自检为 None）
+    self_check_status: str | None = None
 
 
 class TrendPoint(BaseModel):
@@ -598,3 +600,5 @@ class RunCompare(BaseModel):
 class CaseDebugRequest(BaseModel):
     environment_id: int | None = None
     case_snapshot_override: dict[str, Any] | None = None
+    # LLM 裁决判失败时，在同一会话内追问被测 Agent 自检原因（追问自检）
+    enable_self_check: bool = False

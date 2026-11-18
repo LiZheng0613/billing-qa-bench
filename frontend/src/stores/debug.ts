@@ -34,6 +34,8 @@ export interface DebugTask {
   executionStatus: string | null
   passed: boolean | null
   totalScore: number | null
+  /** 失败追问自检状态（DONE / SKIPPED / ERROR），未开启未自检为 null */
+  selfCheckStatus: string | null
   /** 请求异常时的错误摘要 */
   errorText: string | null
 }
@@ -90,6 +92,8 @@ export const useDebugStore = defineStore('debug', () => {
     id: number
     code: string
     environmentId?: number | null
+    /** LLM 裁决判失败时，在同一会话内追问被测 Agent 自检原因 */
+    enableSelfCheck?: boolean
   }): Promise<void> {
     if (isRunning(input.id)) return
     seed += 1
@@ -110,6 +114,7 @@ export const useDebugStore = defineStore('debug', () => {
       executionStatus: null,
       passed: null,
       totalScore: null,
+      selfCheckStatus: null,
       errorText: null,
     }
     tasks.value = [...tasks.value, task]
@@ -119,8 +124,10 @@ export const useDebugStore = defineStore('debug', () => {
     try {
       const detail = await api.cases.debug(input.id, {
         environment_id: input.environmentId ?? null,
+        enable_self_check: input.enableSelfCheck ?? false,
       })
       const finishedAt = Date.now()
+      const selfCheckStatus = detail.self_check?.status ?? null
       patch(task.id, {
         status: 'success',
         finishedAt,
@@ -129,14 +136,30 @@ export const useDebugStore = defineStore('debug', () => {
         executionStatus: detail.status,
         passed: detail.pass_flag,
         totalScore: detail.total_score,
+        selfCheckStatus,
       })
       if (isOnOrigin(task)) {
         // 先移除任务再跳转，避免完成瞬间「结果胶囊」在原页面闪现
-        toast.success(`调试完成：${statusLabel(detail.status)}，得分 ${detail.total_score ?? '—'}`)
+        const selfCheckNote =
+          selfCheckStatus === 'DONE'
+            ? '，已追问自检'
+            : selfCheckStatus === 'SKIPPED'
+              ? '，自检未触发'
+              : selfCheckStatus === 'ERROR'
+                ? '，自检追问失败'
+                : ''
+        toast.success(
+          `调试完成：${statusLabel(detail.status)}，得分 ${detail.total_score ?? '—'}${selfCheckNote}`,
+        )
         remove(task.id)
         await router.push({
           name: 'trace',
-          query: { execution: String(detail.id), from: 'case' },
+          query: {
+            execution: String(detail.id),
+            from: 'case',
+            // 自检成功时直接落在「追问自检」页签，省一次点击
+            ...(selfCheckStatus === 'DONE' ? { tab: 'selfcheck' } : {}),
+          },
         })
       }
     } catch (exc) {

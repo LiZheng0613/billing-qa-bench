@@ -292,6 +292,35 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     assert latest["total"] == 1
     assert latest["items"][0]["attempt_count"] == 1
 
+    by_keyword = (
+        await client.get(
+            f"/tasks/{task_id}/executions",
+            params={"keyword": target["code"], "latest_per_case": "true"},
+        )
+    ).json()
+    assert by_keyword["total"] == 1
+    assert by_keyword["items"][0]["case_code"] == target["code"]
+    missing_keyword = (
+        await client.get(f"/tasks/{task_id}/executions", params={"keyword": "不存在的用例关键词"})
+    ).json()
+    assert missing_keyword["total"] == 0
+    hit_status = latest["items"][0]["status"]
+    by_status = (
+        await client.get(
+            f"/tasks/{task_id}/executions",
+            params={"status": hit_status, "latest_per_case": "true"},
+        )
+    ).json()
+    assert by_status["total"] == 1
+    miss_status = "ABORTED" if hit_status != "ABORTED" else "PASS"
+    no_status = (
+        await client.get(
+            f"/tasks/{task_id}/executions",
+            params={"status": miss_status, "latest_per_case": "true"},
+        )
+    ).json()
+    assert no_status["total"] == 0
+
     exported = await client.get(
         f"/tasks/{task_id}/export", params={"latest_per_case": "true"}
     )

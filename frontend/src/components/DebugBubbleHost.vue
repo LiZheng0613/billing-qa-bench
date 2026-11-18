@@ -128,6 +128,14 @@ function statusText(status: string): string {
   return labels[status] ?? status
 }
 
+/** 完成态追加的自检反馈标签（未开启失败追问自检时为空） */
+function selfCheckText(task: DebugTask): string | null {
+  if (task.selfCheckStatus === 'DONE') return '已追问自检'
+  if (task.selfCheckStatus === 'SKIPPED') return '自检未触发'
+  if (task.selfCheckStatus === 'ERROR') return '自检失败'
+  return null
+}
+
 function truncate(text: string, max = 36): string {
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
@@ -290,6 +298,19 @@ function viewResult(task: DebugTask): void {
             {{ verdictText(task) }}<template v-if="task.totalScore !== null">
               · <AnimatedNumber :value="task.totalScore" /> 分</template>
           </span>
+        </span>
+        <span
+          v-if="selfCheckText(task)"
+          class="bubble-chip"
+          :class="
+            task.selfCheckStatus === 'DONE'
+              ? 'bubble-chip--ok'
+              : task.selfCheckStatus === 'ERROR'
+                ? 'bubble-chip--bad'
+                : ''
+          "
+        >
+          {{ selfCheckText(task) }}
         </span>
         <span class="bubble-sub">{{ durationText(task) }}</span>
         <span class="bubble-sep bubble-in"></span>
@@ -545,6 +566,32 @@ function viewResult(task: DebugTask): void {
 .bubble-icon--run {
   background: #eef2ff;
   color: #4f46e5;
+}
+
+.bubble-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 9999px;
+  border: 1px solid #e2e8f0;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bubble-chip--ok {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.bubble-chip--bad {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #be123c;
 }
 
 .bubble-title {

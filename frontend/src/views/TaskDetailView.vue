@@ -37,6 +37,8 @@ const executionTotal = ref(0)
 const executionPage = ref(1)
 const executionPageSize = 30
 const latestPerCase = ref(true)
+const executionStatus = ref('')
+const executionKeyword = ref('')
 const live = ref(false)
 const loading = ref(true)
 const notFound = ref(false)
@@ -111,6 +113,25 @@ function reportError(exc: unknown): void {
   toast.error(errorMessage(exc))
 }
 
+function executionQuery() {
+  return {
+    page: executionPage.value,
+    page_size: executionPageSize,
+    latest_per_case: latestPerCase.value,
+    status: executionStatus.value || undefined,
+    keyword: executionKeyword.value.trim() || undefined,
+  }
+}
+
+function matchesExecutionFilters(item: CaseExecutionItem): boolean {
+  if (executionStatus.value && item.status !== executionStatus.value) return false
+  const keyword = executionKeyword.value.trim().toLowerCase()
+  if (!keyword) return true
+  return [item.case_code, item.case_name].some((value) =>
+    (value ?? '').toLowerCase().includes(keyword),
+  )
+}
+
 function runProgress(run: BatchTask): number {
   if (!run.total_cases) return 0
   return Math.min(100, Math.round((run.finished_cases / run.total_cases) * 100))
@@ -163,11 +184,7 @@ async function loadTaskDetail(id: number): Promise<void> {
   const [detail, taskMetrics, executionPageData] = await Promise.all([
     api.tasks.get(id),
     api.tasks.metrics(id),
-    api.tasks.executions(id, {
-      page: executionPage.value,
-      page_size: executionPageSize,
-      latest_per_case: latestPerCase.value,
-    }),
+    api.tasks.executions(id, executionQuery()),
   ])
   if (seq !== detailSeq) return
   task.value = detail
@@ -248,23 +265,34 @@ function applyEvent(event: TaskProgressEvent): void {
   }
   if (event.execution) {
     const next = event.execution
+    const visible = matchesExecutionFilters(next)
     if (latestPerCase.value) {
       const index = executions.value.findIndex((item) => item.case_id === next.case_id)
       if (index >= 0) {
-        const current = executions.value[index]
-        executions.value.splice(index, 1, {
-          ...next,
-          attempt_count: Math.max(current.attempt_count ?? 1, next.attempt_no),
-        })
-      } else {
+        if (visible) {
+          const current = executions.value[index]
+          executions.value.splice(index, 1, {
+            ...next,
+            attempt_count: Math.max(current.attempt_count ?? 1, next.attempt_no),
+          })
+        } else {
+          executions.value.splice(index, 1)
+          executionTotal.value = Math.max(0, executionTotal.value - 1)
+        }
+      } else if (visible) {
         executions.value.unshift({ ...next, attempt_count: Math.max(1, next.attempt_no) })
         executionTotal.value += 1
       }
       executions.value = executions.value.slice(0, executionPageSize)
     } else {
       const index = executions.value.findIndex((item) => item.id === next.id)
-      if (index >= 0) executions.value.splice(index, 1, next)
-      else {
+      if (index >= 0) {
+        if (visible) executions.value.splice(index, 1, next)
+        else {
+          executions.value.splice(index, 1)
+          executionTotal.value = Math.max(0, executionTotal.value - 1)
+        }
+      } else if (visible) {
         executions.value.unshift(next)
         executionTotal.value += 1
       }
@@ -351,11 +379,7 @@ function stopPolling(): void {
 
 async function loadExecutions(id: number): Promise<void> {
   try {
-    const pageData = await api.tasks.executions(id, {
-      page: executionPage.value,
-      page_size: executionPageSize,
-      latest_per_case: latestPerCase.value,
-    })
+    const pageData = await api.tasks.executions(id, executionQuery())
     executions.value = pageData.items
     executionTotal.value = pageData.total
   } catch (exc) {
@@ -411,6 +435,13 @@ function changeExecutionPage(next: number): void {
 function changeMode(next: boolean): void {
   if (latestPerCase.value === next) return
   latestPerCase.value = next
+  executionPage.value = 1
+  if (task.value) void loadExecutions(task.value.id)
+}
+
+function applyExecutionFilters(next: { status: string; keyword: string }): void {
+  executionStatus.value = next.status
+  executionKeyword.value = next.keyword
   executionPage.value = 1
   if (task.value) void loadExecutions(task.value.id)
 }
@@ -557,6 +588,8 @@ watch(
     selectedRunId.value = null
     executionPage.value = 1
     latestPerCase.value = true
+    executionStatus.value = ''
+    executionKeyword.value = ''
     void loadRoot()
   },
   { immediate: true },
@@ -847,6 +880,8 @@ onBeforeUnmount(() => {
           :execution-page="executionPage"
           :execution-page-size="executionPageSize"
           :latest-per-case="latestPerCase"
+          :execution-status="executionStatus"
+          :execution-keyword="executionKeyword"
           :exporting="exporting"
           @start="startTask"
           @abort="abortTask"
@@ -857,6 +892,7 @@ onBeforeUnmount(() => {
           @select-execution="openExecution"
           @page-change="changeExecutionPage"
           @mode-change="changeMode"
+          @filter-change="applyExecutionFilters"
           @export="exportResults"
         />
       </div>
@@ -872,6 +908,8 @@ onBeforeUnmount(() => {
         :execution-page="executionPage"
         :execution-page-size="executionPageSize"
         :latest-per-case="latestPerCase"
+        :execution-status="executionStatus"
+        :execution-keyword="executionKeyword"
         :exporting="exporting"
         @start="startTask"
         @abort="abortTask"
@@ -882,6 +920,7 @@ onBeforeUnmount(() => {
         @select-execution="openExecution"
         @page-change="changeExecutionPage"
         @mode-change="changeMode"
+        @filter-change="applyExecutionFilters"
         @export="exportResults"
       />
     </template>

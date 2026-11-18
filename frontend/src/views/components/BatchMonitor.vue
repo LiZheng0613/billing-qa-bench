@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import StatusPill from '../../components/StatusPill.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import type { BatchTask, CaseExecutionItem, TaskMetrics } from '../../types'
@@ -10,6 +10,7 @@ import {
   formatPercent,
   formatSeconds,
   formatScore,
+  statusLabel,
 } from '../../utils/format'
 import { taskScheduleLabel } from '../../utils/schedule'
 
@@ -23,9 +24,11 @@ const props = withDefaults(
     executionPage?: number
     executionPageSize?: number
     latestPerCase?: boolean
+    executionStatus?: string
+    executionKeyword?: string
     exporting?: boolean
   }>(),
-  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, latestPerCase: true, exporting: false },
+  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, latestPerCase: true, executionStatus: '', executionKeyword: '', exporting: false },
 )
 
 const emit = defineEmits<{
@@ -38,6 +41,7 @@ const emit = defineEmits<{
   (e: 'select-execution', executionId: number): void
   (e: 'page-change', page: number): void
   (e: 'mode-change', latestPerCase: boolean): void
+  (e: 'filter-change', filters: { status: string; keyword: string }): void
   (e: 'export'): void
 }>()
 
@@ -126,6 +130,79 @@ const stats = computed(() => [
       : '',
   },
 ])
+
+// ---------------------------------------------------------- 用例执行结果筛选
+const STATUS_FILTERS = [
+  'PASS',
+  'FAIL',
+  'ERROR',
+  'MAX_TURNS_EXCEEDED',
+  'REPETITION_ABORT',
+  'ABORTED',
+  'RUNNING',
+  'PENDING',
+] as const
+
+const statusFilterOptions = computed(() =>
+  STATUS_FILTERS.map((value) => ({
+    value,
+    label: statusLabel(value),
+    count: props.metrics?.status_distribution?.[value] ?? 0,
+  })),
+)
+
+const filterStatus = ref(props.executionStatus)
+const filterKeyword = ref(props.executionKeyword)
+const hasFilter = computed(
+  () => Boolean(filterStatus.value) || Boolean(filterKeyword.value.trim()),
+)
+
+let keywordTimer: number | null = null
+
+watch(
+  () => props.executionStatus,
+  (value) => {
+    filterStatus.value = value
+  },
+)
+
+watch(
+  () => props.executionKeyword,
+  (value) => {
+    filterKeyword.value = value
+  },
+)
+
+function clearKeywordTimer(): void {
+  if (keywordTimer !== null) {
+    window.clearTimeout(keywordTimer)
+    keywordTimer = null
+  }
+}
+
+function emitFilters(): void {
+  clearKeywordTimer()
+  emit('filter-change', {
+    status: filterStatus.value,
+    keyword: filterKeyword.value.trim(),
+  })
+}
+
+function onKeywordInput(): void {
+  clearKeywordTimer()
+  keywordTimer = window.setTimeout(() => {
+    keywordTimer = null
+    emitFilters()
+  }, 350)
+}
+
+function resetFilters(): void {
+  filterStatus.value = ''
+  filterKeyword.value = ''
+  emitFilters()
+}
+
+onBeforeUnmount(clearKeywordTimer)
 </script>
 
 <template>
@@ -159,6 +236,10 @@ const stats = computed(() => [
           <span>
             {{ task.retry_on_env_error ? `环境失败自动重试 ${task.max_env_retries} 次` : '环境失败不重试' }}
           </span>
+          <template v-if="task.enable_self_check">
+            <span>·</span>
+            <span class="text-violet-700">失败追问自检</span>
+          </template>
           <template v-if="isPlan">
             <span>·</span>
             <span class="text-sky-700">{{ taskScheduleLabel(task) }}</span>
@@ -333,6 +414,45 @@ const stats = computed(() => [
             </span>
           </div>
         </div>
+        <div class="flex flex-wrap items-end gap-3 px-5 pt-3">
+          <div class="w-40">
+            <label class="label">执行状态</label>
+            <select v-model="filterStatus" class="input !py-1.5 text-xs" @change="emitFilters">
+              <button><selectedcontent></selectedcontent></button>
+              <option value="">全部状态</option>
+              <option v-for="option in statusFilterOptions" :key="option.value" :value="option.value">
+                {{ option.label }}（{{ option.count }}）
+              </option>
+            </select>
+          </div>
+          <div class="w-64">
+            <label class="label">用例搜索</label>
+            <div class="relative">
+              <svg
+                class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                aria-hidden="true"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <path stroke-linecap="round" d="m20 20-3.5-3.5" />
+              </svg>
+              <input
+                v-model="filterKeyword"
+                class="input !py-1.5 !pl-9 text-xs"
+                type="search"
+                placeholder="搜索用例编号 / 名称，输入即筛"
+                @input="onKeywordInput"
+                @keyup.enter="emitFilters"
+              />
+            </div>
+          </div>
+          <button v-if="hasFilter" class="btn-ghost btn-xs" @click="resetFilters">
+            重置筛选
+          </button>
+        </div>
         <table class="table-shell mt-2">
           <thead>
             <tr>
@@ -379,9 +499,17 @@ const stats = computed(() => [
         <EmptyState
           v-if="executions.length === 0"
           compact
-          title="暂无执行记录"
-          description="任务启动后，每条用例的结果会实时出现在这里。"
-        />
+          :title="hasFilter ? '没有符合筛选条件的执行记录' : '暂无执行记录'"
+          :description="
+            hasFilter
+              ? '可调整执行状态或搜索关键词后重试。'
+              : '任务启动后，每条用例的结果会实时出现在这里。'
+          "
+        >
+          <button v-if="hasFilter" class="btn-ghost btn-xs mt-1" @click="resetFilters">
+            重置筛选
+          </button>
+        </EmptyState>
         <div
           v-if="executionTotal > executionPageSize"
           class="flex items-center justify-between border-t border-slate-200 px-5 py-3"

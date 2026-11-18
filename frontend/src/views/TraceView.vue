@@ -32,6 +32,12 @@ const origin = computed<'task' | 'case'>(() =>
   route.query.from === 'case' ? 'case' : 'task',
 )
 
+// 调试完成跳转可带 tab=selfcheck，让执行详情直接落在「追问自检」页签。
+const initialTab = computed(() => {
+  const value = route.query.tab
+  return typeof value === 'string' && value ? value : null
+})
+
 function syncBreadcrumb(data: ExecutionDetail | null): void {
   if (!data) {
     breadcrumb.clear()
@@ -186,6 +192,7 @@ onBeforeUnmount(() => {
         v-else
         :detail="detail"
         :loading="loadingDetail"
+        :initial-tab="initialTab"
       />
     </template>
 

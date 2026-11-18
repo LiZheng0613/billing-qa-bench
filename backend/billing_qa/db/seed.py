@@ -1,4 +1,4 @@
-"""内置种子数据：两条默认 Prompt 模板。"""
+"""内置种子数据：内置 Prompt 模板（模拟器 / 裁判 / 用例编写 / 失败追问自检）。"""
 
 from __future__ import annotations
 
@@ -67,6 +67,36 @@ JUDGE_DEFAULT_CONTENT = """# Role
   "error_tags": ["数值错误/数据幻觉", "口径遗漏", "上下文指代丢失", "未主动反问", "超出最大轮次", "系统异常"],
   "reason": "明确指出哪一轮、哪一个数字或哪句话与预期/底层 Raw Data 不符"
 }"""
+
+SELF_CHECK_DEFAULT_CONTENT = """# Role
+你是刚刚完成一轮自动化问账测评的智能客服系统。本轮测评已完成，评测结论为「不通过」。现在请你基于本次对话的完整上下文，对自己的回答进行一次自我检查（自检），说明你刚才为什么会犯错。
+
+# Evaluation Verdict（评测裁决信息）
+1. 用例名称：{{case_name}}（用例类型：{{case_type}}）
+2. 评测结论：不通过（裁判总分 {{judge_total_score}} / 通过分数线 {{pass_threshold}}）
+3. 结束状态：{{termination_status}}（实际轮次 {{actual_turns}} / 最大上限 {{max_turns}}）
+4. 错误标签：{{judge_error_tags}}
+5. 评测裁判理由（各裁判模型的归因说明）：
+{{judge_reasons}}
+6. 规则硬校验失败项：
+{{rule_failures}}
+
+# Expected Answer（预期口径）
+{{expected_answer}}
+
+# Dialogue History（本次完整对话）
+{{chat_history}}
+
+# Your Last Answer（你最后一轮的回答）
+{{final_answer}}
+
+# Self-Check Requirements（自检要求）
+请逐条对照【评测裁判理由】与【预期口径】，检查你刚才的回答，并说明：
+1. 你认为哪一步出了问题（数据取错、口径偏差、上下文丢失、越权回答、话术违规等）；
+2. 问题可能的直接原因（如查询条件错误、信息缺失未澄清、对用户意图理解偏差、取数口径选择错误等）；
+3. 如果重新回答这个问题，你会如何修正。
+
+请直接给出自检结论，不要编造对话中不存在的数据；如果对照后你认为自己没有出错，请说明你的依据。"""
 
 CASE_AUTHOR_DEFAULT_CONTENT = """# Role
 你是一名「问账测试用例编写助手」。请依据用户需求、业务口径资产与相似历史用例，生成一条可直接录入系统的测试用例草稿。
@@ -171,6 +201,13 @@ async def seed_builtin_prompts(db: AsyncSession) -> list[str]:
             "description": "依据用户描述、业务口径与相似用例生成用例草稿，只输出语义字段。",
             "template_type": TemplateType.CASE_AUTHOR,
             "content": CASE_AUTHOR_DEFAULT_CONTENT,
+        },
+        {
+            "code": "SELF_CHECK_DEFAULT",
+            "name": "默认失败追问自检模板",
+            "description": "LLM 裁决判失败后，在同一会话内向被测 Agent 追问自检原因，注入裁判理由等上下文。",
+            "template_type": TemplateType.SELF_CHECK,
+            "content": SELF_CHECK_DEFAULT_CONTENT,
         },
     ]
     created: list[str] = []

@@ -152,6 +152,7 @@ async def build_execution_detail(
         diagnostics=record.diagnostics,
         grader_version=record.grader_version,
         as_of=record.as_of,
+        self_check=record.self_check,
         raw_request_response=raw_payloads,
     )
 

@@ -133,6 +133,7 @@ const batchForm = reactive({
   retry_on_env_error: true,
   max_env_retries: 2,
   retry_backoff_seconds: 3,
+  enable_self_check: false,
   auto_start: true,
   schedule: defaultSchedule(),
 })
@@ -413,6 +414,7 @@ function openBatch(): void {
   batchForm.retry_on_env_error = true
   batchForm.max_env_retries = 2
   batchForm.retry_backoff_seconds = 3
+  batchForm.enable_self_check = false
   batchForm.auto_start = true
   batchForm.schedule = defaultSchedule()
   batchOpen.value = true
@@ -449,6 +451,7 @@ async function submitBatch(): Promise<void> {
       retry_on_env_error: batchForm.retry_on_env_error,
       max_env_retries: batchForm.max_env_retries,
       retry_backoff_seconds: batchForm.retry_backoff_seconds,
+      enable_self_check: batchForm.enable_self_check,
       ...schedulePayload(normalizeSchedule(batchForm.schedule)),
       auto_start: batchForm.schedule.type === 'IMMEDIATE' && batchForm.auto_start,
     })
@@ -832,6 +835,20 @@ onMounted(() => {
             </div>
           </div>
         </div>
+        <label class="flex items-start gap-2 text-sm text-slate-700">
+          <input
+            v-model="batchForm.enable_self_check"
+            type="checkbox"
+            class="mt-0.5 h-4 w-4 rounded border-slate-300 bg-white"
+          />
+          <span>
+            失败追问自检
+            <span class="block text-[11px] text-slate-500">
+              LLM 裁决判失败的用例，会在同一会话内追加一轮追问，让被测 Agent
+              自查错误原因并留存自检结论。
+            </span>
+          </span>
+        </label>
         <label
           v-if="batchForm.schedule.type === 'IMMEDIATE'"
           class="flex items-center gap-2 text-sm text-slate-700"

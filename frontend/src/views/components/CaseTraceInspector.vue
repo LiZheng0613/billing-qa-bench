@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import EmptyState from '../../components/EmptyState.vue'
 import JsonViewer from '../../components/JsonViewer.vue'
 import StatusPill from '../../components/StatusPill.vue'
-import type { ExecutionDetail, JudgeResult, TurnTrace } from '../../types'
+import type { ExecutionDetail, JudgeResult, SelfCheckResult, TurnTrace } from '../../types'
 import {
   formatDateTime,
   formatMs,
@@ -16,20 +16,37 @@ import {
 import { copyText } from '../../utils/clipboard'
 import { useToastStore } from '../../stores/toast'
 
-const props = defineProps<{ detail: ExecutionDetail | null; loading: boolean }>()
+const props = defineProps<{
+  detail: ExecutionDetail | null
+  loading: boolean
+  /** 初始展示页签（调试完成跳转带 tab=selfcheck 时直接落在「追问自检」） */
+  initialTab?: string | null
+}>()
 
 const toast = useToastStore()
 
-type TabKey = 'turns' | 'judges' | 'contract' | 'rules' | 'snapshot' | 'raw'
+type TabKey = 'turns' | 'judges' | 'contract' | 'rules' | 'selfcheck' | 'snapshot' | 'raw'
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'turns', label: '对话轮次' },
   { key: 'judges', label: '裁判明细' },
   { key: 'contract', label: '契约判分' },
   { key: 'rules', label: '规则校验' },
+  { key: 'selfcheck', label: '追问自检' },
   { key: 'snapshot', label: '用例快照' },
   { key: 'raw', label: '原始报文' },
 ]
 const activeTab = ref<TabKey>('turns')
+
+// 支持从路由参数指定初始页签（如调试完成带 tab=selfcheck）
+watch(
+  () => props.initialTab,
+  (value) => {
+    if (value && TABS.some((tab) => tab.key === value)) {
+      activeTab.value = value as TabKey
+    }
+  },
+  { immediate: true },
+)
 
 interface RuleCheckItem {
   type?: string
@@ -290,11 +307,51 @@ const failedFacts = computed(() =>
   contractFacts.value.filter((fact) => fact.passed === false),
 )
 
+/** 失败追问自检记录（任务未开启时为 null，页签隐藏） */
+const selfCheck = computed<SelfCheckResult | null>(() => props.detail?.self_check ?? null)
+
+const SELF_CHECK_STATUS_LABELS: Record<string, string> = {
+  DONE: '已追问',
+  SKIPPED: '未触发',
+  ERROR: '追问失败',
+}
+
+const selfCheckStatusLabel = computed(() => {
+  const raw = selfCheck.value?.status
+  return raw ? (SELF_CHECK_STATUS_LABELS[raw] ?? raw) : null
+})
+
+const selfCheckStatusClass = computed(() => {
+  const status = selfCheck.value?.status
+  if (status === 'DONE') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  if (status === 'ERROR') return 'bg-rose-50 text-rose-700 border-rose-200'
+  return 'bg-slate-100 text-slate-600 border-slate-200'
+})
+
+/** 自检结论 / 跳过原因 / 错误信息的统一展示文本 */
+const selfCheckBody = computed(() => {
+  const record = selfCheck.value
+  if (!record) return null
+  if (record.status === 'DONE') return record.conclusion || '（Agent 未给出自检结论）'
+  return record.skip_reason || record.error || null
+})
+
+const selfCheckPromptOpen = ref(false)
+
+watch(
+  () => props.detail?.id,
+  () => {
+    selfCheckPromptOpen.value = false
+  },
+)
+
 const visibleTabs = computed(() =>
   TABS.filter((tab) => {
     // 契约判分与规则硬校验互斥：契约模式只看契约判分，4 维评分模式只看规则校验。
     if (tab.key === 'contract') return contractGrading.value !== null
     if (tab.key === 'rules') return props.detail?.grading_mode !== 'ANSWER_CONTRACT'
+    // 追问自检仅在任务开启自检且留下记录时展示。
+    if (tab.key === 'selfcheck') return selfCheck.value !== null
     return true
   }),
 )
@@ -335,7 +392,10 @@ function toggleAllTurns(): void {
 watch(
   () => props.detail?.id,
   () => {
-    activeTab.value = 'turns'
+    // 初始页签优先（调试完成带 tab=selfcheck）；否则沿用原有行为回到对话轮次
+    const initial = props.initialTab
+    activeTab.value =
+      initial && TABS.some((tab) => tab.key === initial) ? (initial as TabKey) : 'turns'
     collapsedTurnIds.value = new Set()
   },
 )
@@ -1177,6 +1237,72 @@ function turnRequestKeys(turn: TurnTrace): string[] {
             v-else
             title="没有规则硬校验"
             description="该用例未配置金额 / 笔数 / 日期 / 关键词规则。"
+          />
+        </template>
+
+        <template v-else-if="activeTab === 'selfcheck'">
+          <div v-if="selfCheck" class="space-y-3">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <div class="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                <span
+                  class="rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                  :class="selfCheckStatusClass"
+                >
+                  {{ selfCheckStatusLabel }}
+                </span>
+                <span v-if="selfCheck.trigger">触发原因：{{ selfCheck.trigger }}</span>
+                <span v-if="selfCheck.session_id">会话：{{ selfCheck.session_id }}</span>
+                <span v-if="selfCheck.template_code">
+                  模板：{{ selfCheck.template_code }}@v{{ selfCheck.template_version ?? '—' }}
+                </span>
+                <span v-if="selfCheck.latency_ms != null">
+                  追问时延：{{ formatMs(selfCheck.latency_ms) }}
+                </span>
+                <span v-if="selfCheck.performed_at">时间：{{ formatDateTime(selfCheck.performed_at) }}</span>
+              </div>
+              <p
+                v-for="(note, index) in selfCheck.notes ?? []"
+                :key="index"
+                class="mt-1 text-[11px] text-amber-600"
+              >
+                {{ note }}
+              </p>
+            </div>
+
+            <div class="rounded-xl border border-slate-200 p-3">
+              <p class="label">{{ selfCheck.status === 'DONE' ? 'Agent 自检结论' : '说明' }}</p>
+              <p class="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                {{ selfCheckBody }}
+              </p>
+            </div>
+
+            <div v-if="selfCheck.prompt" class="rounded-xl border border-slate-200 p-3">
+              <button
+                class="flex w-full items-center justify-between text-left"
+                @click="selfCheckPromptOpen = !selfCheckPromptOpen"
+              >
+                <span class="label">追问 Prompt（渲染后）</span>
+                <span class="text-xs text-slate-500">{{ selfCheckPromptOpen ? '收起' : '展开' }}</span>
+              </button>
+              <pre
+                v-if="selfCheckPromptOpen"
+                class="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-2 font-mono text-xs text-slate-700"
+              >{{ selfCheck.prompt }}</pre>
+            </div>
+
+            <div
+              v-if="selfCheck.request_payload || selfCheck.response_raw"
+              class="grid gap-3 lg:grid-cols-2"
+            >
+              <JsonViewer :value="selfCheck.request_payload ?? {}" label="追问请求" max-height="260px" />
+              <JsonViewer :value="selfCheck.response_raw ?? {}" label="追问响应" max-height="260px" />
+            </div>
+          </div>
+          <EmptyState
+            v-else
+            compact
+            title="没有追问自检记录"
+            description="任务未开启「失败追问自检」，或该用例未触发追问。"
           />
         </template>
 

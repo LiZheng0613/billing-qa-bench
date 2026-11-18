@@ -90,6 +90,18 @@ CASE_STATUS_LABELS: dict[str, str] = {
 
 ERROR_KIND_LABELS: dict[str, str] = {"ENV": "环境异常", "BUSINESS": "业务异常"}
 
+SELF_CHECK_STATUS_LABELS: dict[str, str] = {
+    "DONE": "已追问",
+    "SKIPPED": "未触发",
+    "ERROR": "追问失败",
+}
+
+
+def self_check_status_label(value: str | None) -> str | None:
+    if not value:
+        return None
+    return SELF_CHECK_STATUS_LABELS.get(value, value)
+
 ROOT_CAUSE_LABELS: dict[str, str] = {
     "RETRIEVAL": "取数错误",
     "SYNTHESIS": "答案组织错误",
@@ -150,6 +162,8 @@ TASK_RESULT_COLUMNS: list[tuple[str, str, int]] = [
     ("error_message", "错误信息", 40),
     ("judge_notes", "裁判备注", 40),
     ("final_answer", "最终答案", 50),
+    ("self_check_status", "追问自检状态", 12),
+    ("self_check_conclusion", "追问自检结论", 50),
     ("rule_result", "规则校验结果(JSON)", 32),
     ("judge_result", "聚合裁决结果(JSON)", 32),
     ("answer_grading", "答案契约判分明细(JSON)", 32),

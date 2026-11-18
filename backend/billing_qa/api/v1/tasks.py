@@ -49,6 +49,7 @@ from billing_qa.services.io.execution_excel import (
     review_status_label,
     risk_level_label,
     root_cause_label,
+    self_check_status_label,
     source_label,
     status_label,
 )
@@ -219,6 +220,7 @@ async def create_task(
         retry_on_env_error=payload.retry_on_env_error,
         max_env_retries=payload.max_env_retries,
         retry_backoff_seconds=payload.retry_backoff_seconds,
+        enable_self_check=payload.enable_self_check,
         schedule_type=payload.schedule_type.value,
         scheduled_at=payload.scheduled_at,
         schedule_time=payload.schedule_time,
@@ -459,9 +461,18 @@ async def list_task_runs(
     page_size: int = Query(default=10, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ) -> TaskRunsPage:
-    """返回周期计划每次触发克隆出的批量任务，并附带全量聚合统计。"""
-    await _get_task(db, task_id)
+    """返回计划每次触发/每一轮的批量任务，并附带全量聚合统计。"""
+    task = await _get_task(db, task_id)
     conditions = [BatchTask.schedule_source_id == task_id]
+    # 立即执行的多轮任务：第 1 轮就是任务自身，需要一并纳入历次执行
+    if (
+        max(1, int(task.repeat_rounds or 1)) > 1
+        and task.schedule_type == TaskScheduleType.IMMEDIATE.value
+        and task.started_at is not None
+    ):
+        conditions = [
+            or_(BatchTask.schedule_source_id == task_id, BatchTask.id == task_id)
+        ]
 
     total = (
         await db.execute(select(func.count()).select_from(BatchTask).where(*conditions))
@@ -547,6 +558,7 @@ async def task_metrics(task_id: int, db: AsyncSession = Depends(get_db)) -> Task
 async def task_executions(
     task_id: int,
     status: str | None = None,
+    keyword: str | None = None,
     latest_per_case: bool = Query(
         default=False, description="是否按用例只返回最新一次尝试（批量任务详情用）"
     ),
@@ -565,12 +577,17 @@ async def task_executions(
             .subquery()
         )
         conditions = [ExecutionRecord.id.in_(select(latest_ids.c.max_id))]
-        if status:
-            conditions.append(ExecutionRecord.status == status)
     else:
         conditions = [ExecutionRecord.task_id == task_id]
-        if status:
-            conditions.append(ExecutionRecord.status == status)
+    if status:
+        conditions.append(ExecutionRecord.status == status)
+    if keyword:
+        like = f"%{keyword}%"
+        conditions.append(
+            ExecutionRecord.case_id.in_(
+                select(TestCase.id).where(TestCase.code.ilike(like) | TestCase.name.ilike(like))
+            )
+        )
 
     total = (
         await db.execute(select(func.count()).select_from(ExecutionRecord).where(*conditions))
@@ -800,6 +817,14 @@ async def _collect_task_results(
             None,
         )
         env_id = record.environment_id or task.environment_id
+        self_check = record.self_check if isinstance(record.self_check, dict) else None
+        self_check_conclusion = None
+        if self_check is not None:
+            self_check_conclusion = (
+                self_check.get("conclusion")
+                or self_check.get("skip_reason")
+                or self_check.get("error")
+            )
         rows.append(
             {
                 "execution_id": record.id,
@@ -872,6 +897,10 @@ async def _collect_task_results(
                 "error_message": record.error_message,
                 "judge_notes": _judge_notes(record),
                 "final_answer": final_answer,
+                "self_check_status": self_check_status_label(
+                    str(self_check.get("status")) if self_check is not None else None
+                ),
+                "self_check_conclusion": self_check_conclusion,
                 "rule_result": record.rule_result,
                 "judge_result": record.judge_result,
                 "answer_grading": record.answer_grading,
