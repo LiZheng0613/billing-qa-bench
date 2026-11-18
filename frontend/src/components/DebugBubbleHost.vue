@@ -400,7 +400,7 @@ function viewResult(task: DebugTask): void {
   );
   background-size: 240% 100%;
   background-repeat: no-repeat;
-  animation: bubble-sheen 4s ease-in-out infinite;
+  animation: bubble-sheen 8s ease-in-out infinite;
 }
 
 @keyframes bubble-sheen {
@@ -547,7 +547,7 @@ function viewResult(task: DebugTask): void {
   }
 
   .bubble--running::after {
-    animation-duration: 4s !important;
+    animation-duration: 8s !important;
     animation-iteration-count: infinite !important;
   }
 
