@@ -268,6 +268,7 @@ export const api = {
       scheduled_at?: string | null
       schedule_time?: string | null
       schedule_weekdays?: number[]
+      repeat_rounds?: number
       auto_start?: boolean
     }) => http.post<BatchTask>('/tasks', payload),
     start: (id: number) => http.post<MessageResponse>(`/tasks/${id}/start`),

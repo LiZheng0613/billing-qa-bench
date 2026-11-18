@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 from datetime import datetime
 
 from sqlalchemy import select
@@ -66,9 +67,13 @@ def initial_next_run(
 def clone_for_run(plan: BatchTask, *, current: datetime | None = None) -> BatchTask:
     """把周期计划克隆成一次独立执行的任务。"""
     moment = current or now()
+    total = max(1, int(plan.repeat_rounds or 1))
+    name = f"{plan.name} · {moment:%m-%d %H:%M}"
+    if total > 1:
+        name = f"{name} · 第 1/{total} 轮"
     return BatchTask(
         code=generate_task_code(),
-        name=f"{plan.name} · {moment:%m-%d %H:%M}",
+        name=name,
         description=plan.description,
         status=TaskStatus.PENDING,
         control_state="RUNNING",
@@ -83,7 +88,38 @@ def clone_for_run(plan: BatchTask, *, current: datetime | None = None) -> BatchT
         schedule_type=TaskScheduleType.IMMEDIATE.value,
         schedule_active=False,
         schedule_source_id=plan.id,
+        repeat_rounds=max(1, int(plan.repeat_rounds or 1)),
+        round_index=1,
         created_by=plan.created_by,
+    )
+
+
+def clone_next_round(previous: BatchTask, *, plan_id: int, round_index: int) -> BatchTask:
+    """把已完成的轮次克隆为下一轮，紧随其后串行执行。"""
+    total = max(1, int(previous.repeat_rounds or 1))
+    # 轮次名称始终基于原始任务名，避免「第 2/3 轮 · 第 3/3 轮」逐轮叠加
+    base_name = re.sub(r" · 第 \d+/\d+ 轮$", "", previous.name)
+    return BatchTask(
+        code=generate_task_code(),
+        name=f"{base_name} · 第 {round_index}/{total} 轮",
+        description=previous.description,
+        status=TaskStatus.PENDING,
+        control_state="RUNNING",
+        environment_id=previous.environment_id,
+        case_ids=list(previous.case_ids or []),
+        total_cases=previous.total_cases,
+        concurrency=previous.concurrency,
+        qps_limit=previous.qps_limit,
+        retry_on_env_error=previous.retry_on_env_error,
+        max_env_retries=previous.max_env_retries,
+        retry_backoff_seconds=previous.retry_backoff_seconds,
+        schedule_type=TaskScheduleType.IMMEDIATE.value,
+        schedule_active=False,
+        schedule_source_id=plan_id,
+        repeat_rounds=total,
+        round_index=round_index,
+        round_prev_id=previous.id,
+        created_by=previous.created_by,
     )
 
 
@@ -123,10 +159,28 @@ async def run_due_tasks(reference: datetime | None = None) -> list[int]:
 
         for plan in rows:
             if plan.schedule_type == TaskScheduleType.SCHEDULED.value:
-                # 一次性计划：到点直接用当前任务执行，之后不再触发
+                total = max(1, int(plan.repeat_rounds or 1))
                 plan.next_run_at = None
                 plan.last_run_at = current
                 plan.schedule_active = False
+                if total > 1:
+                    # 连续多轮：计划行本身只保留配置，第一轮也克隆成独立执行
+                    run = clone_for_run(plan, current=current)
+                    db.add(run)
+                    await db.flush()
+                    plan.status = TaskStatus.COMPLETED
+                    plan.control_state = "FINISHED"
+                    await db.commit()
+                    if await scheduler.start(run.id):
+                        started.append(run.id)
+                        logger.info(
+                            "连续多轮计划已启动第 1/%d 轮 plan=%s run=%s",
+                            total,
+                            plan.id,
+                            run.id,
+                        )
+                    continue
+                # 一次性计划：到点直接用当前任务执行，之后不再触发
                 plan.status = TaskStatus.PENDING
                 await db.commit()
                 if await scheduler.start(plan.id):
@@ -210,6 +264,8 @@ class ScheduleDispatcher:
         while True:
             try:
                 await self.tick()
+                # 自愈：恢复中断/未启动的连续轮次链
+                await scheduler.resume_round_chains()
             except asyncio.CancelledError:
                 raise
             except Exception:

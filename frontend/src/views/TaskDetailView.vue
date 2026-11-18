@@ -65,6 +65,41 @@ function isPeriodic(task: BatchTask): boolean {
   return ['DAILY', 'WEEKLY'].includes(task.schedule_type)
 }
 
+/** 需要以「计划 + 历次执行」视角展示：周期计划，或连续多轮任务。 */
+function isMultiRunRoot(task: BatchTask): boolean {
+  return isPeriodic(task) || (task.repeat_rounds ?? 1) > 1
+}
+
+const isSchedulePlan = computed(
+  () => Boolean(plan.value && plan.value.schedule_type !== 'IMMEDIATE'),
+)
+const planHeading = computed(() => {
+  const current = plan.value
+  if (!current) return '批量任务'
+  if (isPeriodic(current)) return '周期计划'
+  if (current.schedule_type === 'SCHEDULED') return '定时计划'
+  return '连续多轮任务'
+})
+const planRounds = computed(() => Math.max(1, plan.value?.repeat_rounds ?? 1))
+const planHint = computed(() => {
+  const current = plan.value
+  if (!current) return ''
+  if (!isSchedulePlan.value) {
+    return planRounds.value > 1
+      ? `连续 ${planRounds.value} 轮执行：每轮跑完后立即自动开始下一轮，各轮独立保留结果。`
+      : '创建后立即开始执行。'
+  }
+  if (planActive.value) {
+    return isPeriodic(current)
+      ? `计划生效中，到点会连续执行 ${planRounds.value} 轮：上一轮结束后立即开始下一轮。`
+      : `计划生效中，到点后自动连续执行 ${planRounds.value} 轮：上一轮结束后立即开始下一轮。`
+  }
+  if (current.last_run_at) {
+    return `计划已触发${planRounds.value > 1 ? `，连续执行 ${planRounds.value} 轮` : ''}；历史执行见下方列表，可查看每一轮结果。`
+  }
+  return '计划已停止，不再自动触发；启用后可手动立即执行，已生成的历史执行不受影响。'
+})
+
 function planTypeLabel(type: BatchTask['schedule_type']): string {
   if (type === 'DAILY') return '每天定时'
   if (type === 'WEEKLY') return '每周定时'
@@ -154,7 +189,7 @@ async function loadRoot(): Promise<void> {
   notFound.value = false
   try {
     const detail = await api.tasks.get(id)
-    if (isPeriodic(detail)) {
+    if (isMultiRunRoot(detail)) {
       plan.value = detail
       runsPage.value = 1
       selectedRunId.value = null
@@ -458,6 +493,19 @@ async function runPlanNow(): Promise<void> {
   }
 }
 
+async function startRootTask(): Promise<void> {
+  if (!plan.value) return
+  try {
+    await api.tasks.start(plan.value.id)
+    toast.success('任务已启动')
+    plan.value = await api.tasks.get(plan.value.id)
+    runsPage.value = 1
+    await loadRuns(true)
+  } catch (exc) {
+    reportError(exc)
+  }
+}
+
 async function togglePlan(active: boolean): Promise<void> {
   if (!plan.value) return
   try {
@@ -571,47 +619,67 @@ onBeforeUnmount(() => {
         <header class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
-              <h2 class="text-sm font-semibold text-slate-900">周期计划</h2>
-              <span class="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] text-sky-700">
+              <h2 class="text-sm font-semibold text-slate-900">{{ planHeading }}</h2>
+              <span
+                v-if="isSchedulePlan"
+                class="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] text-sky-700"
+              >
                 {{ planTypeLabel(plan.schedule_type) }}
+              </span>
+              <span
+                v-if="planRounds > 1"
+                class="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-700"
+              >
+                连续 {{ planRounds }} 轮
               </span>
               <StatusPill
                 :status="plan.status"
-                :label="planActive ? null : '已停止'"
+                :label="planActive || plan.status !== 'ABORTED' ? null : '已停止'"
               />
             </div>
             <p class="mt-1 text-xs text-slate-600">{{ taskScheduleLabel(plan) }}</p>
-            <p class="mt-0.5 text-[11px] text-slate-500">
-              {{
-                planActive
-                  ? '计划生效中，到点会自动生成一次独立的批量执行。'
-                  : '计划已停止，不再自动触发；启用后可手动立即执行，已生成的历史执行不受影响。'
-              }}
-            </p>
+            <p class="mt-0.5 text-[11px] text-slate-500">{{ planHint }}</p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <button v-if="planActive" class="btn-primary btn-xs" @click="runPlanNow">
+            <button v-if="isSchedulePlan && planActive" class="btn-primary btn-xs" @click="runPlanNow">
               立即执行
             </button>
-            <button v-if="!planActive" class="btn-ghost btn-xs" @click="togglePlan(true)">
+            <button
+              v-if="!isSchedulePlan && plan.status === 'PENDING'"
+              class="btn-primary btn-xs"
+              @click="startRootTask"
+            >
+              启动
+            </button>
+            <button
+              v-if="isSchedulePlan && !planActive && plan.status === 'ABORTED'"
+              class="btn-ghost btn-xs"
+              @click="togglePlan(true)"
+            >
               启用计划
             </button>
-            <button v-if="planActive" class="btn-danger btn-xs" @click="stopPlan">
+            <button v-if="isSchedulePlan && planActive" class="btn-danger btn-xs" @click="stopPlan">
               停止计划
             </button>
           </div>
         </header>
         <div class="grid grid-cols-2 gap-4 px-5 py-4 sm:grid-cols-3 xl:grid-cols-6">
-          <div>
+          <div v-if="isSchedulePlan">
             <p class="text-[10px] uppercase tracking-wider text-slate-500">下次触发</p>
             <p class="mt-0.5 text-sm font-medium tabular-nums text-slate-900">
               {{ planActive ? formatDateTime(plan.next_run_at) : '—' }}
             </p>
           </div>
-          <div>
+          <div v-if="isSchedulePlan">
             <p class="text-[10px] uppercase tracking-wider text-slate-500">上次触发</p>
             <p class="mt-0.5 text-sm font-medium tabular-nums text-slate-900">
               {{ formatDateTime(plan.last_run_at) }}
+            </p>
+          </div>
+          <div v-else>
+            <p class="text-[10px] uppercase tracking-wider text-slate-500">开始时间</p>
+            <p class="mt-0.5 text-sm font-medium tabular-nums text-slate-900">
+              {{ formatDateTime(plan.started_at) }}
             </p>
           </div>
           <div>
@@ -674,7 +742,7 @@ onBeforeUnmount(() => {
           <div>
             <h2 class="panel-title">历次执行</h2>
             <p class="mt-0.5 text-[11px] text-slate-500">
-              共 {{ runsTotal }} 次触发；选择一次执行查看该批次的逐用例结果
+              共 {{ runsTotal }} 次执行；选择一次执行查看该批次的逐用例结果
             </p>
           </div>
           <span v-if="runsLoading" class="text-[11px] text-slate-500">加载中…</span>
@@ -701,9 +769,17 @@ onBeforeUnmount(() => {
                 @click="selectRun(run.id)"
               >
                 <td class="td">
-                  <p class="max-w-[240px] truncate text-sm font-medium text-slate-800">
-                    {{ run.name }}
-                  </p>
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    <p class="max-w-[240px] truncate text-sm font-medium text-slate-800">
+                      {{ run.name }}
+                    </p>
+                    <span
+                      v-if="(run.repeat_rounds ?? 1) > 1"
+                      class="tag border-indigo-200 bg-indigo-50 text-indigo-700"
+                    >
+                      第 {{ run.round_index }}/{{ run.repeat_rounds }} 轮
+                    </span>
+                  </div>
                   <p class="mt-0.5 font-mono text-[11px] text-slate-500">{{ run.code }}</p>
                 </td>
                 <td class="td"><StatusPill :status="run.status" size="sm" /></td>
@@ -732,7 +808,7 @@ onBeforeUnmount(() => {
             v-if="!runsLoading && runs.length === 0"
             compact
             title="还没有执行过"
-            description="计划生效时点击「立即执行」或等待到点触发；每次触发都会生成一个独立批次。"
+            description="到点触发或手动执行后，每次执行（每轮）都会生成一个独立批次。"
           />
         </div>
         <div

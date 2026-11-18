@@ -451,6 +451,79 @@ async def test_task_create_requires_case_selection(client: httpx.AsyncClient) ->
     assert "至少选择一条用例" in response.json()["message"]
 
 
+async def test_task_repeat_rounds_create_and_validation(client: httpx.AsyncClient) -> None:
+    """连续多轮：所有执行方式都支持设置轮次。"""
+    cases = (await client.get("/cases", params={"page_size": 200})).json()
+    target = next(item for item in cases["items"] if item["code"] == "DEMO-SINGLE-001")
+    moment = (datetime.now() + timedelta(hours=2)).replace(microsecond=0)
+    created = await client.post(
+        "/tasks",
+        json={
+            "name": f"pytest 连续三轮 {uuid.uuid4().hex[:6]}",
+            "case_ids": [target["id"]],
+            "schedule_type": "SCHEDULED",
+            "scheduled_at": moment.isoformat(),
+            "repeat_rounds": 3,
+            "auto_start": False,
+            "concurrency": 1,
+            "qps_limit": 2,
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    task_id = body["id"]
+    immediate_id: int | None = None
+    try:
+        assert body["repeat_rounds"] == 3
+        assert body["round_index"] == 1
+        assert body["schedule_type"] == "SCHEDULED"
+
+        # 立即执行同样支持连续轮次
+        immediate = await client.post(
+            "/tasks",
+            json={
+                "name": f"pytest 立即多轮 {uuid.uuid4().hex[:6]}",
+                "case_ids": [target["id"]],
+                "schedule_type": "IMMEDIATE",
+                "repeat_rounds": 2,
+                "auto_start": False,
+            },
+        )
+        assert immediate.status_code == 200, immediate.text
+        immediate_id = immediate.json()["id"]
+        assert immediate.json()["repeat_rounds"] == 2
+
+        # 每天定时同样支持连续轮次
+        daily = await client.post(
+            "/tasks",
+            json={
+                "name": f"pytest 每日多轮 {uuid.uuid4().hex[:6]}",
+                "case_ids": [target["id"]],
+                "schedule_type": "DAILY",
+                "schedule_time": "09:00",
+                "repeat_rounds": 4,
+                "auto_start": False,
+            },
+        )
+        assert daily.status_code == 200, daily.text
+        daily_id = daily.json()["id"]
+        try:
+            assert daily.json()["repeat_rounds"] == 4
+        finally:
+            async with SessionLocal() as db:
+                await db.execute(delete(BatchTask).where(BatchTask.id == daily_id))
+                await db.commit()
+
+        detail = (await client.get(f"/tasks/{task_id}")).json()
+        assert detail["repeat_rounds"] == 3
+        assert detail["round_index"] == 1
+    finally:
+        async with SessionLocal() as db:
+            ids = [task_id] + ([immediate_id] if immediate_id else [])
+            await db.execute(delete(BatchTask).where(BatchTask.id.in_(ids)))
+            await db.commit()
+
+
 async def test_sandbox_template_type_guard(client: httpx.AsyncClient) -> None:
     prompts = (await client.get("/prompts", params={"page_size": 200})).json()
     simulator = next(item for item in prompts["items"] if item["code"] == "SIM_DEFAULT_BILLING_USER")

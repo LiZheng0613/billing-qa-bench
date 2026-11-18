@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from billing_qa.core.control_store import control_store
 from billing_qa.core.event_bus import event_bus
@@ -259,6 +261,11 @@ class BatchScheduler:
                 )
                 await self._publish_status(task)
             logger.info("任务结束 task=%s aborted=%s", task_id, aborted)
+            if not aborted:
+                try:
+                    await self._start_next_round(task_id)
+                except Exception:
+                    logger.exception("连续轮次启动失败 task=%s", task_id)
         except asyncio.CancelledError:
             logger.warning("任务调度被取消 task=%s", task_id)
             raise
@@ -280,6 +287,145 @@ class BatchScheduler:
     # ------------------------------------------------------------------ #
     # 数据加载与事件
     # ------------------------------------------------------------------ #
+    ROUND_CHAIN_ATTEMPTS = 3
+    # 恢复扫描只兜底「内联补链已失败且超过宽限期」的链，避免与刚完成的正常补链重复
+    ROUND_CHAIN_GRACE_SECONDS = 60
+
+    async def _start_next_round(self, task_id: int) -> None:
+        """正常完成后发起下一轮；创建/启动失败会退避重试。
+
+        重试仍失败时不丢链：下一轮任务已落库为 PENDING，由后台
+        :meth:`resume_round_chains` 继续自愈。
+        """
+        for attempt in range(1, self.ROUND_CHAIN_ATTEMPTS + 1):
+            try:
+                run_id = await self._ensure_next_round(task_id)
+            except Exception:
+                logger.exception(
+                    "连续轮次创建失败 task=%s（第 %d/%d 次）",
+                    task_id,
+                    attempt,
+                    self.ROUND_CHAIN_ATTEMPTS,
+                )
+            else:
+                if run_id is None:
+                    return
+                status = await self._round_status(run_id)
+                if status != TaskStatus.PENDING.value:
+                    # 下一轮已执行过（重跑/恢复扫描的重复触发），不重复拉起
+                    return
+                if self.is_running(run_id) or await self.start(run_id):
+                    logger.info("连续轮次已启动 task=%s", run_id)
+                    return
+                logger.warning(
+                    "连续轮次启动未成功，稍后重试 task=%s（第 %d/%d 次）",
+                    run_id,
+                    attempt,
+                    self.ROUND_CHAIN_ATTEMPTS,
+                )
+            if attempt < self.ROUND_CHAIN_ATTEMPTS:
+                await asyncio.sleep(min(2 ** (attempt - 1), 8))
+        logger.error("连续轮次自愈未成功，等待后台恢复扫描 task=%s", task_id)
+
+    async def _ensure_next_round(self, task_id: int) -> int | None:
+        """幂等派生下一轮：已存在则直接复用；无需派生时返回 None。"""
+        # 延迟导入避免与 schedule 模块（其顶部导入 scheduler）形成循环依赖
+        from billing_qa.services.engine.schedule import clone_next_round
+
+        async with SessionLocal() as db:
+            task = await db.get(BatchTask, task_id)
+            if task is None or task.status != TaskStatus.COMPLETED:
+                return None
+            total = max(1, int(task.repeat_rounds or 1))
+            current_index = max(1, int(task.round_index or 1))
+            if current_index >= total:
+                return None
+            existing = (
+                await db.execute(
+                    select(BatchTask.id).where(BatchTask.round_prev_id == task.id)
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return int(existing)
+            plan_id = task.schedule_source_id or task.id
+            clone = clone_next_round(task, plan_id=plan_id, round_index=current_index + 1)
+            db.add(clone)
+            try:
+                await db.commit()
+            except IntegrityError:
+                # 并发补链（重试/恢复扫描）已创建，复用已有记录
+                await db.rollback()
+                existing = (
+                    await db.execute(
+                        select(BatchTask.id).where(BatchTask.round_prev_id == task.id)
+                    )
+                ).scalar_one_or_none()
+                if existing is None:
+                    raise
+                return int(existing)
+            logger.info(
+                "连续轮次已派生：task=%s 第 %d/%d 轮 → %s",
+                task.id,
+                current_index + 1,
+                total,
+                clone.id,
+            )
+            return int(clone.id)
+
+    @staticmethod
+    async def _round_status(run_id: int) -> str | None:
+        async with SessionLocal() as db:
+            return await db.scalar(select(BatchTask.status).where(BatchTask.id == run_id))
+
+    async def resume_round_chains(self, *, limit: int = 20) -> list[int]:
+        """后台自愈：恢复中断的连续轮次链。
+
+        覆盖两类故障：
+        1. 下一轮已创建但启动失败 / 服务重启，任务停在 PENDING；
+        2. 上一轮已完成，但创建下一轮时进程异常退出，链中断。
+        """
+        started: list[int] = []
+        async with SessionLocal() as db:
+            pending_ids = (
+                await db.execute(
+                    select(BatchTask.id)
+                    .where(
+                        BatchTask.round_prev_id.is_not(None),
+                        BatchTask.status == TaskStatus.PENDING.value,
+                    )
+                    .order_by(BatchTask.id)
+                    .limit(limit)
+                )
+            ).scalars().all()
+        for run_id in pending_ids:
+            if await self.start(int(run_id)):
+                started.append(int(run_id))
+                logger.info("恢复扫描：已启动待执行的轮次 task=%s", run_id)
+
+        child_table = aliased(BatchTask)
+        child_exists = exists().where(child_table.round_prev_id == BatchTask.id)
+        grace_deadline = datetime.now() - timedelta(seconds=self.ROUND_CHAIN_GRACE_SECONDS)
+        async with SessionLocal() as db:
+            stalled_ids = (
+                await db.execute(
+                    select(BatchTask.id)
+                    .where(
+                        BatchTask.status == TaskStatus.COMPLETED.value,
+                        BatchTask.repeat_rounds > BatchTask.round_index,
+                        BatchTask.finished_at.is_not(None),
+                        BatchTask.finished_at < grace_deadline,
+                        ~child_exists,
+                    )
+                    .order_by(BatchTask.id)
+                    .limit(limit)
+                )
+            ).scalars().all()
+        for task_id in stalled_ids:
+            if not self.is_running(int(task_id)):
+                logger.warning("恢复扫描：轮次链中断，补派生下一轮 task=%s", task_id)
+                await self._start_next_round(int(task_id))
+        return started
+
     async def _select_case_ids(
         self, db: AsyncSession, task: BatchTask, retry_failed: bool
     ) -> list[int]:

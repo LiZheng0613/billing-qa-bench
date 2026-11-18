@@ -19,7 +19,12 @@ from billing_qa.db.session import SessionLocal
 from billing_qa.models.enums import TaskScheduleType, TaskStatus
 from billing_qa.models.task import BatchTask
 from billing_qa.schemas.task import TaskCreate
-from billing_qa.services.engine.schedule import clone_for_run, run_due_tasks
+from billing_qa.services.engine.schedule import (
+    clone_for_run,
+    clone_next_round,
+    run_due_tasks,
+)
+from billing_qa.services.engine.scheduler import scheduler
 
 MONDAY = datetime(2026, 11, 16)  # 2026-11-16 是周一
 
@@ -172,6 +177,445 @@ def test_clone_for_run_isolates_history() -> None:
     assert run.created_by == "admin"
     assert run.next_run_at is None
     assert "11-17 09:00" in run.name
+
+
+def test_clone_for_run_marks_first_round_for_multi_round_plan() -> None:
+    plan = BatchTask(
+        id=43,
+        code="PLAN-2",
+        name="指定时间三轮",
+        status=TaskStatus.SCHEDULED,
+        control_state="RUNNING",
+        case_ids=[1],
+        total_cases=1,
+        schedule_type=TaskScheduleType.SCHEDULED,
+        scheduled_at=datetime(2026, 11, 17, 22, 0),
+        schedule_active=True,
+        repeat_rounds=3,
+        created_by="admin",
+    )
+    run = clone_for_run(plan, current=datetime(2026, 11, 17, 22, 0))
+    assert run.round_index == 1
+    assert run.repeat_rounds == 3
+    assert run.schedule_source_id == 43
+    assert "第 1/3 轮" in run.name
+
+
+def test_clone_next_round_increments_index() -> None:
+    previous = BatchTask(
+        id=7,
+        code="RUN-1",
+        name="回归任务",
+        status=TaskStatus.COMPLETED,
+        control_state="FINISHED",
+        case_ids=[1, 2],
+        total_cases=2,
+        concurrency=2,
+        qps_limit=4,
+        retry_on_env_error=True,
+        max_env_retries=2,
+        retry_backoff_seconds=3,
+        schedule_type=TaskScheduleType.IMMEDIATE,
+        schedule_active=False,
+        schedule_source_id=42,
+        repeat_rounds=3,
+        round_index=1,
+    )
+    clone = clone_next_round(previous, plan_id=42, round_index=2)
+    assert clone.round_index == 2
+    assert clone.repeat_rounds == 3
+    assert clone.schedule_source_id == 42
+    assert clone.round_prev_id == 7
+    assert clone.schedule_type == TaskScheduleType.IMMEDIATE
+    assert clone.schedule_active is False
+    assert clone.status == TaskStatus.PENDING
+    assert clone.case_ids == [1, 2]
+    assert "第 2/3 轮" in clone.name
+
+    # 名称始终基于原始任务名，不逐轮叠加
+    chained = clone_next_round(
+        BatchTask(
+            code="RUN-2",
+            name=f"{previous.name} · 第 2/3 轮",
+            status=TaskStatus.COMPLETED,
+            control_state="FINISHED",
+            case_ids=[1],
+            total_cases=1,
+            schedule_type=TaskScheduleType.IMMEDIATE,
+            schedule_active=False,
+            schedule_source_id=42,
+            repeat_rounds=3,
+            round_index=2,
+        ),
+        plan_id=42,
+        round_index=3,
+    )
+    assert chained.name == f"{previous.name} · 第 3/3 轮"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_chains_next_round(monkeypatch: pytest.MonkeyPatch) -> None:
+    """上一轮正常完成后自动开始下一轮，轮次跑满后不再派生。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    code = f"ROUNDS-{uuid.uuid4().hex[:6]}"
+    async with SessionLocal() as db:
+        root = BatchTask(
+            code=code,
+            name="连续三轮",
+            status=TaskStatus.COMPLETED,
+            control_state="FINISHED",
+            case_ids=[1],
+            total_cases=1,
+            schedule_type=TaskScheduleType.IMMEDIATE,
+            schedule_active=False,
+            repeat_rounds=3,
+            round_index=1,
+        )
+        db.add(root)
+        await db.commit()
+        root_id = root.id
+    created: list[int] = []
+    try:
+        await scheduler._start_next_round(root_id)
+        assert len(started) == 1
+        round2_id = started[0]
+        created.append(round2_id)
+        async with SessionLocal() as db:
+            round2 = await db.get(BatchTask, round2_id)
+            assert round2 is not None
+            assert round2.round_index == 2
+            assert round2.repeat_rounds == 3
+            assert round2.schedule_source_id == root_id
+            # 模拟第二轮跑完
+            round2.status = TaskStatus.COMPLETED
+            await db.commit()
+
+        await scheduler._start_next_round(round2_id)
+        assert len(started) == 2
+        round3_id = started[1]
+        created.append(round3_id)
+        async with SessionLocal() as db:
+            round3 = await db.get(BatchTask, round3_id)
+            assert round3 is not None
+            assert round3.round_index == 3
+            assert round3.repeat_rounds == 3
+            round3.status = TaskStatus.COMPLETED
+            await db.commit()
+
+        # 最后一轮完成后不再派生新轮次
+        await scheduler._start_next_round(round3_id)
+        assert len(started) == 2
+    finally:
+        await _cleanup(root_id, *created)
+
+
+async def _complete_root(rounds: int, name: str = "连续多轮") -> int:
+    async with SessionLocal() as db:
+        root = BatchTask(
+            code=f"{name}-{uuid.uuid4().hex[:6]}",
+            name=name,
+            status=TaskStatus.COMPLETED,
+            control_state="FINISHED",
+            case_ids=[1],
+            total_cases=1,
+            schedule_type=TaskScheduleType.IMMEDIATE,
+            schedule_active=False,
+            repeat_rounds=rounds,
+            round_index=1,
+            finished_at=datetime.now(),
+        )
+        db.add(root)
+        await db.commit()
+        return int(root.id)
+
+
+@pytest.mark.asyncio
+async def test_start_next_round_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """重复触发（重跑 / 恢复扫描）不会重复派生下一轮。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    root_id = await _complete_root(2)
+    try:
+        await scheduler._start_next_round(root_id)
+        await scheduler._start_next_round(root_id)
+        await scheduler._start_next_round(root_id)
+        async with SessionLocal() as db:
+            children = (
+                (
+                    await db.execute(
+                        select(BatchTask).where(BatchTask.round_prev_id == root_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert len(children) == 1
+        assert children[0].round_index == 2
+        assert children[0].round_prev_id == root_id
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(
+                delete(BatchTask).where(
+                    (BatchTask.round_prev_id == root_id) | (BatchTask.id == root_id)
+                )
+            )
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_start_next_round_retries_after_creation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """创建下一轮 transient 失败时会自动重试并最终成功（自愈）。"""
+    from billing_qa.services.engine import schedule as schedule_module
+
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    real_clone = schedule_module.clone_next_round
+    calls = {"count": 0}
+
+    def flaky_clone(*args: object, **kwargs: object) -> BatchTask:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("模拟创建下一轮失败")
+        return real_clone(*args, **kwargs)
+
+    monkeypatch.setattr(schedule_module, "clone_next_round", flaky_clone)
+    root_id = await _complete_root(2, name="连续多轮重试")
+    try:
+        await scheduler._start_next_round(root_id)
+        assert calls["count"] >= 2
+        assert started, "重试成功后应启动下一轮"
+        async with SessionLocal() as db:
+            children = (
+                (
+                    await db.execute(
+                        select(BatchTask).where(BatchTask.round_prev_id == root_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert len(children) == 1
+        assert children[0].round_index == 2
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(
+                delete(BatchTask).where(
+                    (BatchTask.round_prev_id == root_id) | (BatchTask.id == root_id)
+                )
+            )
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_start_next_round_does_not_rerun_executed_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """对已完成轮次重跑时，不应把已执行过的下一轮再次拉起。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    root_id = await _complete_root(2, name="连续多轮重跑")
+    try:
+        async with SessionLocal() as db:
+            child = BatchTask(
+                code=f"DONE-{uuid.uuid4().hex[:6]}",
+                name="连续多轮重跑 · 第 2/2 轮",
+                status=TaskStatus.COMPLETED,
+                control_state="FINISHED",
+                case_ids=[1],
+                total_cases=1,
+                schedule_type=TaskScheduleType.IMMEDIATE,
+                schedule_active=False,
+                schedule_source_id=root_id,
+                repeat_rounds=2,
+                round_index=2,
+                round_prev_id=root_id,
+            )
+            db.add(child)
+            await db.commit()
+
+        await scheduler._start_next_round(root_id)
+        assert started == []
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(
+                delete(BatchTask).where(
+                    (BatchTask.round_prev_id == root_id) | (BatchTask.id == root_id)
+                )
+            )
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_resume_round_chains_starts_pending_round(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """下一轮已创建但启动失败/重启后停在 PENDING，恢复扫描会拉起。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    root_id = await _complete_root(3, name="连续多轮待恢复")
+    child_id: int | None = None
+    try:
+        async with SessionLocal() as db:
+            child = BatchTask(
+                code=f"PENDING-{uuid.uuid4().hex[:6]}",
+                name="连续多轮待恢复 · 第 2/3 轮",
+                status=TaskStatus.PENDING,
+                control_state="RUNNING",
+                case_ids=[1],
+                total_cases=1,
+                schedule_type=TaskScheduleType.IMMEDIATE,
+                schedule_active=False,
+                schedule_source_id=root_id,
+                repeat_rounds=3,
+                round_index=2,
+                round_prev_id=root_id,
+            )
+            db.add(child)
+            await db.commit()
+            child_id = int(child.id)
+
+        await scheduler.resume_round_chains()
+        async with SessionLocal() as db:
+            child_status = (
+                await db.execute(
+                    select(BatchTask.status).where(BatchTask.id == child_id)
+                )
+            ).scalar_one_or_none()
+        # 由本进程恢复，或已被后台扫描启动
+        assert child_id in started or child_status != TaskStatus.PENDING.value
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(
+                delete(BatchTask).where(
+                    (BatchTask.round_prev_id == root_id) | (BatchTask.id == root_id)
+                )
+            )
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_resume_round_chains_creates_missing_next_round(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """上一轮已完成但下一轮未创建（进程异常），恢复扫描会补齐并启动。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    root_id = await _complete_root(2, name="连续多轮补链")
+    try:
+        # 宽限期外（模拟内联补链已失败一段时间）
+        async with SessionLocal() as db:
+            root = await db.get(BatchTask, root_id)
+            root.finished_at = datetime.now() - timedelta(minutes=5)
+            await db.commit()
+        await scheduler.resume_round_chains()
+        async with SessionLocal() as db:
+            children = (
+                (
+                    await db.execute(
+                        select(BatchTask).where(BatchTask.round_prev_id == root_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert len(children) == 1
+        assert children[0].round_index == 2
+        assert (
+            int(children[0].id) in started
+            or children[0].status != TaskStatus.PENDING.value
+        )
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(
+                delete(BatchTask).where(
+                    (BatchTask.round_prev_id == root_id) | (BatchTask.id == root_id)
+                )
+            )
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_run_due_tasks_clones_first_round_for_multi_round_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """连续多轮的一次性计划：到点先克隆第 1 轮，计划行本身不执行。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr("billing_qa.services.engine.schedule.scheduler.start", fake_start)
+    reference = datetime.now().replace(microsecond=0)
+    code = f"PLAN-ROUNDS-{uuid.uuid4().hex[:6]}"
+    async with SessionLocal() as db:
+        plan = BatchTask(
+            code=code,
+            name="指定时间三轮",
+            status=TaskStatus.SCHEDULED,
+            control_state="RUNNING",
+            case_ids=[1],
+            total_cases=1,
+            schedule_type=TaskScheduleType.SCHEDULED,
+            scheduled_at=reference - timedelta(seconds=5),
+            next_run_at=reference - timedelta(seconds=5),
+            schedule_active=True,
+            repeat_rounds=3,
+        )
+        db.add(plan)
+        await db.commit()
+        plan_id = plan.id
+    try:
+        await run_due_tasks(reference)
+        assert len(started) == 1
+        run_id = started[0]
+        assert run_id != plan_id
+        async with SessionLocal() as db:
+            plan = await db.get(BatchTask, plan_id)
+            run = await db.get(BatchTask, run_id)
+            assert plan is not None and run is not None
+            assert plan.status == TaskStatus.COMPLETED
+            assert plan.schedule_active is False
+            assert plan.next_run_at is None
+            assert plan.last_run_at is not None
+            assert run.schedule_source_id == plan_id
+            assert run.round_index == 1
+            assert run.repeat_rounds == 3
+    finally:
+        await _cleanup(plan_id, *started)
 
 
 async def _cleanup(*task_ids: int) -> None:

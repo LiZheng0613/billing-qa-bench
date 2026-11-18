@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +29,13 @@ class BatchTask(Base, TimestampMixin):
         Index("ix_batch_task_status", "status"),
         Index("ix_batch_task_created", "created_at"),
         Index("ix_batch_task_next_run", "schedule_type", "next_run_at"),
+        # 同一轮的上一轮只能派生一个下一轮，保证自愈/重试幂等
+        Index(
+            "ux_batch_task_round_prev",
+            "round_prev_id",
+            unique=True,
+            postgresql_where=text("round_prev_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -80,6 +88,16 @@ class BatchTask(Base, TimestampMixin):
     schedule_source_id: Mapped[int | None] = mapped_column(
         ForeignKey("batch_task.id", ondelete="SET NULL"),
         comment="由哪个定时计划触发（周期任务每次生成新任务）",
+    )
+    repeat_rounds: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", comment="连续执行轮数（含第一轮）"
+    )
+    round_index: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", comment="当前任务属于第几轮"
+    )
+    round_prev_id: Mapped[int | None] = mapped_column(
+        ForeignKey("batch_task.id", ondelete="SET NULL"),
+        comment="连续轮次上一轮任务 id（用于幂等与自愈）",
     )
 
     created_by: Mapped[str | None] = mapped_column(String(64))

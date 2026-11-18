@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import DateTimePicker from './DateTimePicker.vue'
+import TimePicker from './TimePicker.vue'
 import type { ScheduleFormValue } from '../utils/schedule'
 import {
   SCHEDULE_MODE_OPTIONS,
@@ -37,6 +39,13 @@ function toggleWeekday(day: number): void {
 }
 
 const weekdayText = computed(() => weekdayLabels(props.modelValue.weekdays) || '未选择')
+
+const rounds = computed(() => Math.max(1, props.modelValue.repeatRounds || 1))
+const roundsHint = computed(() =>
+  rounds.value > 1
+    ? `共 ${rounds.value} 轮：上一轮跑完后立即自动开始下一轮`
+    : '1 轮表示只执行一次；大于 1 时按轮次串行连续执行',
+)
 </script>
 
 <template>
@@ -67,35 +76,29 @@ const weekdayText = computed(() => weekdayLabels(props.modelValue.weekdays) || '
 
     <div v-if="value.type === 'SCHEDULED'" class="grid gap-2 sm:max-w-xs">
       <label class="label">执行时间</label>
-      <input
-        :value="value.scheduledAt"
-        class="input"
-        type="datetime-local"
+      <DateTimePicker
+        :model-value="value.scheduledAt"
         :disabled="disabled"
-        @input="patch({ scheduledAt: ($event.target as HTMLInputElement).value })"
+        @update:model-value="patch({ scheduledAt: $event })"
       />
     </div>
 
     <div v-else-if="value.type === 'DAILY'" class="grid gap-2 sm:max-w-[180px]">
       <label class="label">每天执行时刻</label>
-      <input
-        :value="value.time"
-        class="input"
-        type="time"
+      <TimePicker
+        :model-value="value.time"
         :disabled="disabled"
-        @input="patch({ time: ($event.target as HTMLInputElement).value })"
+        @update:model-value="patch({ time: $event })"
       />
     </div>
 
     <div v-else-if="value.type === 'WEEKLY'" class="space-y-2">
       <div class="grid gap-2 sm:max-w-[180px]">
         <label class="label">执行时刻</label>
-        <input
-          :value="value.time"
-          class="input"
-          type="time"
+        <TimePicker
+          :model-value="value.time"
           :disabled="disabled"
-          @input="patch({ time: ($event.target as HTMLInputElement).value })"
+          @update:model-value="patch({ time: $event })"
         />
       </div>
       <div>
@@ -119,6 +122,23 @@ const weekdayText = computed(() => weekdayLabels(props.modelValue.weekdays) || '
         </div>
         <p class="mt-1 text-[10px] text-slate-500">已选：{{ weekdayText }}</p>
       </div>
+    </div>
+
+    <div class="grid gap-2 sm:max-w-xs">
+      <label class="label">连续轮次</label>
+      <div class="flex items-center gap-2">
+        <input
+          :value="rounds"
+          class="input w-24 text-center tabular-nums"
+          type="number"
+          min="1"
+          max="20"
+          :disabled="disabled"
+          @input="patch({ repeatRounds: Number(($event.target as HTMLInputElement).value) || 1 })"
+        />
+        <span class="text-[11px] text-slate-500">轮（含第一轮）</span>
+      </div>
+      <p class="text-[10px] text-slate-500">{{ roundsHint }}</p>
     </div>
 
     <div

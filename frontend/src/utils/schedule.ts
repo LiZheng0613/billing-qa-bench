@@ -9,6 +9,8 @@ export interface ScheduleFormValue {
   time: string
   /** 1=周一 … 7=周日 */
   weekdays: number[]
+  /** 连续执行轮数（含第一轮），1 表示只执行一次 */
+  repeatRounds: number
 }
 
 export const SCHEDULE_MODE_OPTIONS: Array<{
@@ -48,6 +50,7 @@ export function defaultSchedule(): ScheduleFormValue {
     scheduledAt: toDatetimeLocal(next),
     time: '09:00',
     weekdays: [1, 2, 3, 4, 5],
+    repeatRounds: 1,
   }
 }
 
@@ -57,6 +60,7 @@ export function normalizeSchedule(value: ScheduleFormValue): ScheduleFormValue {
     scheduledAt: value.scheduledAt || defaultSchedule().scheduledAt,
     time: value.time || '09:00',
     weekdays: [...new Set(value.weekdays)].sort((a, b) => a - b),
+    repeatRounds: Math.max(1, Math.min(20, Math.round(Number(value.repeatRounds) || 1))),
   }
 }
 
@@ -68,17 +72,19 @@ export function weekdayLabels(days: number[] | null | undefined): string {
 }
 
 export function scheduleSummary(value: ScheduleFormValue): string {
+  const rounds = Math.max(1, value.repeatRounds || 1)
+  const suffix = rounds > 1 ? ` · 连续 ${rounds} 轮` : ''
   switch (value.type) {
     case 'SCHEDULED':
       return value.scheduledAt
-        ? `${value.scheduledAt.replace('T', ' ')} 执行一次`
+        ? `${value.scheduledAt.replace('T', ' ')} 执行一次${suffix}`
         : '请选择执行时间'
     case 'DAILY':
-      return `每天 ${value.time || '--:--'} 执行`
+      return `每天 ${value.time || '--:--'} 执行${suffix}`
     case 'WEEKLY':
-      return `${weekdayLabels(value.weekdays) || '未选择星期'} ${value.time || '--:--'} 执行`
+      return `${weekdayLabels(value.weekdays) || '未选择星期'} ${value.time || '--:--'} 执行${suffix}`
     default:
-      return '创建后立即开始执行'
+      return `创建后立即开始执行${suffix}`
   }
 }
 

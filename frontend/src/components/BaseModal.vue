@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { isConfirmOpen } from '../composables/useConfirm'
+import { hasOpenEscLayer } from '../composables/useEscLayer'
 
 const props = withDefaults(
   defineProps<{
@@ -40,6 +41,8 @@ function close(): void {
 function onKeydown(event: KeyboardEvent): void {
   // 确认弹窗叠在上层时，Esc 由 ConfirmDialog 处理，避免同时关闭两层弹窗
   if (isConfirmOpen()) return
+  // 内层弹层（如自定义日期/时刻选择器）打开时，Esc 只关闭内层，不关闭整个弹窗
+  if (hasOpenEscLayer()) return
   if (event.key === 'Escape' && props.modelValue) close()
 }
 

@@ -174,6 +174,24 @@ function isRecurring(task: BatchTask): boolean {
   return task.schedule_type === 'DAILY' || task.schedule_type === 'WEEKLY'
 }
 
+/** 是否会派生独立执行批次：周期计划，或连续多轮任务。 */
+function hasDerivedRuns(task: BatchTask): boolean {
+  return isRecurring(task) || (task.repeat_rounds ?? 1) > 1
+}
+
+/** 已执行批次数量：立即执行的多轮任务，首轮即任务自身，需要额外 +1。 */
+function executedRunCount(task: BatchTask): number {
+  const derived = task.run_count ?? 0
+  if (
+    (task.repeat_rounds ?? 1) > 1 &&
+    task.schedule_type === 'IMMEDIATE' &&
+    task.started_at
+  ) {
+    return derived + 1
+  }
+  return derived
+}
+
 function progressOf(task: BatchTask): number {
   if (!task.total_cases) return 0
   return Math.min(100, Math.round((task.finished_cases / task.total_cases) * 100))
@@ -427,6 +445,9 @@ onBeforeUnmount(() => {
                 >
                   {{ taskScheduleLabel(item) }}
                 </p>
+                <p v-if="(item.repeat_rounds ?? 1) > 1" class="mt-0.5 text-[10px] text-indigo-600">
+                  连续 {{ item.repeat_rounds }} 轮
+                </p>
               </td>
               <td class="td">
                 <StatusPill
@@ -439,15 +460,15 @@ onBeforeUnmount(() => {
                 </p>
               </td>
               <td class="td">
-                <template v-if="isRecurring(item) && (item.run_count ?? 0) > 0">
+                <template v-if="hasDerivedRuns(item) && executedRunCount(item) > 0">
                   <p class="text-[11px] font-medium text-slate-700">
-                    已执行 {{ item.run_count }} 次
+                    已执行 {{ executedRunCount(item) }} 次
                   </p>
                   <p
                     class="mt-0.5 text-[10px]"
                     :class="planActive(item) ? 'text-sky-700' : 'text-slate-500'"
                   >
-                    {{ planActive(item) ? '计划生效中' : '计划已停止' }} · 详情查看历次执行
+                    {{ planActive(item) ? '计划生效中' : '详情查看历次执行' }}
                   </p>
                 </template>
                 <template v-else-if="planWaiting(item)">

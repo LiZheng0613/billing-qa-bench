@@ -821,6 +821,8 @@ export interface BatchTask {
   last_run_at: string | null
   schedule_active: boolean
   schedule_source_id: number | null
+  repeat_rounds: number
+  round_index: number
   created_by: string | null
   created_at: string
   started_at: string | null

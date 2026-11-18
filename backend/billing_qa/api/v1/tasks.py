@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import task_to_out
@@ -125,7 +125,8 @@ async def list_tasks(
         for env_id, name in (await db.execute(select(Environment.id, Environment.name))).all()
     }
     run_counts: dict[int, int] = {}
-    plan_ids = [item.id for item in rows if item.schedule_type != TaskScheduleType.IMMEDIATE.value]
+    # 顶层任务可能派生出执行：周期计划每次触发一次，连续多轮任务每轮一次
+    plan_ids = [item.id for item in rows]
     if plan_ids:
         count_rows = (
             await db.execute(
@@ -223,6 +224,8 @@ async def create_task(
         schedule_time=payload.schedule_time,
         schedule_weekdays=payload.schedule_weekdays or None,
         schedule_active=True,
+        repeat_rounds=payload.repeat_rounds,
+        round_index=1,
         next_run_at=initial_next_run(
             schedule_type=payload.schedule_type.value,
             scheduled_at=payload.scheduled_at,
@@ -264,9 +267,22 @@ async def _trigger_plan(db: AsyncSession, task: BatchTask) -> BatchTask:
             TaskStatus.RUNNING,
         }:
             raise ConflictError("该一次性计划已执行过，请重新创建或调整计划时间")
+        total = max(1, int(task.repeat_rounds or 1))
         task.schedule_active = False
         task.next_run_at = None
         task.last_run_at = now()
+        if total > 1:
+            # 连续多轮：计划行只保留配置，第一轮也克隆成独立执行
+            run = clone_for_run(task)
+            db.add(run)
+            await db.flush()
+            task.status = TaskStatus.COMPLETED
+            task.control_state = "FINISHED"
+            task.finished_at = now()
+            await db.commit()
+            await db.refresh(run)
+            await scheduler.start(run.id)
+            return run
         task.status = TaskStatus.PENDING
         task.control_state = "RUNNING"
         await db.commit()

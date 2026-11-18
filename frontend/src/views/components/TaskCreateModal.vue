@@ -152,6 +152,7 @@ async function submitCreate(): Promise<void> {
   }
   creating.value = true
   try {
+    const schedule = normalizeSchedule(form.schedule)
     const created = await api.tasks.create({
       name: form.name.trim(),
       description: form.description.trim() || null,
@@ -163,14 +164,16 @@ async function submitCreate(): Promise<void> {
       retry_on_env_error: form.retry_on_env_error,
       max_env_retries: form.max_env_retries,
       retry_backoff_seconds: form.retry_backoff_seconds,
-      ...schedulePayload(normalizeSchedule(form.schedule)),
+      ...schedulePayload(schedule),
+      repeat_rounds: schedule.repeatRounds,
       auto_start: form.schedule.type === 'IMMEDIATE' && form.auto_start,
     })
     const scheduled = created.schedule_type !== 'IMMEDIATE'
+    const rounds = created.repeat_rounds > 1 ? ` · 连续 ${created.repeat_rounds} 轮` : ''
     toast.success(
       scheduled
-        ? `定时任务 ${created.code} 已登记：${scheduleSummary(normalizeSchedule(form.schedule))}`
-        : `任务 ${created.code} 已创建，共 ${created.total_cases} 条用例`,
+        ? `定时任务 ${created.code} 已登记：${scheduleSummary(schedule)}`
+        : `任务 ${created.code} 已创建，共 ${created.total_cases} 条用例${rounds}`,
     )
     close()
     emit('created', created)

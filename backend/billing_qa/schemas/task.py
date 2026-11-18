@@ -36,6 +36,9 @@ class TaskCreate(BaseModel):
     schedule_weekdays: list[int] = Field(
         default_factory=list, description="每周执行的星期，1=周一 … 7=周日"
     )
+    repeat_rounds: int = Field(
+        default=1, ge=1, le=20, description="连续执行轮数（含第一轮），上一轮结束后自动开始下一轮"
+    )
     auto_start: bool = True
 
     @model_validator(mode="after")
@@ -109,6 +112,8 @@ class TaskOut(ORMModel):
     last_run_at: datetime | None
     schedule_active: bool
     schedule_source_id: int | None
+    repeat_rounds: int = 1
+    round_index: int = 1
     created_by: str | None
     created_at: datetime
     started_at: datetime | None
