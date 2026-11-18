@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useToastStore } from '../stores/toast'
+import { copyText } from '../utils/clipboard'
 
 const props = withDefaults(
   defineProps<{
@@ -24,12 +25,9 @@ const text = computed(() => {
 })
 
 async function copy(): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text.value)
-    toast.success('已复制到剪贴板')
-  } catch {
-    toast.error('复制失败，请手动选择文本')
-  }
+  const ok = await copyText(text.value)
+  if (ok) toast.success('已复制到剪贴板')
+  else toast.error('复制失败，请手动选择文本')
 }
 </script>
 
