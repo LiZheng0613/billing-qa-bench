@@ -207,7 +207,16 @@ watch(
             </thead>
             <tbody>
               <tr v-for="item in executions" :key="item.id">
-                <td class="td font-mono text-xs text-slate-500">{{ item.id }}</td>
+                <td class="td">
+                  <button
+                    type="button"
+                    class="font-mono text-xs text-indigo-600 transition hover:text-indigo-800 hover:underline"
+                    title="查看执行详情"
+                    @click="emit('select-execution', item.id)"
+                  >
+                    #{{ item.id }}
+                  </button>
+                </td>
                 <td class="td"><StatusPill :status="item.status" size="sm" /></td>
                 <td class="td tabular-nums">{{ formatScore(item.total_score) }}</td>
                 <td class="td tabular-nums">{{ formatSeconds(msToSeconds(item.latency_ms)) }}</td>

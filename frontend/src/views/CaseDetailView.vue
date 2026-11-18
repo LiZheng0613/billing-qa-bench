@@ -971,7 +971,14 @@ onBeforeUnmount(() => {
                 <tbody>
                   <tr v-for="run in executions" :key="run.id">
                     <td class="td">
-                      <p class="font-mono text-xs text-indigo-600">#{{ run.id }}</p>
+                      <button
+                        type="button"
+                        class="font-mono text-xs text-indigo-600 transition hover:text-indigo-800 hover:underline"
+                        title="查看执行详情"
+                        @click="openTrace(run.id)"
+                      >
+                        #{{ run.id }}
+                      </button>
                       <p v-if="run.task_name" class="mt-0.5 max-w-[160px] truncate text-[11px] text-slate-500">
                         {{ truncate(run.task_name, 20) }}
                       </p>
