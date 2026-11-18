@@ -60,13 +60,15 @@ const sandboxOpen = ref(false)
 const runningSandbox = ref(false)
 const sandboxResult = ref<SandboxResponse | null>(null)
 
-type SandboxMode = 'SIMULATOR' | 'JUDGE' | 'CASE_AUTHOR'
+type SandboxMode = 'SIMULATOR' | 'JUDGE' | 'CASE_AUTHOR' | 'SELF_CHECK'
 
 // 沙盒试跑模式与模型角色一一对应，切换模式时只展示同角色模型。
+// SELF_CHECK 不调用平台模型（仅渲染预览），沿用裁判角色做占位。
 const SANDBOX_MODE_ROLE: Record<SandboxMode, ModelRole> = {
   SIMULATOR: 'SIMULATOR',
   JUDGE: 'JUDGE',
   CASE_AUTHOR: 'CASE_AUTHOR',
+  SELF_CHECK: 'JUDGE',
 }
 
 const sandboxForm = reactive({
@@ -135,6 +137,27 @@ function defaultVariables(mode: SandboxMode): string {
       2,
     )
   }
+  if (mode === 'SELF_CHECK') {
+    return JSON.stringify(
+      {
+        case_name: '（未选择历史执行）',
+        case_type: 'SINGLE',
+        judge_total_score: 0,
+        pass_threshold: 60,
+        termination_status: 'COMPLETED',
+        actual_turns: 0,
+        max_turns: 1,
+        judge_error_tags: '（无）',
+        judge_reasons: '（未产出裁判理由，可绑定一条历史失败执行回放真实理由）',
+        rule_failures: '（本用例未执行规则硬校验）',
+        expected_answer: '（未提供）',
+        chat_history: '（暂无对话）',
+        final_answer: '（无回复）',
+      },
+      null,
+      2,
+    )
+  }
   return JSON.stringify(
     {
       case_type: 'SINGLE',
@@ -168,6 +191,7 @@ async function loadTemplates(): Promise<boolean> {
         | 'USER_SIMULATOR'
         | 'LLM_JUDGE'
         | 'CASE_AUTHOR'
+        | 'SELF_CHECK'
         | undefined,
       keyword: keyword.value.trim() || undefined,
     })
@@ -351,6 +375,7 @@ async function removeTemplate(): Promise<void> {
 function sandboxModeOfTemplate(type?: string | null): SandboxMode {
   if (type === 'USER_SIMULATOR') return 'SIMULATOR'
   if (type === 'CASE_AUTHOR') return 'CASE_AUTHOR'
+  if (type === 'SELF_CHECK') return 'SELF_CHECK'
   return 'JUDGE'
 }
 
@@ -410,7 +435,7 @@ onMounted(() => {
     <PageHeader
       eyebrow="Assets · 提示词"
       title="Prompt 资产"
-      description="用户模拟器、LLM 裁判与 AI 用例编写模板的版本管理、引用影响分析与沙盒试跑。"
+      description="用户模拟器、LLM 裁判、AI 用例编写与失败追问自检模板的版本管理、引用影响分析与沙盒试跑。"
     >
       <template #actions>
         <button class="btn-primary" @click="openCreate">
@@ -433,6 +458,7 @@ onMounted(() => {
               <option value="USER_SIMULATOR">用户模拟器</option>
               <option value="LLM_JUDGE">LLM 裁判</option>
               <option value="CASE_AUTHOR">AI 用例编写</option>
+              <option value="SELF_CHECK">失败追问自检</option>
             </select>
             <button class="btn-ghost btn-xs shrink-0" @click="refreshTemplates">刷新</button>
           </div>
@@ -497,6 +523,7 @@ onMounted(() => {
             <option value="USER_SIMULATOR">用户模拟器（动态多轮）</option>
             <option value="LLM_JUDGE">LLM 裁判（评分）</option>
             <option value="CASE_AUTHOR">AI 用例编写（草稿生成）</option>
+            <option value="SELF_CHECK">失败追问自检（同会话追问）</option>
           </select>
         </div>
         <div>
@@ -620,7 +647,7 @@ onMounted(() => {
     <BaseModal
       v-model="sandboxOpen"
       :title="detail ? `沙盒试用 · ${detail.code}` : '沙盒试用'"
-      subtitle="先渲染模板变量，再调用模拟器/裁判/用例编写模型，验证输出结构与兜底"
+      subtitle="渲染模板变量并按角色试跑；自检模板仅做渲染预览，不调用模型"
       width="xl"
     >
       <div class="grid gap-4 lg:grid-cols-2">
@@ -633,9 +660,10 @@ onMounted(() => {
                 <option value="SIMULATOR">用户模拟器</option>
                 <option value="JUDGE">LLM 裁判</option>
                 <option value="CASE_AUTHOR">AI 用例编写</option>
+                <option value="SELF_CHECK">失败追问自检</option>
               </select>
             </div>
-            <div>
+            <div v-if="sandboxForm.mode !== 'SELF_CHECK'">
               <label class="label">使用模型</label>
               <select v-model="sandboxForm.model_id" class="input">
                 <button><selectedcontent></selectedcontent></button>
@@ -663,7 +691,9 @@ onMounted(() => {
               {{
                 sandboxForm.mode === 'CASE_AUTHOR'
                   ? '留空则使用平台默认变量：用户需求、编写模式、业务口径与相似历史用例。'
-                  : '留空则使用平台默认变量；填写历史执行 ID 时，会先按该次执行快照构建变量。'
+                  : sandboxForm.mode === 'SELF_CHECK'
+                    ? '自检模板仅做渲染预览（不调用模型）；填写历史执行 ID 可回放真实裁判理由与对话上下文。'
+                    : '留空则使用平台默认变量；填写历史执行 ID 时，会先按该次执行快照构建变量。'
               }}
             </p>
           </div>

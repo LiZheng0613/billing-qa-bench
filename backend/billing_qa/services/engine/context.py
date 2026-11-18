@@ -96,6 +96,25 @@ async def resolve_template(
     return template, version_row
 
 
+async def _default_self_check_template_id(db: AsyncSession) -> int | None:
+    """未显式指定模板时，自动选择最近更新的启用「失败追问自检」模板。
+
+    自检模板没有用例级绑定入口：执行时按类型自动取资产，保证用户新建/更新的
+    SELF_CHECK 模板无需额外配置即可生效；没有启用模板时回退内置默认编码。
+    """
+    return (
+        await db.execute(
+            select(PromptTemplate.id)
+            .where(
+                PromptTemplate.template_type == TemplateType.SELF_CHECK,
+                PromptTemplate.is_active.is_(True),
+            )
+            .order_by(PromptTemplate.updated_at.desc(), PromptTemplate.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 async def _load_model(
     db: AsyncSession, model_id: int | None, role: ModelRole
 ) -> ModelContext:
@@ -185,9 +204,13 @@ async def load_execution_context(
         self_check_code = "PROMPT_OVERRIDE"
     else:
         try:
+            # 未在用例快照中指定模板时，按 SELF_CHECK 类型自动选择启用的资产。
+            self_check_template_id = snapshot.get("self_check_template_id")
+            if not self_check_template_id:
+                self_check_template_id = await _default_self_check_template_id(db)
             self_check_tpl, self_check_row = await resolve_template(
                 db,
-                snapshot.get("self_check_template_id"),
+                self_check_template_id,
                 snapshot.get("self_check_template_strategy") or TemplateStrategy.LATEST,
                 snapshot.get("self_check_template_version"),
                 TemplateType.SELF_CHECK,

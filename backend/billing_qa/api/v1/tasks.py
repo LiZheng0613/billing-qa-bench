@@ -890,13 +890,23 @@ async def _collect_task_results(
         )
         env_id = record.environment_id or task.environment_id
         self_check = record.self_check if isinstance(record.self_check, dict) else None
-        self_check_conclusion = None
-        if self_check is not None:
-            self_check_conclusion = (
-                self_check.get("conclusion")
-                or self_check.get("skip_reason")
-                or self_check.get("error")
+        sc = self_check or {}
+        self_check_conclusion = (
+            sc.get("conclusion") or sc.get("skip_reason") or sc.get("error")
+        )
+        template_code = sc.get("template_code")
+        template_version = sc.get("template_version")
+        self_check_template = None
+        if template_code:
+            self_check_template = (
+                f"{template_code}@v{template_version}"
+                if template_version
+                else str(template_code)
             )
+        self_check_notes = (
+            "；".join(str(note) for note in (sc.get("notes") or []) if str(note).strip())
+            or None
+        )
         rows.append(
             {
                 "execution_id": record.id,
@@ -970,9 +980,24 @@ async def _collect_task_results(
                 "judge_notes": _judge_notes(record),
                 "final_answer": final_answer,
                 "self_check_status": self_check_status_label(
-                    str(self_check.get("status")) if self_check is not None else None
+                    str(sc.get("status")) if sc.get("status") else None
                 ),
+                # 内部统计用原始状态码（不单独导出为列）
+                "self_check_status_code": (
+                    str(sc.get("status")) if sc.get("status") else None
+                ),
+                "self_check_trigger": sc.get("trigger"),
+                "self_check_skip_reason": sc.get("skip_reason"),
                 "self_check_conclusion": self_check_conclusion,
+                "self_check_session_id": sc.get("session_id"),
+                "self_check_template": self_check_template,
+                "self_check_latency_ms": sc.get("latency_ms"),
+                "self_check_performed_at": sc.get("performed_at"),
+                "self_check_error": sc.get("error"),
+                "self_check_notes": self_check_notes,
+                "self_check_prompt": sc.get("prompt"),
+                "self_check_request": sc.get("request_payload"),
+                "self_check_response": sc.get("response_raw"),
                 "rule_result": record.rule_result,
                 "judge_result": record.judge_result,
                 "answer_grading": record.answer_grading,

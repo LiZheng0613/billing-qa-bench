@@ -115,6 +115,7 @@ const STATUS_LABELS: Record<string, string> = {
   USER_SIMULATOR: '用户模拟器',
   LLM_JUDGE: 'LLM 裁判',
   CASE_AUTHOR: 'AI 用例编写',
+  SELF_CHECK: '失败追问自检',
   SINGLE: '单轮',
   STATIC_MULTI: '静态多轮',
   DYNAMIC_MULTI: '动态多轮',

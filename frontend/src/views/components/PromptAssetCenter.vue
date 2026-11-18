@@ -103,7 +103,8 @@ const versions = computed(() =>
 
         <p class="mt-4 text-[11px] leading-relaxed text-slate-500">
           模板类型：{{ statusLabel(template.template_type) }}。模拟器模板用于动态多轮的用户代理，
-          裁判模板用于结构化评分与红线判定，编写模板用于生成用例草稿。
+          裁判模板用于结构化评分与红线判定，编写模板用于生成用例草稿，
+          自检模板用于 LLM 裁决失败后在同一会话追问被测 Agent 自查原因。
         </p>
       </div>
     </template>

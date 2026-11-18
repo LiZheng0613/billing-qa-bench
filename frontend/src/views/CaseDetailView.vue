@@ -644,26 +644,16 @@ onBeforeUnmount(() => {
                 : 'invisible -translate-y-1 opacity-0'
             "
           >
-            <div class="w-72 rounded-xl border border-line bg-white p-1.5 shadow-tile">
-              <button
-                type="button"
-                class="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
-                :disabled="!item || debugStore.isRunning(caseId)"
-                @click="debugMenuOpen = false; debugCase(true)"
-              >
-                <span
-                  class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-indigo-100 text-[11px] font-bold text-indigo-600"
-                >
-                  自
-                </span>
-                <span class="min-w-0">
-                  <span class="block text-xs font-semibold text-slate-800">失败追问自检调试</span>
-                  <span class="mt-0.5 block text-[11px] leading-relaxed text-slate-500">
-                    LLM 裁决失败时，在同一会话追问 Agent 自检原因（多一轮 Agent 调用）
-                  </span>
-                </span>
-              </button>
-            </div>
+            <!-- 与「单条调试」同圆角 / 同字号 / 同色系阴影，仅降为描边形态区分主次 -->
+            <button
+              type="button"
+              class="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-brand/40 bg-white px-3 py-2 text-sm font-medium text-brand shadow-[0_10px_24px_-16px_rgba(79,70,229,0.9)] transition duration-150 hover:border-brand hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-45"
+              :disabled="!item || debugStore.isRunning(caseId)"
+              title="LLM 裁决失败时，在同一会话追问 Agent 自检原因（多一轮 Agent 调用）"
+              @click="debugMenuOpen = false; debugCase(true)"
+            >
+              失败追问自检调试
+            </button>
           </div>
         </div>
         <details ref="menuRef" class="relative">

@@ -5,7 +5,7 @@
 
 export type CaseType = 'SINGLE' | 'STATIC_MULTI' | 'DYNAMIC_MULTI'
 export type CaseStatus = 'ACTIVE' | 'DISABLED' | 'DRAFT'
-export type TemplateType = 'USER_SIMULATOR' | 'LLM_JUDGE' | 'CASE_AUTHOR'
+export type TemplateType = 'USER_SIMULATOR' | 'LLM_JUDGE' | 'CASE_AUTHOR' | 'SELF_CHECK'
 export type TemplateStrategy = 'LATEST' | 'PINNED'
 export type ModelRole = 'SIMULATOR' | 'JUDGE' | 'CASE_AUTHOR'
 export type JudgeStrategy = 'AVG' | 'VETO'
@@ -348,7 +348,7 @@ export interface PromptUsage {
 }
 
 export interface SandboxRequest {
-  mode: 'SIMULATOR' | 'JUDGE' | 'CASE_AUTHOR'
+  mode: 'SIMULATOR' | 'JUDGE' | 'CASE_AUTHOR' | 'SELF_CHECK'
   execution_id?: number | null
   variables?: Record<string, unknown> | null
   model_id?: number | null

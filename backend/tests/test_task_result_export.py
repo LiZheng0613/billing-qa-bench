@@ -37,6 +37,9 @@ def _task() -> BatchTask:
         retry_on_env_error=True,
         max_env_retries=2,
         retry_backoff_seconds=3.0,
+        enable_self_check=True,
+        repeat_rounds=3,
+        round_index=2,
         schedule_type="IMMEDIATE",
         schedule_active=False,
         schedule_source_id=None,
@@ -162,6 +165,9 @@ def test_build_task_results_workbook() -> None:
     assert overview_map["通过率(%)"] == 50.0
     assert overview_map["导出范围"] == "用例最新（每用例只保留最新一次尝试）"
     assert overview_map["明细行数"] == 2
+    assert overview_map["失败追问自检"] == "是"
+    assert overview_map["连续轮次总数"] == 3
+    assert overview_map["当前轮次"] == 2
 
     results = workbook["用例结果"]
     headers = [cell.value for cell in results[1]]
@@ -172,6 +178,53 @@ def test_build_task_results_workbook() -> None:
     assert results.max_row == 3
     assert results.cell(row=2, column=headers.index("用例编号") + 1).value == "DEMO-001"
     assert results.cell(row=3, column=headers.index("状态码") + 1).value == "FAIL"
+
+
+def test_self_check_fields_exported() -> None:
+    row = _row(
+        self_check_status="已追问",
+        self_check_status_code="DONE",
+        self_check_trigger="LLM 裁决不通过",
+        self_check_skip_reason=None,
+        self_check_conclusion="出错位置：金额与底层数据不一致；修正方式：回查取数结果",
+        self_check_session_id="sess-9dbf4c787df8",
+        self_check_template="SELF_CHECK_DEFAULT@v1",
+        self_check_latency_ms=62.5,
+        self_check_performed_at="2026-01-02 10:00:02",
+        self_check_error=None,
+        self_check_notes="原对话未回填会话值；已按新会话处理",
+        self_check_prompt="## Role\n你是智能客服系统…",
+        self_check_request={"method": "POST", "sessionid": "sess-9dbf4c787df8"},
+        self_check_response={"answer": "【自检结论】…", "intent": "SELF_CHECK"},
+    )
+    content = build_task_results_xlsx(_task(), _metrics(), [row])
+    workbook = load_workbook(BytesIO(content))
+    results = workbook["用例结果"]
+    headers = [cell.value for cell in results[1]]
+
+    def value(name: str) -> object:
+        return results.cell(row=2, column=headers.index(name) + 1).value
+
+    assert value("追问自检状态") == "已追问"
+    assert value("追问自检触发原因") == "LLM 裁决不通过"
+    assert value("追问自检结论") == row["self_check_conclusion"]
+    assert value("追问自检会话") == "sess-9dbf4c787df8"
+    assert value("追问自检模板") == "SELF_CHECK_DEFAULT@v1"
+    assert value("追问自检时延(ms)") == 62.5
+    assert value("追问自检时间") == "2026-01-02 10:00:02"
+    assert value("追问自检备注") == "原对话未回填会话值；已按新会话处理"
+    assert value("追问自检 Prompt(渲染后)") == "## Role\n你是智能客服系统…"
+    assert '"SELF_CHECK"' in str(value("追问自检响应(JSON)"))
+    assert "sessionid" in str(value("追问自检请求(JSON)"))
+
+    overview = workbook["执行概览"]
+    overview_map = {
+        overview.cell(row=r, column=1).value: overview.cell(row=r, column=2).value
+        for r in range(1, overview.max_row + 1)
+    }
+    assert overview_map["追问自检已追问数"] == 1
+    assert overview_map["追问自检未触发数"] == 0
+    assert overview_map["追问自检失败数"] == 0
 
 
 def test_build_task_results_workbook_without_rows() -> None:

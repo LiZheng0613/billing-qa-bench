@@ -163,7 +163,18 @@ TASK_RESULT_COLUMNS: list[tuple[str, str, int]] = [
     ("judge_notes", "裁判备注", 40),
     ("final_answer", "最终答案", 50),
     ("self_check_status", "追问自检状态", 12),
+    ("self_check_trigger", "追问自检触发原因", 22),
+    ("self_check_skip_reason", "追问自检跳过原因", 30),
     ("self_check_conclusion", "追问自检结论", 50),
+    ("self_check_session_id", "追问自检会话", 26),
+    ("self_check_template", "追问自检模板", 22),
+    ("self_check_latency_ms", "追问自检时延(ms)", 14),
+    ("self_check_performed_at", "追问自检时间", 20),
+    ("self_check_error", "追问自检错误", 32),
+    ("self_check_notes", "追问自检备注", 32),
+    ("self_check_prompt", "追问自检 Prompt(渲染后)", 50),
+    ("self_check_request", "追问自检请求(JSON)", 32),
+    ("self_check_response", "追问自检响应(JSON)", 32),
     ("rule_result", "规则校验结果(JSON)", 32),
     ("judge_result", "聚合裁决结果(JSON)", 32),
     ("answer_grading", "答案契约判分明细(JSON)", 32),
@@ -300,6 +311,16 @@ def _write_header(sheet: Any, columns: list[tuple[str, str, int]]) -> None:
     sheet.freeze_panes = "A2"
 
 
+def _self_check_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """按自检原始状态码统计批次内的追问覆盖情况（用于执行概览）。"""
+    counts = {"DONE": 0, "SKIPPED": 0, "ERROR": 0}
+    for item in rows:
+        code = item.get("self_check_status_code")
+        if isinstance(code, str) and code in counts:
+            counts[code] += 1
+    return counts
+
+
 def _overview_rows(
     task: BatchTask,
     metrics: TaskMetrics,
@@ -309,6 +330,7 @@ def _overview_rows(
     exported_by: str | None,
     exported_at: datetime,
     row_count: int,
+    self_check_counts: dict[str, int],
 ) -> list[tuple[str, Any]]:
     distribution = metrics.status_distribution
     return [
@@ -320,6 +342,8 @@ def _overview_rows(
         ("状态码", task.status),
         ("控制状态", task.control_state),
         ("执行方式", schedule_type_label(task.schedule_type)),
+        ("连续轮次总数", task.repeat_rounds),
+        ("当前轮次", task.round_index),
         ("计划生效", bool_text(task.schedule_active)),
         ("计划来源任务 ID", task.schedule_source_id),
         ("指定执行时间", format_datetime(task.scheduled_at)),
@@ -360,6 +384,10 @@ def _overview_rows(
         ("环境失败自动重试", bool_text(task.retry_on_env_error)),
         ("最大环境重试次数", task.max_env_retries),
         ("重试退避(秒)", task.retry_backoff_seconds),
+        ("失败追问自检", bool_text(task.enable_self_check)),
+        ("追问自检已追问数", self_check_counts.get("DONE", 0)),
+        ("追问自检未触发数", self_check_counts.get("SKIPPED", 0)),
+        ("追问自检失败数", self_check_counts.get("ERROR", 0)),
         ("任务错误信息", task.error_message),
         ("指标汇总快照(JSON)", format_json(task.summary)),
         ("导出范围", scope_label),
@@ -395,6 +423,7 @@ def build_task_results_xlsx(
             exported_by=exported_by,
             exported_at=exported_at or datetime.now(),
             row_count=len(rows),
+            self_check_counts=_self_check_counts(rows),
         ),
         start=1,
     ):
