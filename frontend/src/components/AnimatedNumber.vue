@@ -14,13 +14,6 @@ let settle: number | null = null
 function animate(target: number): void {
   if (raf !== null) cancelAnimationFrame(raf)
   if (settle !== null) clearTimeout(settle)
-  const reduced =
-    typeof window !== 'undefined' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  if (reduced) {
-    shown.value = target
-    return
-  }
   const from = shown.value
   const started = performance.now()
   const duration = 450

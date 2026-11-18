@@ -536,6 +536,44 @@ function viewResult(task: DebugTask): void {
   }
 }
 
+/*
+ * 调试气泡是临时状态提示，动效用于表达「正在执行 / 刚刚完成」。
+ * 全局减少动效规则会把所有动画压到 0.001ms，这里对气泡单独豁免；
+ * 如需严格遵循系统设置，删除本段即可恢复全局行为。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .bubble {
+    animation-duration: 0.3s !important;
+  }
+
+  .bubble--running::after {
+    animation-duration: 2.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .bubble--flash-ok,
+  .bubble--flash-bad {
+    animation-duration: 0.72s !important;
+  }
+
+  .bubble-spin {
+    animation-duration: 1.4s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .bubble-icon--in {
+    animation-duration: 0.26s !important;
+  }
+
+  .bubble-in {
+    animation-duration: 0.22s !important;
+  }
+
+  .bubble--leaving {
+    animation-duration: 0.18s !important;
+  }
+}
+
 .bubble--ghost {
   border-style: dashed;
   border-color: #dbe2ec;
