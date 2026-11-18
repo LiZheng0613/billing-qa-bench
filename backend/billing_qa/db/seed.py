@@ -87,6 +87,9 @@ SELF_CHECK_DEFAULT_CONTENT = """# Role
 # Dialogue History（本次完整对话）
 {{chat_history}}
 
+# First User Input（当前用例第一条用户输入）
+{{first_query}}
+
 # Your Last Answer（你最后一轮的回答）
 {{final_answer}}
 

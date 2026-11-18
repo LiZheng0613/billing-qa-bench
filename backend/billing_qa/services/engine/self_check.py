@@ -242,6 +242,14 @@ def build_self_check_variables(
         ),
         "",
     )
+    first_query = next(
+        (
+            str(item.get("query") or "")
+            for item in turn_records
+            if item.get("query")
+        ),
+        "",
+    )
 
     error_tags: list[str] = []
     if isinstance(judge_result, dict):
@@ -267,6 +275,7 @@ def build_self_check_variables(
         "judge_reasons": format_judge_reasons(judge_result, judges, fact_results),
         "rule_failures": format_rule_failures(rule_result),
         "expected_answer": build_expected_text(snapshot),
+        "first_query": first_query or "（无输入）",
         "chat_history": format_history(history, style="text"),
         "final_answer": final_answer or "（无回复）",
     }

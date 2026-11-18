@@ -268,6 +268,7 @@ def test_build_variables_full_set() -> None:
         "case_type",
         "chat_history",
         "final_answer",
+        "first_query",
         "expected_answer",
         "actual_turns",
         "max_turns",
@@ -286,6 +287,8 @@ def test_build_variables_full_set() -> None:
     assert variables["pass_threshold"] == 60.0
     # 最后一轮回复
     assert variables["final_answer"] == "共使用 20GB 流量。"
+    # 当前用例第一条用户输入
+    assert variables["first_query"] == "帮我查一下 10 月的账单总额。"
     # 对话历史按用户/客服交替展开
     assert "用户: 帮我查一下 10 月的账单总额。" in variables["chat_history"]
     assert "客服: 10 月账单总额为 ¥999.00。" in variables["chat_history"]

@@ -151,6 +151,7 @@ function defaultVariables(mode: SandboxMode): string {
         judge_reasons: '（未产出裁判理由，可绑定一条历史失败执行回放真实理由）',
         rule_failures: '（本用例未执行规则硬校验）',
         expected_answer: '（未提供）',
+        first_query: '（未选择历史执行）',
         chat_history: '（暂无对话）',
         final_answer: '（无回复）',
       },
