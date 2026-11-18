@@ -878,6 +878,7 @@ export interface TaskMetrics {
   progress: number
   status_distribution: StatusDistribution
   pass_rate: number
+  avg_score: number
   avg_ttft_ms: number
   avg_latency_ms: number
   p95_latency_ms: number

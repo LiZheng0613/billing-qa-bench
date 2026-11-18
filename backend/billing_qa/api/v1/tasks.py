@@ -631,6 +631,13 @@ async def task_executions(
     task_id: int,
     status: str | None = None,
     keyword: str | None = None,
+    min_score: float | None = Query(default=None, ge=0, le=100, description="最低得分"),
+    max_score: float | None = Query(default=None, ge=0, le=100, description="最高得分"),
+    sort: str | None = Query(
+        default=None,
+        pattern="^(score_desc|score_asc)$",
+        description="排序：score_desc 得分从高到低 / score_asc 得分从低到高",
+    ),
     latest_per_case: bool = Query(
         default=False, description="是否按用例只返回最新一次尝试（批量任务详情用）"
     ),
@@ -639,6 +646,8 @@ async def task_executions(
     db: AsyncSession = Depends(get_db),
 ) -> Page[CaseExecutionItem]:
     await _get_task(db, task_id)
+    if min_score is not None and max_score is not None and min_score > max_score:
+        raise ValidationError("最低得分不能大于最高得分")
     attempt_counts: dict[int, int] = {}
 
     if latest_per_case:
@@ -660,6 +669,17 @@ async def task_executions(
                 select(TestCase.id).where(TestCase.code.ilike(like) | TestCase.name.ilike(like))
             )
         )
+    if min_score is not None:
+        conditions.append(ExecutionRecord.total_score >= min_score)
+    if max_score is not None:
+        conditions.append(ExecutionRecord.total_score <= max_score)
+
+    if sort == "score_desc":
+        order_by = [ExecutionRecord.total_score.desc().nulls_last(), ExecutionRecord.id.desc()]
+    elif sort == "score_asc":
+        order_by = [ExecutionRecord.total_score.asc().nulls_last(), ExecutionRecord.id.desc()]
+    else:
+        order_by = [ExecutionRecord.id.desc()]
 
     total = (
         await db.execute(select(func.count()).select_from(ExecutionRecord).where(*conditions))
@@ -668,7 +688,7 @@ async def task_executions(
         await db.execute(
             select(ExecutionRecord)
             .where(*conditions)
-            .order_by(ExecutionRecord.id.desc())
+            .order_by(*order_by)
             .offset((page - 1) * page_size)
             .limit(page_size)
         )

@@ -73,6 +73,7 @@ async def compute_task_metrics(db: AsyncSession, task: BatchTask) -> TaskMetrics
     latencies = [float(r.latency_ms) for r in records if r.latency_ms is not None]
     ttfts = [float(r.ttft_ms) for r in records if r.ttft_ms is not None]
     turns = [int(r.turns_used) for r in records]
+    scores = [float(r.total_score) for r in records if r.total_score is not None]
     simulator_tokens = sum(int(r.simulator_tokens or 0) for r in records)
     judge_tokens = sum(int(r.judge_tokens or 0) for r in records)
     env_retry_count = len([r for r in records if int(r.attempt_no or 1) > 1])
@@ -96,6 +97,7 @@ async def compute_task_metrics(db: AsyncSession, task: BatchTask) -> TaskMetrics
         progress=round(finished / total * 100, 2) if total else 0.0,
         status_distribution=distribution,
         pass_rate=round(passed / finished * 100, 2) if finished else 0.0,
+        avg_score=round(sum(scores) / len(scores), 2) if scores else 0.0,
         avg_ttft_ms=round(sum(ttfts) / len(ttfts), 2) if ttfts else 0.0,
         avg_latency_ms=round(sum(latencies) / len(latencies), 2) if latencies else 0.0,
         p95_latency_ms=_percentile(latencies, 0.95),

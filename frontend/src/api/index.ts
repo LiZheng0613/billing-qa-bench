@@ -297,6 +297,9 @@ export const api = {
       query?: {
         status?: string
         keyword?: string
+        min_score?: number
+        max_score?: number
+        sort?: 'score_desc' | 'score_asc'
         latest_per_case?: boolean
         page?: number
         page_size?: number

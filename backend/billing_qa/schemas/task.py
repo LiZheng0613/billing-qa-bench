@@ -171,6 +171,7 @@ class TaskMetrics(BaseModel):
     progress: float
     status_distribution: StatusDistribution
     pass_rate: float
+    avg_score: float = 0.0
     avg_ttft_ms: float
     avg_latency_ms: float
     p95_latency_ms: float

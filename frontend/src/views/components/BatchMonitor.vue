@@ -26,9 +26,12 @@ const props = withDefaults(
     latestPerCase?: boolean
     executionStatus?: string
     executionKeyword?: string
+    executionMinScore?: number | null
+    executionMaxScore?: number | null
+    executionSort?: '' | 'score_desc' | 'score_asc'
     exporting?: boolean
   }>(),
-  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, latestPerCase: true, executionStatus: '', executionKeyword: '', exporting: false },
+  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, latestPerCase: true, executionStatus: '', executionKeyword: '', executionMinScore: null, executionMaxScore: null, executionSort: '', exporting: false },
 )
 
 const emit = defineEmits<{
@@ -41,7 +44,16 @@ const emit = defineEmits<{
   (e: 'select-execution', executionId: number): void
   (e: 'page-change', page: number): void
   (e: 'mode-change', latestPerCase: boolean): void
-  (e: 'filter-change', filters: { status: string; keyword: string }): void
+  (
+    e: 'filter-change',
+    filters: {
+      status: string
+      keyword: string
+      minScore: number | null
+      maxScore: number | null
+      sort: '' | 'score_desc' | 'score_asc'
+    },
+  ): void
   (e: 'export'): void
 }>()
 
@@ -108,7 +120,7 @@ function nextPage(): void {
   }
 }
 
-const stats = computed(() => [
+const stats = computed<Array<{ label: string; value: string; hint?: string }>>(() => [
   {
     label: '进度',
     value: formatPercent(props.metrics?.progress, 1),
@@ -117,6 +129,10 @@ const stats = computed(() => [
       : '',
   },
   { label: '通过率', value: formatPercent(props.metrics?.pass_rate, 1) },
+  {
+    label: '本批次平均分',
+    value: formatScore(props.metrics?.avg_score),
+  },
   { label: '平均 TTFT', value: formatMs(props.metrics?.avg_ttft_ms) },
   { label: 'P95 时延', value: formatMs(props.metrics?.p95_latency_ms) },
   {
@@ -157,11 +173,41 @@ const statusFilterOptions = computed(() =>
 
 const filterStatus = ref(props.executionStatus)
 const filterKeyword = ref(props.executionKeyword)
+
+type ScorePreset = '' | 'gte90' | 'gte60' | '80-89' | '60-79' | 'lt60' | 'custom'
+
+function presetFromRange(min: number | null, max: number | null): ScorePreset {
+  if (min === null && max === null) return ''
+  if (min === 90 && (max === null || max === 100)) return 'gte90'
+  if (min === 60 && (max === null || max === 100)) return 'gte60'
+  if (min === 80 && max !== null && Math.abs(max - 89.99) < 0.011) return '80-89'
+  if (min === 60 && max !== null && Math.abs(max - 79.99) < 0.011) return '60-79'
+  if ((min === null || min === 0) && max !== null && Math.abs(max - 59.99) < 0.011) {
+    return 'lt60'
+  }
+  return 'custom'
+}
+
+const filterMinScore = ref(
+  props.executionMinScore === null ? '' : String(props.executionMinScore),
+)
+const filterMaxScore = ref(
+  props.executionMaxScore === null ? '' : String(props.executionMaxScore),
+)
+const filterScorePreset = ref<ScorePreset>(
+  presetFromRange(props.executionMinScore, props.executionMaxScore),
+)
+const filterSort = ref<'' | 'score_desc' | 'score_asc'>(props.executionSort)
 const hasFilter = computed(
-  () => Boolean(filterStatus.value) || Boolean(filterKeyword.value.trim()),
+  () =>
+    Boolean(filterStatus.value) ||
+    Boolean(filterKeyword.value.trim()) ||
+    Boolean(filterMinScore.value.trim()) ||
+    Boolean(filterMaxScore.value.trim()) ||
+    Boolean(filterSort.value),
 )
 
-let keywordTimer: number | null = null
+let filterTimer: number | null = null
 
 watch(
   () => props.executionStatus,
@@ -177,36 +223,139 @@ watch(
   },
 )
 
-function clearKeywordTimer(): void {
-  if (keywordTimer !== null) {
-    window.clearTimeout(keywordTimer)
-    keywordTimer = null
+watch(
+  [() => props.executionMinScore, () => props.executionMaxScore],
+  ([min, max]) => {
+    filterMinScore.value = min === null ? '' : String(min)
+    filterMaxScore.value = max === null ? '' : String(max)
+    // 全部清空或不在自定义态时，跟随区间推导档位；自定义态下不把用户输入吸附成预设。
+    if (min === null && max === null) filterScorePreset.value = ''
+    else if (filterScorePreset.value !== 'custom') {
+      filterScorePreset.value = presetFromRange(min, max)
+    }
+  },
+)
+
+watch(
+  () => props.executionSort,
+  (value) => {
+    filterSort.value = value
+  },
+)
+
+function clearFilterTimer(): void {
+  if (filterTimer !== null) {
+    window.clearTimeout(filterTimer)
+    filterTimer = null
   }
 }
 
+function parseScore(text: string): number | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  const value = Number(trimmed)
+  if (!Number.isFinite(value)) return null
+  return Math.min(100, Math.max(0, value))
+}
+
 function emitFilters(): void {
-  clearKeywordTimer()
+  clearFilterTimer()
   emit('filter-change', {
     status: filterStatus.value,
     keyword: filterKeyword.value.trim(),
+    minScore: parseScore(filterMinScore.value),
+    maxScore: parseScore(filterMaxScore.value),
+    sort: filterSort.value,
   })
 }
 
-function onKeywordInput(): void {
-  clearKeywordTimer()
-  keywordTimer = window.setTimeout(() => {
-    keywordTimer = null
+function scheduleFilters(): void {
+  clearFilterTimer()
+  filterTimer = window.setTimeout(() => {
+    filterTimer = null
     emitFilters()
   }, 350)
+}
+
+function applyScorePreset(preset: ScorePreset): void {
+  filterScorePreset.value = preset
+  switch (preset) {
+    case 'gte90':
+      filterMinScore.value = '90'
+      filterMaxScore.value = ''
+      break
+    case 'gte60':
+      filterMinScore.value = '60'
+      filterMaxScore.value = ''
+      break
+    case '80-89':
+      filterMinScore.value = '80'
+      filterMaxScore.value = '89.99'
+      break
+    case '60-79':
+      filterMinScore.value = '60'
+      filterMaxScore.value = '79.99'
+      break
+    case 'lt60':
+      filterMinScore.value = ''
+      filterMaxScore.value = '59.99'
+      break
+    case 'custom':
+      if (!filterMinScore.value.trim() && !filterMaxScore.value.trim()) {
+        filterMinScore.value = '0'
+        filterMaxScore.value = '100'
+      }
+      break
+    default:
+      filterMinScore.value = ''
+      filterMaxScore.value = ''
+  }
+  emitFilters()
+}
+
+function onScorePresetChange(): void {
+  applyScorePreset(filterScorePreset.value)
+}
+
+function onCustomScoreInput(): void {
+  filterScorePreset.value = 'custom'
+  scheduleFilters()
 }
 
 function resetFilters(): void {
   filterStatus.value = ''
   filterKeyword.value = ''
+  filterMinScore.value = ''
+  filterMaxScore.value = ''
+  filterScorePreset.value = ''
+  filterSort.value = ''
   emitFilters()
 }
 
-onBeforeUnmount(clearKeywordTimer)
+function toggleScoreSort(): void {
+  if (filterSort.value === 'score_desc') filterSort.value = 'score_asc'
+  else if (filterSort.value === 'score_asc') filterSort.value = ''
+  else filterSort.value = 'score_desc'
+  emitFilters()
+}
+
+function scorePercent(score?: number | null): number {
+  if (score === null || score === undefined || Number.isNaN(score)) return 0
+  return Math.min(100, Math.max(0, score))
+}
+
+function scoreBarClass(score?: number | null): string {
+  if (score === null || score === undefined || Number.isNaN(score)) return 'bg-slate-300'
+  if (score >= 80) return 'bg-emerald-500'
+  if (score >= 60) return 'bg-amber-500'
+  return 'bg-rose-500'
+}
+
+function isLowScore(score?: number | null): boolean {
+  return score !== null && score !== undefined && score < 60
+}
+
+onBeforeUnmount(clearFilterTimer)
 </script>
 
 <template>
@@ -372,11 +521,19 @@ onBeforeUnmount(clearKeywordTimer)
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-3 border-b border-slate-200 px-5 py-4 sm:grid-cols-3 xl:grid-cols-6">
+      <div class="grid grid-cols-2 gap-3 border-b border-slate-200 px-5 py-4 sm:grid-cols-3 xl:grid-cols-7">
         <div v-for="item in stats" :key="item.label">
-          <p class="text-[10px] uppercase tracking-wider text-slate-500">{{ item.label }}</p>
-          <p class="mt-0.5 text-xl font-semibold leading-tight tracking-[-0.02em] tabular-nums text-slate-900">{{ item.value }}</p>
-          <p v-if="item.hint" class="mt-0.5 text-[10px] text-slate-500">{{ item.hint }}</p>
+          <p class="text-[10px] uppercase tracking-wider text-slate-500">
+            {{ item.label }}
+          </p>
+          <p
+            class="mt-0.5 text-xl font-semibold leading-tight tracking-[-0.02em] tabular-nums text-slate-900"
+          >
+            {{ item.value }}
+          </p>
+          <p v-if="item.hint" class="mt-0.5 text-[10px] text-slate-500">
+            {{ item.hint }}
+          </p>
         </div>
       </div>
 
@@ -425,7 +582,7 @@ onBeforeUnmount(clearKeywordTimer)
               <button><selectedcontent></selectedcontent></button>
               <option value="">全部状态</option>
               <option v-for="option in statusFilterOptions" :key="option.value" :value="option.value">
-                {{ option.label }}（{{ option.count }}）
+                {{ option.label }}{{ latestPerCase ? `（${option.count}）` : '' }}
               </option>
             </select>
           </div>
@@ -448,10 +605,61 @@ onBeforeUnmount(clearKeywordTimer)
                 class="input !py-1.5 !pl-9 text-xs"
                 type="search"
                 placeholder="搜索用例编号 / 名称，输入即筛"
-                @input="onKeywordInput"
+                @input="scheduleFilters"
                 @keyup.enter="emitFilters"
               />
             </div>
+          </div>
+          <div class="flex items-end gap-1.5">
+            <div class="w-36">
+              <label class="label">得分</label>
+              <select
+                v-model="filterScorePreset"
+                class="input !py-1.5 text-xs"
+                @change="onScorePresetChange"
+              >
+                <button><selectedcontent></selectedcontent></button>
+                <option value="">全部得分</option>
+                <option value="gte90">≥ 90</option>
+                <option value="gte60">≥ 60</option>
+                <option value="80-89">80 – 89</option>
+                <option value="60-79">60 – 79</option>
+                <option value="lt60">&lt; 60</option>
+                <option value="custom">自定义区间…</option>
+              </select>
+            </div>
+            <div v-if="filterScorePreset === 'custom'" class="flex items-center gap-1.5">
+              <input
+                v-model="filterMinScore"
+                class="input !w-[68px] !py-1.5 !px-2 text-center text-xs tabular-nums"
+                type="number"
+                min="0"
+                max="100"
+                placeholder="最低分"
+                @input="onCustomScoreInput"
+                @keyup.enter="emitFilters"
+              />
+              <span class="text-xs text-slate-400">—</span>
+              <input
+                v-model="filterMaxScore"
+                class="input !w-[68px] !py-1.5 !px-2 text-center text-xs tabular-nums"
+                type="number"
+                min="0"
+                max="100"
+                placeholder="最高分"
+                @input="onCustomScoreInput"
+                @keyup.enter="emitFilters"
+              />
+            </div>
+          </div>
+          <div class="w-40">
+            <label class="label">排序方式</label>
+            <select v-model="filterSort" class="input !py-1.5 text-xs" @change="emitFilters">
+              <button><selectedcontent></selectedcontent></button>
+              <option value="">默认排序</option>
+              <option value="score_desc">得分从高到低</option>
+              <option value="score_asc">得分从低到高</option>
+            </select>
           </div>
           <button v-if="hasFilter" class="btn-ghost btn-xs" @click="resetFilters">
             重置筛选
@@ -463,7 +671,19 @@ onBeforeUnmount(clearKeywordTimer)
               <th class="th">执行号</th>
               <th class="th">用例</th>
               <th class="th">状态</th>
-              <th class="th">得分</th>
+              <th class="th">
+                <button
+                  class="inline-flex items-center gap-1 transition"
+                  :class="filterSort ? 'text-indigo-600' : 'hover:text-slate-700'"
+                  title="点击切换得分排序"
+                  @click="toggleScoreSort"
+                >
+                  得分
+                  <span class="text-[9px] leading-none">
+                    {{ filterSort === 'score_asc' ? '▲' : filterSort === 'score_desc' ? '▼' : '↕' }}
+                  </span>
+                </button>
+              </th>
               <th class="th">轮次</th>
               <th class="th">尝试</th>
               <th class="th">时延</th>
@@ -487,7 +707,23 @@ onBeforeUnmount(clearKeywordTimer)
                 </p>
               </td>
               <td class="td"><StatusPill :status="item.status" size="sm" /></td>
-              <td class="td tabular-nums">{{ formatScore(item.total_score) }}</td>
+              <td class="td">
+                <div class="flex items-center gap-2">
+                  <div class="h-1 w-14 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      class="h-full rounded-full transition-all"
+                      :class="scoreBarClass(item.total_score)"
+                      :style="{ width: `${scorePercent(item.total_score)}%` }"
+                    />
+                  </div>
+                  <span
+                    class="tabular-nums"
+                    :class="isLowScore(item.total_score) ? 'font-medium text-rose-600' : ''"
+                  >
+                    {{ formatScore(item.total_score) }}
+                  </span>
+                </div>
+              </td>
               <td class="td tabular-nums">{{ item.turns_used }}</td>
               <td class="td tabular-nums">{{ item.attempt_no }}</td>
               <td class="td tabular-nums">{{ formatMs(item.latency_ms) }}</td>
@@ -506,7 +742,7 @@ onBeforeUnmount(clearKeywordTimer)
           :title="hasFilter ? '没有符合筛选条件的执行记录' : '暂无执行记录'"
           :description="
             hasFilter
-              ? '可调整执行状态或搜索关键词后重试。'
+              ? '可调整执行状态、得分区间或搜索关键词后重试。'
               : '任务启动后，每条用例的结果会实时出现在这里。'
           "
         >

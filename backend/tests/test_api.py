@@ -279,6 +279,7 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     assert metrics["total_tokens"] > 0
     assert metrics["progress"] == 100.0
     assert metrics["env_retry_count"] == 0
+    assert metrics["avg_score"] > 0
 
     executions = (await client.get(f"/tasks/{task_id}/executions")).json()
     assert len(executions["items"]) == 1
@@ -320,6 +321,38 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
         )
     ).json()
     assert no_status["total"] == 0
+
+    score = latest["items"][0]["total_score"]
+    assert score is not None
+    assert metrics["avg_score"] == round(score, 2)
+    by_range = (
+        await client.get(
+            f"/tasks/{task_id}/executions",
+            params={"min_score": score, "max_score": score, "latest_per_case": "true"},
+        )
+    ).json()
+    assert by_range["total"] == 1
+    impossible = (
+        {"min_score": score + 1} if score < 100 else {"max_score": max(score - 1, 0)}
+    )
+    outside = (
+        await client.get(
+            f"/tasks/{task_id}/executions",
+            params={**impossible, "latest_per_case": "true"},
+        )
+    ).json()
+    assert outside["total"] == 0
+    sorted_desc = (
+        await client.get(
+            f"/tasks/{task_id}/executions",
+            params={"sort": "score_desc", "latest_per_case": "true"},
+        )
+    ).json()
+    assert sorted_desc["total"] == latest["total"]
+    invalid_range = await client.get(
+        f"/tasks/{task_id}/executions", params={"min_score": 90, "max_score": 60}
+    )
+    assert invalid_range.status_code == 422
 
     exported = await client.get(
         f"/tasks/{task_id}/export", params={"latest_per_case": "true"}

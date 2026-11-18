@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>设计稿 V9 · 得分区间控件方案对比 · 问账 QA</title>
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --card: #ffffff;
+    --border: #e6eaf2;
+    --text: #0f172a;
+    --muted: #64748b;
+    --faint: #94a3b8;
+    --accent: #4f46e5;
+    --accent-soft: #eef2ff;
+    --green: #10b981;
+    --green-soft: #ecfdf5;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 12px 32px -20px rgba(15, 23, 42, .18);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  .shell { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 232px; flex: 0 0 232px; background: #fff; border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 20px 20px 18px; }
+  .brand-logo {
+    width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #6366f1, #22d3ee); color: #fff; font-weight: 700; font-size: 15px;
+    box-shadow: 0 8px 18px -8px rgba(79, 70, 229, .55);
+  }
+  .brand-name { font-weight: 650; font-size: 14px; letter-spacing: .2px; }
+  .brand-sub { font-size: 10px; color: var(--faint); letter-spacing: .6px; text-transform: uppercase; }
+  .nav { padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .nav-label { padding: 12px 10px 6px; font-size: 10px; letter-spacing: .8px; color: var(--faint); text-transform: uppercase; }
+  .nav-item {
+    display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 9px;
+    color: #475569; text-decoration: none; font-weight: 500;
+  }
+  .nav-item svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .sidebar-foot { margin-top: auto; padding: 14px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: #e2e8f0; color: #475569; display: grid; place-items: center; font-weight: 600; font-size: 12px; }
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .topbar {
+    height: 64px; background: rgba(255,255,255,.82); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px;
+    padding: 0 26px; position: sticky; top: 0; z-index: 5;
+  }
+  .crumb { color: var(--faint); font-size: 12px; }
+  .crumb b { color: var(--text); font-weight: 600; }
+  .topbar .spacer { flex: 1; }
+  .icon-btn { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--border); background: #fff; display: grid; place-items: center; color: var(--muted); }
+  .avatar.sm { width: 30px; height: 30px; }
+
+  .content { padding: 24px 26px 40px; max-width: 1440px; width: 100%; margin: 0 auto; }
+  .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+  .page-title { font-size: 21px; font-weight: 700; letter-spacing: -.3px; margin: 0; }
+  .page-sub { margin: 6px 0 0; color: var(--muted); font-size: 12px; max-width: 820px; }
+  .design-tag {
+    display: inline-flex; align-items: center; gap: 6px; background: #fff; border: 1px solid var(--border);
+    color: var(--muted); border-radius: 999px; padding: 4px 10px; font-size: 11px; white-space: nowrap;
+  }
+  .design-tag i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+  .hint-bar {
+    display: flex; align-items: center; gap: 8px; margin: 14px 0 16px; padding: 9px 12px;
+    border: 1px dashed #c7d2fe; border-radius: 10px; background: linear-gradient(90deg, #eef2ff, #f8faff 70%);
+    color: #4338ca; font-size: 11px;
+  }
+  .hint-bar b { font-weight: 650; }
+
+  .compare { display: flex; flex-direction: column; gap: 14px; }
+  .option { background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+  .option-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid #f0f3f8; }
+  .option-badge {
+    width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px;
+  }
+  .option-title { font-size: 13px; font-weight: 650; margin: 0; }
+  .option-desc { margin: 2px 0 0; font-size: 11px; color: var(--faint); }
+  .option-head .tag { margin-left: auto; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+    font-size: 10px; font-weight: 600; border: 1px solid #c7d2fe; background: var(--accent-soft); color: #4338ca;
+  }
+  .tag.ghost { border-color: var(--border); background: #fff; color: var(--faint); font-weight: 500; }
+
+  .demo { padding: 16px 18px 18px; background: #fff; }
+  .filter-bar {
+    display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px;
+    padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: #fbfcff;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field > label { font-size: 10px; color: var(--faint); letter-spacing: .3px; }
+  .control {
+    height: 32px; border: 1px solid var(--border); border-radius: 8px; background: #fff;
+    padding: 0 10px; font: inherit; font-size: 11.5px; color: #334155; outline: none;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .control svg { color: var(--faint); flex: 0 0 auto; }
+  .control .grow { flex: 1; }
+  .w-status { width: 146px; }
+  .w-search { width: 218px; }
+  .w-sort { width: 158px; }
+  .reset-btn { height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--muted); font-size: 11px; }
+  .filter-spacer { flex: 1; }
+  .score-hint { font-size: 10.5px; color: var(--faint); line-height: 1.4; white-space: nowrap; }
+  .score-hint b { color: #4338ca; font-weight: 600; }
+  .vf-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .vf-label { display: inline-flex; align-items: center; font-size: 10px; color: var(--faint); letter-spacing: .3px; }
+  .vf-value { font-size: 11px; font-weight: 650; color: #4338ca; font-variant-numeric: tabular-nums; }
+  .badge-num {
+    display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-size: 9px; font-weight: 700; margin-left: 5px;
+  }
+
+  /* ============================================================
+     方案 A · 气泡双滑块
+     ============================================================ */
+  .va-field { width: 214px; }
+  .va-slider { position: relative; height: 36px; margin-top: 2px; }
+  .va-track { position: absolute; left: 7px; right: 7px; top: 27px; height: 5px; border-radius: 999px; background: #e8edf7; }
+  .va-fill { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: linear-gradient(90deg, #818cf8, #4f46e5); }
+  .va-thumb {
+    position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; border: 2px solid #4f46e5; transform: translate(-50%, -50%);
+    box-shadow: 0 2px 6px rgba(79, 70, 229, .3), 0 0 0 3px #eef2ff;
+  }
+  .va-bubble {
+    position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+    padding: 1px 6px; border-radius: 5px; background: #4f46e5; color: #fff;
+    font-size: 9.5px; font-weight: 650; line-height: 1.5; white-space: nowrap;
+    box-shadow: 0 3px 8px -3px rgba(79, 70, 229, .7);
+  }
+  .va-bubble::after {
+    content: ""; position: absolute; left: 50%; bottom: -3px; width: 6px; height: 6px;
+    background: #4f46e5; transform: translateX(-50%) rotate(45deg); border-radius: 1px;
+  }
+  .va-bubble.edge { transform: translateX(-100%); }
+  .va-bubble.edge::after { left: auto; right: 3px; transform: rotate(45deg); }
+  .va-scale { position: absolute; left: 7px; right: 7px; top: 34px; display: flex; justify-content: space-between; font-size: 9px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  /* ============================================================
+     方案 B · 胶囊滑轨
+     ============================================================ */
+  .vb-field { width: 214px; }
+  .vb-slider { position: relative; height: 34px; margin-top: 2px; display: flex; align-items: center; }
+  .vb-track {
+    position: relative; height: 22px; width: 100%; border-radius: 999px;
+    background: linear-gradient(180deg, #e9eef8, #f3f6fb);
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, .08), inset 0 -1px 0 rgba(255,255,255,.8);
+  }
+  .vb-fill { position: absolute; top: 3px; bottom: 3px; border-radius: 999px; background: linear-gradient(90deg, #818cf8, #4f46e5); }
+  .vb-thumb {
+    position: absolute; top: 50%; width: 17px; height: 17px; border-radius: 50%;
+    background: #fff; transform: translate(-50%, -50%);
+    box-shadow: 0 1px 3px rgba(15, 23, 42, .25), 0 0 0 1px rgba(79, 70, 229, .18);
+  }
+  .vb-thumb::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: #4f46e5; opacity: .18; }
+  .vb-ends { display: flex; justify-content: space-between; margin-top: 3px; font-size: 9px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  /* ============================================================
+     方案 C · 分段色带
+     ============================================================ */
+  .vc-field { width: 218px; }
+  .vc-slider { position: relative; height: 34px; margin-top: 2px; }
+  .vc-track {
+    position: absolute; left: 7px; right: 7px; top: 24px; height: 8px; border-radius: 999px;
+    background: linear-gradient(90deg, #f87171 0 60%, #fbbf24 60% 80%, #34d399 80% 100%);
+    opacity: .95;
+  }
+  .vc-dim { position: absolute; top: 0; bottom: 0; left: 0; background: rgba(255,255,255,.72); border-radius: 999px 0 0 999px; }
+  .vc-thumb {
+    position: absolute; top: 50%; width: 15px; height: 15px; border-radius: 50%;
+    background: #fff; border: 2.5px solid #334155; transform: translate(-50%, -50%);
+    box-shadow: 0 2px 5px rgba(15, 23, 42, .22);
+  }
+  .vc-ticks { position: absolute; left: 7px; right: 7px; top: 34px; height: 12px; font-size: 9px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .vc-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .vc-ticks span:first-child { transform: none; }
+  .vc-ticks span:last-child { transform: translateX(-100%); }
+
+  /* ============================================================
+     方案 D · 极简紧凑
+     ============================================================ */
+  .vd-field { width: 190px; }
+  .vd-slider { position: relative; height: 28px; margin-top: 3px; }
+  .vd-track { position: absolute; left: 6px; right: 6px; top: 16px; height: 4px; border-radius: 999px; background: #eef2f7; }
+  .vd-fill { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: #4f46e5; }
+  .vd-handle {
+    position: absolute; top: 50%; width: 3px; height: 15px; border-radius: 2px;
+    background: #4f46e5; transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 3px #fff, 0 1px 4px rgba(15, 23, 42, .18);
+  }
+  .vd-handle::after {
+    content: ""; position: absolute; left: 50%; top: -4px; width: 7px; height: 7px; border-radius: 50%;
+    background: #4f46e5; transform: translateX(-50%);
+  }
+  .vd-scale { position: absolute; left: 6px; right: 6px; top: 21px; display: flex; justify-content: space-between; font-size: 9px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  .footer-note { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--faint); }
+  @media (max-width: 980px) {
+    .sidebar { width: 64px; flex-basis: 64px; }
+    .brand { justify-content: center; padding: 16px 0; }
+    .brand > div:last-child, .nav-label { display: none; }
+    .nav { padding: 6px; }
+    .nav-item { justify-content: center; padding: 10px 0; font-size: 0; gap: 0; }
+    .sidebar-foot { justify-content: center; padding: 12px 0; }
+    .content { padding: 18px 16px 32px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">问</div>
+      <div>
+        <div class="brand-name">问账 QA</div>
+        <div class="brand-sub">Billing QA Console</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <div class="nav-label">工作台</div>
+      <a class="nav-item" href="#"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg>测试大盘</a>
+      <a class="nav-item" href="#"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg>用例资产</a>
+      <a class="nav-item" href="#"><svg viewBox="0 0 24 24"><path d="m8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14"/></svg>Prompt 资产</a>
+      <a class="nav-item active" href="#"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/></svg>批量任务</a>
+      <a class="nav-item" href="#"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3c0-.34-.03-.67-.1-1l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L14.8 3h-4l-.4 2.6a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.07-.33.1-.66.1-1Z"/></svg>环境与模型</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="avatar">A</div>
+      <div><div style="font-size:12px;font-weight:600">admin</div><div style="font-size:10px;color:#94a3b8">管理员</div></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb">批量任务 / 任务详情 / <b>得分区间控件</b></div>
+      <div class="spacer"></div>
+      <div class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></div>
+      <div class="avatar sm">A</div>
+    </header>
+
+    <main class="content">
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">得分区间控件 · 方案对比</h1>
+          <p class="page-sub">保留「执行状态 / 用例搜索 / 排序方式」，只替换得分区间的交互形态。拖动两端圆点调整区间，松手后自动筛选。</p>
+        </div>
+        <span class="design-tag"><i></i>设计稿 V9 · 4 个方案</span>
+      </div>
+
+      <div class="hint-bar">
+        <b>共同交互：</b>最低分不能高于最高分；拖动时读数实时更新；与状态、关键词、排序组合生效；重置后回到 0 – 100。
+      </div>
+
+      <section class="compare">
+        <!-- 方案 A -->
+        <article class="option">
+          <header class="option-head">
+            <div class="option-badge">A</div>
+            <div>
+              <h2 class="option-title">气泡双滑块</h2>
+              <p class="option-desc">手柄上方实时气泡显示当前分数，轨道细、留白多，最接近通用筛选器习惯。</p>
+            </div>
+            <span class="tag">推荐</span>
+          </header>
+          <div class="demo">
+            <div class="filter-bar">
+              <div class="field w-status">
+                <label>执行状态</label>
+                <div class="control"><span class="grow">全部状态</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+              </div>
+              <div class="field w-search">
+                <label>用例搜索</label>
+                <div class="control"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="grow" style="color:#94a3b8">搜索用例编号 / 名称</span></div>
+              </div>
+              <div class="field va-field">
+                <div class="vf-head"><span class="vf-label">得分区间 <span class="badge-num">2</span></span><span class="vf-value">50 – 100</span></div>
+                <div class="va-slider">
+                  <div class="va-track">
+                    <span class="va-fill" style="left:50%;right:0"></span>
+                    <span class="va-thumb" style="left:50%"></span>
+                    <span class="va-thumb" style="left:100%"></span>
+                  </div>
+                  <span class="va-bubble" style="left:50%">50</span>
+                  <span class="va-bubble edge" style="left:100%">100</span>
+                  <div class="va-scale"><span>0</span><span>100</span></div>
+                </div>
+              </div>
+              <div class="field w-sort">
+                <label>排序方式</label>
+                <div class="control"><span class="grow">得分从高到低</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+              </div>
+              <button class="reset-btn">重置筛选</button>
+              <div class="filter-spacer"></div>
+              <div class="score-hint">当前命中 <b>6</b> 条</div>
+            </div>
+          </div>
+        </article>
+
+        <!-- 方案 B -->
+        <article class="option">
+          <header class="option-head">
+            <div class="option-badge">B</div>
+            <div>
+              <h2 class="option-title">胶囊滑轨</h2>
+              <p class="option-desc">内嵌式厚轨道 + 白色圆形手柄，触控感更强，视觉更像「调节器」而非普通进度条。</p>
+            </div>
+            <span class="tag ghost">备选</span>
+          </header>
+          <div class="demo">
+            <div class="filter-bar">
+              <div class="field w-status">
+                <label>执行状态</label>
+                <div class="control"><span class="grow">全部状态</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+              </div>
+              <div class="field w-search">
+                <label>用例搜索</label>
+                <div class="control"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="grow" style="color:#94a3b8">搜索用例编号 / 名称</span></div>
+              </div>
+              <div class="field vb-field">
+                <div class="vf-head"><span class="vf-label">得分区间 <span class="badge-num">2</span></span><span class="vf-value">50 – 100</span></div>
+                <div class="vb-slider">
+                  <div class="vb-track">
+                    <span class="vb-fill" style="left:50%;right:3px"></span>
+                    <span class="vb-thumb" style="left:50%"></span>
+                    <span class="vb-thumb" style="left:calc(100% - 1px)"></span>
+                  </div>
+                </div>
+                <div class="vb-ends"><span>0</span><span>100</span></div>
+              </div>
+              <div class="field w-sort">
+                <label>排序方式</label>
+                <div class="control"><span class="grow">得分从高到低</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+              </div>
+              <button class="reset-btn">重置筛选</button>
+              <div class="filter-spacer"></div>
+              <div class="score-hint">当前命中 <b>6</b> 条</div>
+            </div>
+          </div>
+        </article>
+
+        <!-- 方案 C -->
+        <article class="option">
+          <header class="option-head">
+            <div class="option-badge">C</div>
+            <div>
+              <h2 class="option-title">分段色带</h2>
+              <p class="option-desc">轨道按失败 / 及格 / 高分着色，与列表得分条语义一致，一眼看出筛的是哪一段。</p>
+            </div>
+            <span class="tag ghost">备选</span>
+          </header>
+          <div class="demo">
+            <div class="filter-bar">
+              <div class="field w-status">
+                <label>执行状态</label>
+                <div class="control"><span class="grow">全部状态</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+              </div>
+              <div class="field w-search">
+                <label>用例搜索</label>
+                <div class="control"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="grow" style="color:#94a3b8">搜索用例编号 / 名称</span></div>
+              </div>
+              <div class="field vc-field">
+                <div class="vf-head"><span class="vf-label">得分区间 <span class="badge-num">2</span></span><span class="vf-value">50 – 100</span></div>
+                <div class="vc-slider">
+                  <div class="vc-track">
+                    <span class="vc-dim" style="width:50%"></span>
+                    <span class="vc-thumb" style="left:50%"></span>
+                    <span class="vc-thumb" style="left:100%"></span>
+                  </div>
+                  <div class="vc-ticks">
+                    <span style="left:0">0</span>
+                    <span style="left:60%">60</span>
+                    <span style="left:80%">80</span>
+                    <span style="left:100%">100</span>
+                  </div>
+                </div>
+              </div>
+              <div class="field w-sort">
+                <label>排序方式</label>
+                <div class="control"><span class="grow">得分从高到低</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+              </div>
+              <button class="reset-btn">重置筛选</button>
+              <div class="filter-spacer"></div>
+              <div class="score-hint">当前命中 <b>6</b> 条</div>
+            </div>
+          </div>
+        </article>
+
+        <!-- 方案 D -->
+        <article class="option">
+          <header class="option-head">
+            <div class="option-badge">D</div>
+            <div>
+              <h2 class="option-title">极简刻度条</h2>
+              <p class="option-desc">最薄轨道 + 竖线手柄，占位最小，适合筛选器较多的页面；拖动热区仍保留 16px。</p>
+            </div>
+            <span class="tag ghost">备选</span>
+          </header>
+          <div class="demo">
+            <div class="filter-bar">
+              <div class="field w-status">
+                <label>执行状态</label>
+                <div class="control"><span class="grow">全部状态</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+              </div>
+              <div class="field w-search">
+                <label>用例搜索</label>
+                <div class="control"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="grow" style="color:#94a3b8">搜索用例编号 / 名称</span></div>
+              </div>
+              <div class="field vd-field">
+                <div class="vf-head"><span class="vf-label">得分区间 <span class="badge-num">2</span></span><span class="vf-value">50 – 100</span></div>
+                <div class="vd-slider">
+                  <div class="vd-track">
+                    <span class="vd-fill" style="left:50%;right:0"></span>
+                    <span class="vd-handle" style="left:50%"></span>
+                    <span class="vd-handle" style="left:100%"></span>
+                  </div>
+                  <div class="vd-scale"><span>0</span><span>100</span></div>
+                </div>
+              </div>
+              <div class="field w-sort">
+                <label>排序方式</label>
+                <div class="control"><span class="grow">得分从高到低</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+              </div>
+              <button class="reset-btn">重置筛选</button>
+              <div class="filter-spacer"></div>
+              <div class="score-hint">当前命中 <b>6</b> 条</div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <div class="footer-note">
+        交互实现：双层原生 range 叠加（保留键盘可达性）+ CSS 变量控制填充与手柄位置，不引入第三方组件；触控热区不小于 16px。
+      </div>
+    </main>
+  </div>
+</div>
+</body>
+</html>

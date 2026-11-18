@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>设计稿 V8 · 批量任务详情平均分与得分筛选排序 · 问账 QA</title>
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --card: #ffffff;
+    --border: #e6eaf2;
+    --text: #0f172a;
+    --muted: #64748b;
+    --faint: #94a3b8;
+    --accent: #4f46e5;
+    --accent-soft: #eef2ff;
+    --green: #10b981;
+    --green-soft: #ecfdf5;
+    --red: #ef4444;
+    --red-soft: #fef2f2;
+    --amber: #f59e0b;
+    --amber-soft: #fffbeb;
+    --violet: #8b5cf6;
+    --shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 12px 32px -20px rgba(15, 23, 42, .18);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  .shell { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 232px; flex: 0 0 232px; background: #fff; border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 20px 20px 18px; }
+  .brand-logo {
+    width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #6366f1, #22d3ee); color: #fff; font-weight: 700; font-size: 15px;
+    box-shadow: 0 8px 18px -8px rgba(79, 70, 229, .55);
+  }
+  .brand-name { font-weight: 650; font-size: 14px; letter-spacing: .2px; }
+  .brand-sub { font-size: 10px; color: var(--faint); letter-spacing: .6px; text-transform: uppercase; }
+  .nav { padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .nav-label { padding: 12px 10px 6px; font-size: 10px; letter-spacing: .8px; color: var(--faint); text-transform: uppercase; }
+  .nav-item {
+    display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 9px;
+    color: #475569; text-decoration: none; font-weight: 500;
+  }
+  .nav-item svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .nav-item:hover { background: #f8fafc; }
+  .sidebar-foot { margin-top: auto; padding: 14px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: #e2e8f0; color: #475569; display: grid; place-items: center; font-weight: 600; font-size: 12px; }
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .topbar {
+    height: 64px; background: rgba(255,255,255,.82); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px;
+    padding: 0 26px; position: sticky; top: 0; z-index: 5;
+  }
+  .crumb { color: var(--faint); font-size: 12px; }
+  .crumb b { color: var(--text); font-weight: 600; }
+  .topbar .spacer { flex: 1; }
+  .search {
+    width: 250px; height: 34px; border: 1px solid var(--border); border-radius: 9px;
+    display: flex; align-items: center; gap: 8px; padding: 0 11px; color: var(--faint); background: #fff;
+  }
+  .search kbd { margin-left: auto; font-size: 10px; border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; background: #f8fafc; }
+  .icon-btn { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--border); background: #fff; display: grid; place-items: center; color: var(--muted); }
+  .avatar.sm { width: 30px; height: 30px; }
+
+  .content { padding: 24px 26px 40px; max-width: 1440px; width: 100%; margin: 0 auto; }
+  .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+  .page-title { font-size: 21px; font-weight: 700; letter-spacing: -.3px; margin: 0; }
+  .page-sub { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+  .design-tag {
+    display: inline-flex; align-items: center; gap: 6px; background: #fff; border: 1px solid var(--border);
+    color: var(--muted); border-radius: 999px; padding: 4px 10px; font-size: 11px;
+  }
+  .design-tag i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .btn {
+    height: 34px; border-radius: 9px; border: 1px solid var(--border); background: #fff;
+    color: #334155; font-size: 12px; font-weight: 550; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 8px 18px -12px rgba(79,70,229,.8); }
+
+  .change-note {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;
+    padding: 9px 12px; border: 1px dashed #c7d2fe; border-radius: 10px;
+    background: linear-gradient(90deg, #eef2ff, #f8faff 70%);
+    color: #4338ca; font-size: 11px; font-weight: 550;
+  }
+  .change-note .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px;
+    background: #fff; border: 1px solid #c7d2fe; color: #4338ca; font-weight: 600;
+  }
+  .change-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .change-note .tip { margin-left: auto; color: #6366f1; font-weight: 500; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
+  .panel { overflow: hidden; }
+  .panel-head { padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .panel-title { font-size: 13px; font-weight: 650; margin: 0; }
+  .panel-sub { margin: 4px 0 0; font-size: 11px; color: var(--faint); }
+  .task-code { font-family: "JetBrains Mono", Consolas, monospace; color: var(--accent); background: var(--accent-soft); border-radius: 6px; padding: 2px 7px; font-size: 11px; }
+  .status { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 2px 8px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+  .status i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  .s-pass { color: #047857; background: var(--green-soft); }
+  .s-fail { color: #b91c1c; background: var(--red-soft); }
+  .s-warn { color: #b45309; background: var(--amber-soft); }
+  .s-run { color: #4338ca; background: var(--accent-soft); }
+  .tag { display: inline-flex; align-items: center; border: 1px solid #c7d2fe; background: var(--accent-soft); color: #4338ca; border-radius: 999px; padding: 1px 7px; font-size: 10px; font-weight: 550; }
+
+  .progress-block { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .progress-top { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11px; }
+  .progress-track { margin-top: 8px; height: 8px; border-radius: 999px; background: #eef2f7; overflow: hidden; }
+  .progress-track span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #6366f1, #4f46e5); }
+  .dist-bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: #eef2f7; margin-top: 10px; }
+  .dist-bar span { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 9px; font-size: 11px; color: var(--muted); }
+  .legend i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+
+  .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; padding: 15px 18px; border-bottom: 1px solid var(--border); }
+  .stat-label { color: var(--faint); font-size: 10px; letter-spacing: .4px; }
+  .stat-value { margin-top: 3px; font-size: 19px; font-weight: 700; letter-spacing: -.3px; font-variant-numeric: tabular-nums; }
+  .stat-hint { color: var(--faint); font-size: 9px; margin-top: 2px; }
+  .stat-score {
+    position: relative; margin: -1px; padding: 10px 12px; border: 1px solid #c7d2fe; border-radius: 11px;
+    background: linear-gradient(180deg, #f8faff, #eef2ff);
+  }
+  .stat-score .stat-label { color: #4f46e5; font-weight: 600; }
+  .stat-score .stat-value { color: #3730a3; font-size: 22px; }
+  .stat-score .stat-value small { font-size: 11px; color: #818cf8; font-weight: 600; }
+  .stat-score .stat-hint { color: #6366f1; }
+  .score-mini { margin-top: 6px; height: 4px; border-radius: 999px; background: #dbe4ff; overflow: hidden; }
+  .score-mini span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #818cf8, #4f46e5); }
+
+  .badge-num {
+    display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+    box-shadow: 0 0 0 3px #eef2ff; margin-left: 5px; vertical-align: 2px;
+  }
+  .badge-new {
+    display: inline-flex; align-items: center; padding: 0 5px; height: 15px; border-radius: 4px;
+    background: var(--accent); color: #fff; font-size: 9px; font-weight: 700; letter-spacing: .2px;
+    margin-left: 6px; vertical-align: 2px;
+  }
+
+  .results-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 18px 0; }
+  .results-title { display: flex; align-items: center; gap: 8px; }
+  .results-avg {
+    display: inline-flex; align-items: baseline; gap: 4px; padding: 3px 9px; border-radius: 999px;
+    background: var(--accent-soft); color: #4338ca; font-size: 10.5px; font-weight: 600;
+  }
+  .results-avg b { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .mode-split { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; background: #f8fafc; padding: 2px; font-size: 11px; }
+  .mode-split span { padding: 3px 9px; border-radius: 6px; color: var(--muted); }
+  .mode-split span.on { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(15,23,42,.08); }
+
+  .filter-bar {
+    display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px;
+    margin: 12px 18px 0; padding: 12px; border: 1px solid var(--border); border-radius: 11px;
+    background: #fbfcff;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field > label { font-size: 10px; color: var(--faint); letter-spacing: .3px; }
+  .control {
+    height: 32px; border: 1px solid var(--border); border-radius: 8px; background: #fff;
+    padding: 0 10px; font: inherit; font-size: 11.5px; color: #334155; outline: none;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .control:focus-within { border-color: #a5b4fc; box-shadow: 0 0 0 3px rgba(99,102,241,.1); }
+  .control svg { color: var(--faint); flex: 0 0 auto; }
+  .control input { border: 0; outline: 0; font: inherit; color: inherit; background: transparent; width: 100%; }
+  .control input::placeholder { color: var(--faint); }
+  .w-status { width: 146px; }
+  .w-search { width: 228px; }
+  .w-sort { width: 168px; }
+  .range-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    margin-bottom: 5px; width: 100%;
+  }
+  .range-label { display: inline-flex; align-items: center; font-size: 10px; color: var(--faint); letter-spacing: .3px; }
+  .range-readout { font-size: 11px; font-weight: 650; color: #4338ca; font-variant-numeric: tabular-nums; }
+  .range-slider { width: 212px; }
+  .range-track { position: relative; height: 6px; margin: 0 7px; border-radius: 999px; background: #e8edf7; }
+  .range-fill { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: linear-gradient(90deg, #818cf8, #4f46e5); }
+  .range-thumb {
+    position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; border: 2px solid #4f46e5; transform: translate(-50%, -50%);
+    box-shadow: 0 2px 6px rgba(79, 70, 229, .35), 0 0 0 3px #eef2ff;
+  }
+  .range-thumb::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: #4f46e5; opacity: .16; }
+  .range-scale { display: flex; justify-content: space-between; margin-top: 4px; padding: 0 2px; font-size: 9px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .reset-btn { height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--muted); font-size: 11px; }
+  .filter-spacer { flex: 1; }
+  .score-hint { font-size: 10.5px; color: var(--faint); line-height: 1.4; }
+  .score-hint b { color: #4338ca; font-weight: 600; }
+
+  .table-wrap { overflow-x: auto; contain: paint; margin-top: 10px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 10px; letter-spacing: .4px; text-transform: uppercase; color: var(--faint); font-weight: 600; padding: 11px 14px; background: #fbfcfe; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 11px 14px; border-bottom: 1px solid #f0f3f8; font-size: 12px; }
+  tbody tr:hover { background: #fafbff; }
+  .case-code { font-family: "JetBrains Mono", Consolas, monospace; font-size: 11px; color: #3730a3; }
+  .case-name { color: var(--muted); font-size: 10px; margin-top: 2px; }
+  .num { font-variant-numeric: tabular-nums; }
+  .row-btn { border: 1px solid var(--border); background: #fff; border-radius: 7px; padding: 3px 9px; font-size: 11px; color: #475569; }
+  .table-foot { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; color: var(--faint); font-size: 11px; }
+  .mono { font-family: "JetBrains Mono", Consolas, monospace; }
+
+  .sortable { display: inline-flex; align-items: center; gap: 4px; color: #4338ca; }
+  .sortable .arrow { display: inline-block; font-size: 9px; }
+  .score-cell { display: flex; align-items: center; gap: 8px; min-width: 92px; }
+  .score-track { flex: 1; height: 5px; border-radius: 999px; background: #eef2f7; overflow: hidden; }
+  .score-track span { display: block; height: 100%; border-radius: 999px; }
+  .score-high { background: #10b981; }
+  .score-mid { background: #f59e0b; }
+  .score-low { background: #ef4444; }
+  .score-value { width: 34px; text-align: right; font-weight: 600; color: #334155; font-variant-numeric: tabular-nums; }
+  .score-value.low { color: #b91c1c; }
+
+  @media (max-width: 1180px) {
+    .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .search { display: none; }
+  }
+  @media (max-width: 980px) {
+    .sidebar { width: 64px; flex-basis: 64px; }
+    .brand { justify-content: center; padding: 16px 0; }
+    .brand > div:last-child, .nav-label { display: none; }
+    .nav { padding: 6px; }
+    .nav-item { justify-content: center; padding: 10px 0; font-size: 0; gap: 0; }
+    .sidebar-foot { justify-content: center; padding: 12px 0; }
+    .topbar { padding: 0 16px; gap: 10px; }
+    .content { padding: 18px 16px 32px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">问</div>
+      <div>
+        <div class="brand-name">问账 QA</div>
+        <div class="brand-sub">Billing QA Console</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <div class="nav-label">工作台</div>
+      <a class="nav-item" href="#">
+        <svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg>
+        测试大盘
+      </a>
+      <a class="nav-item" href="#">
+        <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg>
+        用例资产
+      </a>
+      <a class="nav-item" href="#">
+        <svg viewBox="0 0 24 24"><path d="m8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14"/></svg>
+        Prompt 资产
+      </a>
+      <a class="nav-item active" href="#">
+        <svg viewBox="0 0 24 24"><path d="M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/></svg>
+        批量任务
+      </a>
+      <a class="nav-item" href="#">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3c0-.34-.03-.67-.1-1l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L14.8 3h-4l-.4 2.6a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.07-.33.1-.66.1-1Z"/></svg>
+        环境与模型
+      </a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="avatar">A</div>
+      <div>
+        <div style="font-size:12px;font-weight:600">admin</div>
+        <div style="font-size:10px;color:#94a3b8">管理员</div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb">批量任务 / <b>批量任务详情</b></div>
+      <div class="spacer"></div>
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        搜索任务、用例或执行号
+        <kbd>⌘K</kbd>
+      </div>
+      <div class="icon-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+      </div>
+      <div class="avatar sm">A</div>
+    </header>
+
+    <main class="content">
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">批量任务详情</h1>
+          <p class="page-sub">查看任务运行进度、指标与逐用例结果，并执行启动、终止与失败重跑等操作。</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="design-tag"><i></i>设计稿 V8 · 平均分与得分筛选排序</span>
+          <button class="btn">刷新</button>
+        </div>
+      </div>
+
+      <div class="change-note">
+        <span class="pill"><span class="dot"></span>① 本批次平均分</span>
+        <span class="pill"><span class="dot"></span>② 得分区间筛选</span>
+        <span class="pill"><span class="dot"></span>③ 按得分排序</span>
+        <span class="tip">新增能力均作用在「用例执行结果」列表；平均分按每用例最新一次有效得分计算</span>
+      </div>
+
+      <section class="card panel">
+        <header class="panel-head">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <h2 class="panel-title">批量任务详情</h2>
+              <span class="tag">批量</span>
+              <span class="status s-run" style="font-weight:600"><i></i>WebSocket 实时</span>
+            </div>
+            <p class="panel-sub" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px">
+              <span class="mono" style="color:#475569">BATCH20261118103015420</span>
+              <span>·</span><span>账单回归 11/18 10:30</span>
+              <span>·</span><span>7 条用例</span>
+              <span>·</span><span>账单测试环境</span>
+              <span>·</span><span>并发 3 / QPS 5</span>
+              <span>·</span><span>环境失败自动重试 2 次</span>
+            </p>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="status s-pass"><i></i>已完成</span>
+            <button class="btn">导出 Excel</button>
+            <button class="btn">失败重跑</button>
+          </div>
+        </header>
+
+        <div class="progress-block">
+          <div class="progress-top">
+            <span>7 / 7 条已完成</span>
+            <span class="num">100.0%</span>
+          </div>
+          <div class="progress-track"><span style="width:100%"></span></div>
+          <div class="dist-bar">
+            <span style="width:57.1%;background:#10b981"></span>
+            <span style="width:28.6%;background:#ef4444"></span>
+            <span style="width:14.3%;background:#f59e0b"></span>
+          </div>
+          <div class="legend">
+            <span><i style="background:#10b981"></i>通过 4</span>
+            <span><i style="background:#ef4444"></i>失败 2</span>
+            <span><i style="background:#f59e0b"></i>轮次超限 1</span>
+            <span><i style="background:#8b5cf6"></i>异常 0</span>
+            <span><i style="background:#64748b"></i>已终止 0</span>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div>
+            <div class="stat-label">进度</div>
+            <div class="stat-value">100%</div>
+            <div class="stat-hint">7 / 7 条已完成 · 耗时 6.2s</div>
+          </div>
+          <div>
+            <div class="stat-label">通过率</div>
+            <div class="stat-value">57.1%</div>
+            <div class="stat-hint">通过 4 条</div>
+          </div>
+          <div class="stat-score">
+            <div class="stat-label">本批次平均分 <span class="badge-num">1</span></div>
+            <div class="stat-value">73.3<small> / 100</small></div>
+            <div class="stat-hint">按 7 条用例最新得分计算</div>
+            <div class="score-mini"><span style="width:73.3%"></span></div>
+          </div>
+          <div>
+            <div class="stat-label">平均 TTFT</div>
+            <div class="stat-value">340<span style="font-size:11px;color:#94a3b8">ms</span></div>
+            <div class="stat-hint">首字响应</div>
+          </div>
+          <div>
+            <div class="stat-label">P95 时延</div>
+            <div class="stat-value">1.2<span style="font-size:11px;color:#94a3b8">s</span></div>
+            <div class="stat-hint">端到端</div>
+          </div>
+          <div>
+            <div class="stat-label">Tokens</div>
+            <div class="stat-value">12.4<span style="font-size:11px;color:#94a3b8">k</span></div>
+            <div class="stat-hint">模拟 0 / 裁判 12.4k</div>
+          </div>
+        </div>
+
+        <div class="results-head">
+          <div>
+            <div class="results-title">
+              <h3 class="panel-title">用例执行结果</h3>
+              <span class="results-avg">本批次平均分 <b>73.3</b></span>
+            </div>
+            <p class="panel-sub">按用例只保留最新一次尝试；点击行进入该用例的单笔执行结果页。</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="mode-split"><span class="on">用例最新</span><span>全部尝试</span></div>
+            <span style="font-size:11px;color:#94a3b8">共 6 条用例</span>
+          </div>
+        </div>
+
+        <div class="filter-bar">
+          <div class="field w-status">
+            <label>执行状态</label>
+            <div class="control">
+              <span style="flex:1">全部状态</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+          <div class="field w-search">
+            <label>用例搜索</label>
+            <div class="control">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+              <input placeholder="搜索用例编号 / 名称" />
+            </div>
+          </div>
+          <div class="field">
+            <div class="range-head">
+              <span class="range-label">得分区间 <span class="badge-num">2</span></span>
+              <span class="range-readout">50 – 100</span>
+            </div>
+            <div class="range-slider">
+              <div class="range-track">
+                <span class="range-fill" style="left:50%;right:0"></span>
+                <span class="range-thumb" style="left:50%"></span>
+                <span class="range-thumb" style="left:100%"></span>
+              </div>
+              <div class="range-scale"><span>0</span><span>100</span></div>
+            </div>
+          </div>
+          <div class="field w-sort">
+            <label>排序方式 <span class="badge-num">3</span></label>
+            <div class="control">
+              <span style="flex:1">得分从高到低</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+          <button class="reset-btn">重置筛选</button>
+          <div class="filter-spacer"></div>
+          <div class="score-hint" style="align-self:center">
+            当前命中 <b>6</b> 条 · 筛选区间 <b>50 – 100</b>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>执行号</th>
+                <th>用例</th>
+                <th>状态</th>
+                <th><span class="sortable">得分 <span class="arrow">▼</span></span></th>
+                <th>轮次</th>
+                <th>尝试</th>
+                <th>时延</th>
+                <th>开始时间</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="mono" style="color:#94a3b8">#245</td>
+                <td><div class="case-code">DEMO-SINGLE-001</div><div class="case-name">单轮 · 标准账单查询 · v1</div></td>
+                <td><span class="status s-pass"><i></i>通过</span></td>
+                <td>
+                  <div class="score-cell">
+                    <span class="score-track"><span class="score-high" style="width:96%"></span></span>
+                    <span class="score-value">96.0</span>
+                  </div>
+                </td>
+                <td class="num">1</td><td class="num">1</td><td class="num">362ms</td><td class="case-name">11/18 10:30:33</td>
+                <td><button class="row-btn">查看结果</button></td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:#94a3b8">#244</td>
+                <td><div class="case-code">API-SMOKE-1794576016</div><div class="case-name">API 冒烟用例 · v3</div></td>
+                <td><span class="status s-pass"><i></i>通过</span></td>
+                <td>
+                  <div class="score-cell">
+                    <span class="score-track"><span class="score-high" style="width:94%"></span></span>
+                    <span class="score-value">94.0</span>
+                  </div>
+                </td>
+                <td class="num">1</td><td class="num">1</td><td class="num">377ms</td><td class="case-name">11/18 10:30:33</td>
+                <td><button class="row-btn">查看结果</button></td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:#94a3b8">#239</td>
+                <td><div class="case-code">API-SMOKE-1794573004</div><div class="case-name">API 冒烟用例 · v3</div></td>
+                <td><span class="status s-pass"><i></i>通过</span></td>
+                <td>
+                  <div class="score-cell">
+                    <span class="score-track"><span class="score-high" style="width:94%"></span></span>
+                    <span class="score-value">94.0</span>
+                  </div>
+                </td>
+                <td class="num">1</td><td class="num">1</td><td class="num">297ms</td><td class="case-name">11/18 10:30:30</td>
+                <td><button class="row-btn">查看结果</button></td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:#94a3b8">#242</td>
+                <td><div class="case-code">DEMO-DYNAMIC-001</div><div class="case-name">动态多轮 · 隐藏信息释放 · v1</div></td>
+                <td><span class="status s-pass"><i></i>通过</span></td>
+                <td>
+                  <div class="score-cell">
+                    <span class="score-track"><span class="score-high" style="width:92%"></span></span>
+                    <span class="score-value">92.0</span>
+                  </div>
+                </td>
+                <td class="num">3</td><td class="num">1</td><td class="num">982ms</td><td class="case-name">11/18 10:30:32</td>
+                <td><button class="row-btn">查看结果</button></td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:#94a3b8">#243</td>
+                <td><div class="case-code">DEMO-DYNAMIC-MAXTURNS</div><div class="case-name">动态多轮 · 最大轮次熔断 · v1</div></td>
+                <td><span class="status s-warn"><i></i>轮次超限</span></td>
+                <td>
+                  <div class="score-cell">
+                    <span class="score-track"><span class="score-mid" style="width:61%"></span></span>
+                    <span class="score-value">61.0</span>
+                  </div>
+                </td>
+                <td class="num">3</td><td class="num">1</td><td class="num">1.36s</td><td class="case-name">11/18 10:30:32</td>
+                <td><button class="row-btn">查看结果</button></td>
+              </tr>
+              <tr>
+                <td class="mono" style="color:#94a3b8">#241</td>
+                <td><div class="case-code">DEMO-STATIC-001</div><div class="case-name">静态多轮 · 指代继承与明细追问 · v1</div></td>
+                <td><span class="status s-fail"><i></i>失败</span></td>
+                <td>
+                  <div class="score-cell">
+                    <span class="score-track"><span class="score-low" style="width:58%"></span></span>
+                    <span class="score-value low">58.0</span>
+                  </div>
+                </td>
+                <td class="num">2</td><td class="num">1</td><td class="num">744ms</td><td class="case-name">11/18 10:30:31</td>
+                <td><button class="row-btn">查看结果</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-foot">
+          <span>第 1 / 1 页</span>
+          <span>得分 96.0 / 94.0 / 94.0 / 92.0 / 61.0 / 58.0 · 平均 73.3</span>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+</body>
+</html>

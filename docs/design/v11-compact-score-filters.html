@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>设计稿 V11 · 紧凑型得分筛选 · 问账 QA</title>
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --card: #fff;
+    --border: #e6eaf2;
+    --text: #0f172a;
+    --muted: #64748b;
+    --faint: #94a3b8;
+    --accent: #4f46e5;
+    --accent-soft: #eef2ff;
+    --shadow: 0 1px 2px rgba(15,23,42,.04), 0 12px 32px -20px rgba(15,23,42,.18);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; font-size: 13px; line-height: 1.5; }
+  .shell { display: flex; min-height: 100vh; }
+  .sidebar { width: 232px; flex: 0 0 232px; background: #fff; border-right: 1px solid var(--border); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 20px 20px 18px; }
+  .brand-logo { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg,#6366f1,#22d3ee); color: #fff; font-weight: 700; font-size: 15px; box-shadow: 0 8px 18px -8px rgba(79,70,229,.55); }
+  .brand-name { font-weight: 650; font-size: 14px; }
+  .brand-sub { font-size: 10px; color: var(--faint); letter-spacing: .6px; text-transform: uppercase; }
+  .nav { padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .nav-label { padding: 12px 10px 6px; font-size: 10px; letter-spacing: .8px; color: var(--faint); text-transform: uppercase; }
+  .nav-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 9px; color: #475569; text-decoration: none; font-weight: 500; }
+  .nav-item svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .sidebar-foot { margin-top: auto; padding: 14px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: #e2e8f0; color: #475569; display: grid; place-items: center; font-weight: 600; font-size: 12px; }
+
+  .main { flex: 1; min-width: 0; }
+  .topbar { height: 64px; background: rgba(255,255,255,.82); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; padding: 0 26px; position: sticky; top: 0; z-index: 5; }
+  .crumb { color: var(--faint); font-size: 12px; }
+  .crumb b { color: var(--text); font-weight: 600; }
+  .topbar .spacer { flex: 1; }
+  .icon-btn { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--border); background: #fff; display: grid; place-items: center; color: var(--muted); }
+  .avatar.sm { width: 30px; height: 30px; }
+
+  .content { padding: 24px 26px 40px; max-width: 1440px; margin: 0 auto; }
+  .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .page-title { font-size: 21px; font-weight: 700; letter-spacing: -.3px; margin: 0; }
+  .page-sub { margin: 6px 0 0; color: var(--muted); font-size: 12px; max-width: 860px; }
+  .design-tag { display: inline-flex; align-items: center; gap: 6px; background: #fff; border: 1px solid var(--border); color: var(--muted); border-radius: 999px; padding: 4px 10px; font-size: 11px; white-space: nowrap; }
+  .design-tag i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+  .compare { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
+  .option { background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+  .option-head { display: flex; align-items: center; gap: 12px; padding: 13px 18px; border-bottom: 1px solid #f0f3f8; }
+  .option-badge { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 12px; }
+  .option-title { font-size: 13px; font-weight: 650; margin: 0; }
+  .option-desc { margin: 2px 0 0; font-size: 11px; color: var(--faint); }
+  .option-head .tag { margin-left: auto; }
+  .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; border: 1px solid #c7d2fe; background: var(--accent-soft); color: #4338ca; }
+  .tag.ghost { border-color: var(--border); background: #fff; color: var(--faint); font-weight: 500; }
+
+  .demo { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; padding: 16px 18px 18px; align-items: start; }
+  .demo.single { grid-template-columns: 1fr; }
+  .state-label { margin: 0 0 7px; font-size: 10px; color: var(--faint); letter-spacing: .4px; text-transform: uppercase; }
+  .filter-bar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; padding: 11px; border: 1px solid var(--border); border-radius: 11px; background: #fbfcff; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field > label { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--faint); letter-spacing: .3px; }
+  .w-tag { font-size: 9px; color: #a5b4d4; font-weight: 500; letter-spacing: 0; }
+  .control { height: 32px; border: 1px solid var(--border); border-radius: 8px; background: #fff; padding: 0 10px; font: inherit; font-size: 11.5px; color: #334155; display: flex; align-items: center; gap: 7px; }
+  .control svg { color: var(--faint); flex: 0 0 auto; }
+  .control .grow { flex: 1; }
+  .w-status { width: 140px; }
+  .w-search { width: 206px; }
+  .w-sort { width: 150px; }
+  .reset-btn { height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--muted); font-size: 11px; }
+  .filter-spacer { flex: 1; }
+  .score-hint { font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+  .score-hint b { color: #4338ca; font-weight: 600; }
+
+  /* ---------- I 微型胶囊 ---------- */
+  .mini-chip { height: 32px; display: inline-flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid #c7d2fe; border-radius: 8px; background: #eef2ff; color: #4338ca; font-size: 11px; font-weight: 600; }
+  .mini-bar { width: 32px; height: 5px; border-radius: 999px; background: #dbe4ff; overflow: hidden; position: relative; }
+  .mini-bar i { position: absolute; top: 0; bottom: 0; left: 50%; right: 0; background: #4f46e5; border-radius: 999px; }
+  .caret { font-size: 9px; color: #818cf8; }
+
+  /* ---------- J 表头漏斗 ---------- */
+  .mini-panel { border: 1px solid var(--border); border-radius: 10px; background: #fff; overflow: hidden; }
+  .mini-head { display: flex; align-items: center; height: 38px; padding: 0 12px; background: #fbfcfe; border-bottom: 1px solid var(--border); font-size: 10px; font-weight: 600; letter-spacing: .4px; color: var(--faint); text-transform: uppercase; }
+  .mini-head > span { padding: 0 8px; }
+  .score-th { position: relative; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; color: #4338ca; }
+  .funnel-btn { width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 5px; background: #eef2ff; color: #4f46e5; }
+  .mini-row { display: flex; align-items: center; height: 40px; padding: 0 12px; border-bottom: 1px solid #f0f3f8; font-size: 11px; color: var(--muted); }
+  .mini-row > span { padding: 0 8px; }
+
+  /* ---------- 浮层 ---------- */
+  .pop-card { width: 272px; border: 1px solid var(--border); border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 20px 44px -28px rgba(15,23,42,.45); padding: 13px; }
+  .pop-card .pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .pop-title { font-size: 12px; font-weight: 650; }
+  .pop-clear { border: 0; background: transparent; color: var(--faint); font-size: 10.5px; padding: 0; }
+  .pop-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 10px; color: var(--faint); margin-bottom: 5px; }
+  .pop-label b { color: #4338ca; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .dual { position: relative; height: 26px; margin: 0 6px; }
+  .dual-track { position: absolute; left: 0; right: 0; top: 14px; height: 4px; border-radius: 999px; background: #e8edf7; }
+  .dual-fill { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: linear-gradient(90deg,#818cf8,#4f46e5); }
+  .dual-thumb { position: absolute; top: 50%; width: 13px; height: 13px; border-radius: 50%; background: #fff; border: 2px solid #4f46e5; transform: translate(-50%,-50%); box-shadow: 0 2px 5px rgba(79,70,229,.3), 0 0 0 2px #eef2ff; }
+  .dual-scale { display: flex; justify-content: space-between; font-size: 9px; color: var(--faint); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .quick-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+  .quick { font-size: 10px; color: #475569; border: 1px solid var(--border); background: #fff; border-radius: 999px; padding: 2px 8px; }
+  .quick.on { color: #4338ca; border-color: #c7d2fe; background: #eef2ff; font-weight: 600; }
+  .pop-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 11px; padding-top: 9px; border-top: 1px solid #f0f3f8; font-size: 10.5px; color: var(--faint); }
+  .pop-foot b { color: #4338ca; }
+  .pop-done { height: 26px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 600; }
+
+  /* ---------- K 快捷档位 ---------- */
+  .preset-select { width: 124px; }
+  .preset { height: 32px; width: 100%; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; background: #fff; display: flex; align-items: center; gap: 6px; font-size: 11px; color: #334155; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #4f46e5; }
+  .preset .caret { margin-left: auto; }
+  .dropdown { width: 158px; margin-top: 7px; border: 1px solid var(--border); border-radius: 10px; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 20px 40px -26px rgba(15,23,42,.4); padding: 4px; }
+  .dd-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: 7px; font-size: 11px; color: #475569; }
+  .dd-item.on { background: #eef2ff; color: #4338ca; font-weight: 600; }
+  .dd-item small { color: var(--faint); font-size: 9.5px; font-variant-numeric: tabular-nums; }
+
+  /* ---------- L 内联微型滑块 ---------- */
+  .inline-range { width: 154px; height: 32px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; background: #fff; display: flex; align-items: center; gap: 7px; }
+  .inline-val { width: 22px; font-size: 10px; font-weight: 650; color: #4338ca; font-variant-numeric: tabular-nums; }
+  .inline-val.right { text-align: right; }
+  .inline-track { position: relative; flex: 1; height: 4px; border-radius: 999px; background: #e8edf7; }
+  .inline-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 999px; background: linear-gradient(90deg,#818cf8,#4f46e5); }
+  .inline-thumb { position: absolute; top: 50%; width: 10px; height: 10px; border-radius: 50%; background: #fff; border: 1.5px solid #4f46e5; transform: translate(-50%,-50%); box-shadow: 0 1px 3px rgba(79,70,229,.35); }
+
+  .footer-note { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--faint); }
+  @media (max-width: 980px) {
+    .sidebar { width: 64px; flex-basis: 64px; }
+    .brand { justify-content: center; padding: 16px 0; }
+    .brand > div:last-child, .nav-label { display: none; }
+    .nav { padding: 6px; }
+    .nav-item { justify-content: center; padding: 10px 0; font-size: 0; gap: 0; }
+    .sidebar-foot { justify-content: center; padding: 12px 0; }
+    .content { padding: 18px 16px 32px; }
+    .demo { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">问</div>
+      <div><div class="brand-name">问账 QA</div><div class="brand-sub">Billing QA Console</div></div>
+    </div>
+    <nav class="nav">
+      <div class="nav-label">工作台</div>
+      <a class="nav-item" href="#"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg>测试大盘</a>
+      <a class="nav-item" href="#"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg>用例资产</a>
+      <a class="nav-item" href="#"><svg viewBox="0 0 24 24"><path d="m8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14"/></svg>Prompt 资产</a>
+      <a class="nav-item active" href="#"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/></svg>批量任务</a>
+      <a class="nav-item" href="#"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3c0-.34-.03-.67-.1-1l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L14.8 3h-4l-.4 2.6a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.07-.33.1-.66.1-1Z"/></svg>环境与模型</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="avatar">A</div>
+      <div><div style="font-size:12px;font-weight:600">admin</div><div style="font-size:10px;color:#94a3b8">管理员</div></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb">批量任务 / 任务详情 / <b>得分筛选</b></div>
+      <div class="spacer"></div>
+      <div class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></div>
+      <div class="avatar sm">A</div>
+    </header>
+
+    <main class="content">
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">紧凑型得分筛选</h1>
+          <p class="page-sub">默认态尽量小：一个胶囊、一个漏斗，或一组微缩控件；需要精细调整时再展开，不再让整条滑块占满筛选栏。</p>
+        </div>
+        <span class="design-tag"><i></i>设计稿 V11 · 4 个紧凑方案</span>
+      </div>
+
+      <div class="compare">
+        <!-- I -->
+        <article class="option">
+          <header class="option-head">
+            <div class="option-badge">I</div>
+            <div>
+              <h2 class="option-title">微型胶囊 + 浮层</h2>
+              <p class="option-desc">默认只占 ≈ 118 × 32，带一条 32px 迷你进度条；点开后再出现滑块与快捷区间。</p>
+            </div>
+            <span class="tag">推荐</span>
+          </header>
+          <div class="demo">
+            <div>
+              <p class="state-label">默认态</p>
+              <div class="filter-bar">
+                <div class="field w-status"><label>执行状态</label><div class="control"><span class="grow">全部状态</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div>
+                <div class="field w-search"><label>用例搜索</label><div class="control"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="grow" style="color:#94a3b8">搜索用例编号 / 名称</span></div></div>
+                <div class="field"><label>得分区间 <span class="w-tag">≈ 118px</span></label><button class="mini-chip"><span class="mini-bar"><i></i></span>50–100<span class="caret">▾</span></button></div>
+                <div class="field w-sort"><label>排序方式</label><div class="control"><span class="grow">得分从高到低</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div>
+                <button class="reset-btn">重置</button>
+                <div class="filter-spacer"></div>
+                <div class="score-hint">命中 <b>6</b> 条</div>
+              </div>
+            </div>
+            <div>
+              <p class="state-label">展开态</p>
+              <div class="pop-card">
+                <div class="pop-head"><span class="pop-title">得分区间</span><button class="pop-clear">重置</button></div>
+                <div class="pop-label"><span>拖动两端调整</span><b>50 – 100</b></div>
+                <div class="dual">
+                  <div class="dual-track"><span class="dual-fill" style="left:50%;right:0"></span><span class="dual-thumb" style="left:50%"></span><span class="dual-thumb" style="left:100%"></span></div>
+                </div>
+                <div class="dual-scale"><span>0</span><span>60</span><span>80</span><span>100</span></div>
+                <div class="quick-row"><span class="quick on">全部</span><span class="quick">≥ 90</span><span class="quick">80 – 89</span><span class="quick">60 – 79</span><span class="quick">&lt; 60</span></div>
+                <div class="pop-foot"><span>命中 <b>6</b> 条</span><button class="pop-done">完成</button></div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- J -->
+        <article class="option">
+          <header class="option-head">
+            <div class="option-badge">J</div>
+            <div>
+              <h2 class="option-title">表头漏斗</h2>
+              <p class="option-desc">筛选栏零占位：只在「得分」表头放一个 18px 漏斗按钮，点击弹出排序 + 区间。</p>
+            </div>
+            <span class="tag ghost">最省空间</span>
+          </header>
+          <div class="demo">
+            <div>
+              <p class="state-label">默认态</p>
+              <div class="filter-bar">
+                <div class="field w-status"><label>执行状态</label><div class="control"><span class="grow">全部状态</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div>
+                <div class="field w-search"><label>用例搜索</label><div class="control"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="grow" style="color:#94a3b8">搜索用例编号 / 名称</span></div></div>
+                <div class="field w-sort"><label>排序方式</label><div class="control"><span class="grow">得分从高到低</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div>
+                <button class="reset-btn">重置</button>
+                <div class="filter-spacer"></div>
+                <div class="score-hint">已筛选 <b>50–100</b> · 命中 <b>6</b> 条</div>
+              </div>
+              <div class="mini-panel" style="margin-top: 10px">
+                <div class="mini-head">
+                  <span style="width:56px">执行号</span>
+                  <span style="width:180px">用例</span>
+                  <span style="width:56px">状态</span>
+                  <span class="score-th" style="width:86px">得分 ▼<span class="funnel-btn"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z"/></svg></span></span>
+                  <span style="width:44px">轮次</span>
+                </div>
+                <div class="mini-row"><span style="width:56px">#245</span><span style="width:180px">DEMO-SINGLE-001</span><span style="width:56px">通过</span><span style="width:86px;color:#334155;font-weight:600">96.0</span><span style="width:44px">1</span></div>
+              </div>
+            </div>
+            <div>
+              <p class="state-label">点击漏斗后</p>
+              <div class="pop-card">
+                <div class="pop-head"><span class="pop-title">得分</span><button class="pop-clear">清除</button></div>
+                <div class="pop-label"><span>排序</span></div>
+                <div class="quick-row" style="margin-top:0"><span class="quick on">高 → 低</span><span class="quick">低 → 高</span><span class="quick">默认</span></div>
+                <div class="pop-label" style="margin-top:10px"><span>区间</span><b>50 – 100</b></div>
+                <div class="dual">
+                  <div class="dual-track"><span class="dual-fill" style="left:50%;right:0"></span><span class="dual-thumb" style="left:50%"></span><span class="dual-thumb" style="left:100%"></span></div>
+                </div>
+                <div class="dual-scale"><span>0</span><span>60</span><span>80</span><span>100</span></div>
+                <div class="quick-row"><span class="quick on">全部</span><span class="quick">≥ 90</span><span class="quick">80 – 89</span><span class="quick">60 – 79</span><span class="quick">&lt; 60</span></div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- K -->
+        <article class="option">
+          <header class="option-head">
+            <div class="option-badge">K</div>
+            <div>
+              <h2 class="option-title">快捷档位下拉</h2>
+              <p class="option-desc">彻底去掉滑块：一个 124px 下拉，直接选「全部 / ≥90 / 80–89 / 60–79 / &lt;60 / 自定义」。</p>
+            </div>
+            <span class="tag ghost">最简单</span>
+          </header>
+          <div class="demo">
+            <div>
+              <p class="state-label">默认态</p>
+              <div class="filter-bar">
+                <div class="field w-status"><label>执行状态</label><div class="control"><span class="grow">全部状态</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div>
+                <div class="field w-search"><label>用例搜索</label><div class="control"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="grow" style="color:#94a3b8">搜索用例编号 / 名称</span></div></div>
+                <div class="field preset-select"><label>得分 <span class="w-tag">≈ 124px</span></label><div class="preset"><span class="dot"></span><span class="grow">≥ 60</span><span class="caret">▾</span></div></div>
+                <div class="field w-sort"><label>排序方式</label><div class="control"><span class="grow">得分从高到低</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div>
+                <button class="reset-btn">重置</button>
+                <div class="filter-spacer"></div>
+                <div class="score-hint">命中 <b>6</b> 条</div>
+              </div>
+            </div>
+            <div>
+              <p class="state-label">下拉选项</p>
+              <div class="dropdown">
+                <div class="dd-item">全部得分 <small>7</small></div>
+                <div class="dd-item on">≥ 60 <small>6</small></div>
+                <div class="dd-item">≥ 90 <small>4</small></div>
+                <div class="dd-item">80 – 89 <small>0</small></div>
+                <div class="dd-item">60 – 79 <small>1</small></div>
+                <div class="dd-item">&lt; 60 <small>2</small></div>
+                <div class="dd-item">自定义区间… </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- L -->
+        <article class="option">
+          <header class="option-head">
+            <div class="option-badge">L</div>
+            <div>
+              <h2 class="option-title">内联微型滑块</h2>
+              <p class="option-desc">常驻显示，不点开：两端数字 + 中间 100px 轨道，整个控件 ≈ 154 × 32，仍保留拖动。</p>
+            </div>
+            <span class="tag ghost">常驻可拖</span>
+          </header>
+          <div class="demo single">
+            <div>
+              <p class="state-label">默认态</p>
+              <div class="filter-bar">
+                <div class="field w-status"><label>执行状态</label><div class="control"><span class="grow">全部状态</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div>
+                <div class="field w-search"><label>用例搜索</label><div class="control"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="grow" style="color:#94a3b8">搜索用例编号 / 名称</span></div></div>
+                <div class="field"><label>得分区间 <span class="w-tag">≈ 154px</span></label><div class="inline-range"><span class="inline-val">50</span><div class="inline-track"><span class="inline-fill" style="left:0;right:0"></span><span class="inline-thumb" style="left:50%"></span><span class="inline-thumb" style="left:100%"></span></div><span class="inline-val right">100</span></div></div>
+                <div class="field w-sort"><label>排序方式</label><div class="control"><span class="grow">得分从高到低</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div>
+                <button class="reset-btn">重置</button>
+                <div class="filter-spacer"></div>
+                <div class="score-hint">命中 <b>6</b> 条</div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="footer-note">
+        推荐顺序：I（默认小、可精确）→ K（完全无滑块、最快）→ J（零占位，但需要用户发现表头漏斗）→ L（常驻可拖，但最宽）。
+      </div>
+    </main>
+  </div>
+</div>
+</body>
+</html>

@@ -39,6 +39,9 @@ const executionPageSize = 30
 const latestPerCase = ref(true)
 const executionStatus = ref('')
 const executionKeyword = ref('')
+const executionMinScore = ref<number | null>(null)
+const executionMaxScore = ref<number | null>(null)
+const executionSort = ref<'' | 'score_desc' | 'score_asc'>('')
 const live = ref(false)
 const loading = ref(true)
 const notFound = ref(false)
@@ -127,16 +130,40 @@ function executionQuery() {
     latest_per_case: latestPerCase.value,
     status: executionStatus.value || undefined,
     keyword: executionKeyword.value.trim() || undefined,
+    min_score: executionMinScore.value ?? undefined,
+    max_score: executionMaxScore.value ?? undefined,
+    sort: executionSort.value || undefined,
   }
 }
 
 function matchesExecutionFilters(item: CaseExecutionItem): boolean {
   if (executionStatus.value && item.status !== executionStatus.value) return false
+  const score = item.total_score
+  if (executionMinScore.value !== null) {
+    if (score === null || score === undefined || score < executionMinScore.value) return false
+  }
+  if (executionMaxScore.value !== null) {
+    if (score === null || score === undefined || score > executionMaxScore.value) return false
+  }
   const keyword = executionKeyword.value.trim().toLowerCase()
   if (!keyword) return true
   return [item.case_code, item.case_name].some((value) =>
     (value ?? '').toLowerCase().includes(keyword),
   )
+}
+
+function sortExecutions(): void {
+  if (!executionSort.value) return
+  const direction = executionSort.value === 'score_asc' ? 1 : -1
+  executions.value = [...executions.value].sort((left, right) => {
+    const leftScore = left.total_score
+    const rightScore = right.total_score
+    if (leftScore === null || leftScore === undefined) {
+      return rightScore === null || rightScore === undefined ? right.id - left.id : 1
+    }
+    if (rightScore === null || rightScore === undefined) return -1
+    return (leftScore - rightScore) * direction || right.id - left.id
+  })
 }
 
 function runProgress(run: BatchTask): number {
@@ -305,6 +332,7 @@ function applyEvent(event: TaskProgressEvent): void {
       }
       executions.value = executions.value.slice(0, executionPageSize)
     }
+    sortExecutions()
   }
   if (event.status && ['COMPLETED', 'ABORTED', 'FAILED'].includes(event.status)) {
     disconnectSocket()
@@ -446,9 +474,22 @@ function changeMode(next: boolean): void {
   if (task.value) void loadExecutions(task.value.id)
 }
 
-function applyExecutionFilters(next: { status: string; keyword: string }): void {
+function applyExecutionFilters(next: {
+  status: string
+  keyword: string
+  minScore: number | null
+  maxScore: number | null
+  sort: '' | 'score_desc' | 'score_asc'
+}): void {
+  if (next.minScore !== null && next.maxScore !== null && next.minScore > next.maxScore) {
+    toast.error('最低分不能大于最高分')
+    return
+  }
   executionStatus.value = next.status
   executionKeyword.value = next.keyword
+  executionMinScore.value = next.minScore
+  executionMaxScore.value = next.maxScore
+  executionSort.value = next.sort
   executionPage.value = 1
   if (task.value) void loadExecutions(task.value.id)
 }
@@ -614,6 +655,9 @@ watch(
     latestPerCase.value = true
     executionStatus.value = ''
     executionKeyword.value = ''
+    executionMinScore.value = null
+    executionMaxScore.value = null
+    executionSort.value = ''
     void loadRoot()
   },
   { immediate: true },
@@ -906,6 +950,9 @@ onBeforeUnmount(() => {
           :latest-per-case="latestPerCase"
           :execution-status="executionStatus"
           :execution-keyword="executionKeyword"
+          :execution-min-score="executionMinScore"
+          :execution-max-score="executionMaxScore"
+          :execution-sort="executionSort"
           :exporting="exporting"
           @start="startTask"
           @abort="abortTask"
@@ -934,6 +981,9 @@ onBeforeUnmount(() => {
         :latest-per-case="latestPerCase"
         :execution-status="executionStatus"
         :execution-keyword="executionKeyword"
+        :execution-min-score="executionMinScore"
+        :execution-max-score="executionMaxScore"
+        :execution-sort="executionSort"
         :exporting="exporting"
         @start="startTask"
         @abort="abortTask"
