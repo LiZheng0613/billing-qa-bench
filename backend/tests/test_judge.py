@@ -273,6 +273,54 @@ def test_judge_one_recovers_after_format_retry(monkeypatch: Any) -> None:
     assert outcome.completion_tokens == 110
 
 
+def test_judge_one_uses_configured_temperature_by_default(monkeypatch: Any) -> None:
+    """不显式传温度时应透传 None，让客户端回退到模型配置（未配置即 0.0）。"""
+    captured: list[float | None] = []
+
+    class FakeClient:
+        def __init__(self, model: Any) -> None:
+            self.model = model
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def chat(self, *args: Any, **kwargs: Any) -> Any:
+            captured.append(kwargs.get("temperature"))
+            return SimpleNamespace(
+                content='{"pass": true, "total_score": 88}',
+                prompt_tokens=1,
+                completion_tokens=1,
+            )
+
+    monkeypatch.setattr("billing_qa.services.engine.judge.LLMClient", FakeClient)
+    model = SimpleNamespace(id=10, name="裁判", model_name="mock/judge-c")
+
+    asyncio.run(
+        _judge_one(
+            model,  # type: ignore[arg-type]
+            "评分",
+            termination_status="COMPLETED",
+            threshold=60,
+            temperature=None,
+        )
+    )
+    assert captured == [None]
+
+    asyncio.run(
+        _judge_one(
+            model,  # type: ignore[arg-type]
+            "评分",
+            termination_status="COMPLETED",
+            threshold=60,
+            temperature=0.35,
+        )
+    )
+    assert captured[-1] == 0.35
+
+
 def test_run_judges_avg_strategy(monkeypatch: Any) -> None:
     async def fake_judge_one(model: Any, prompt: str, **kwargs: Any) -> JudgeOutcome:
         score = 90 if model.name == "A" else 70

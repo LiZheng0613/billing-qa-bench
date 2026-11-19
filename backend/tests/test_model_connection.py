@@ -415,6 +415,82 @@ async def test_opencode_catalog_reuses_saved_credentials(monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
+async def test_openai_payload_uses_model_temperature_and_top_p(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI 兼容链路：温度缺省用模型配置，显式传参可覆盖，top_p 非空即发送。"""
+    captured: list[dict] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self) -> dict:
+            return {
+                "choices": [{"message": {"content": '{"ok": true}'}}],
+                "usage": {},
+            }
+
+    class FakeHttp:
+        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
+            captured.append(json)
+            return FakeResponse()
+
+    context = ModelContext(
+        id=1,
+        code="OA-JUDGE",
+        name="OpenAI 裁判",
+        role="JUDGE",
+        base_url="http://127.0.0.1:8001/v1",
+        api_key=None,
+        model_name="mock/judge-temp",
+        temperature=0.35,
+        top_p=0.8,
+        max_tokens=256,
+        timeout_seconds=10,
+        rpm_limit=60,
+        max_retries=0,
+        response_format_json=True,
+    )
+    client = LLMClient(context)
+    monkeypatch.setattr(client, "_http", lambda: FakeHttp())
+
+    await client.chat([{"role": "user", "content": "hi"}], json_mode=True)
+    assert captured[-1]["temperature"] == 0.35
+    assert captured[-1]["top_p"] == 0.8
+
+    # 显式覆盖优先级最高
+    await client.chat([{"role": "user", "content": "hi"}], json_mode=True, temperature=0.0)
+    assert captured[-1]["temperature"] == 0.0
+
+    # top_p 未配置时不发送
+    context.top_p = None
+    await client.chat([{"role": "user", "content": "hi"}], json_mode=True)
+    assert "top_p" not in captured[-1]
+
+
+def test_judge_effective_temperature_defaults_to_zero() -> None:
+    """JUDGE 角色未配置温度时默认 0，配置后以配置值为准。"""
+    model = ModelConfig(
+        code="OA-JUDGE-DEFAULT",
+        name="裁判默认温度",
+        role="JUDGE",
+        connection_type=ModelConnectionType.OPENAI_COMPATIBLE.value,
+        base_url="http://127.0.0.1:8001/v1",
+        model_name="mock/judge-temp",
+        temperature=None,
+        top_p=None,
+        timeout_seconds=30,
+        rpm_limit=10,
+        max_retries=0,
+        response_format_json=True,
+    )
+    assert model.effective_temperature == 0.0
+    model.temperature = 0.35
+    assert model.effective_temperature == 0.35
+
+
+@pytest.mark.asyncio
 async def test_opencode_catalog_requires_serve_url() -> None:
     with pytest.raises(ValidationError):
         await opencode_catalog(OpenCodeCatalogRequest(), db=object())  # type: ignore[arg-type]
