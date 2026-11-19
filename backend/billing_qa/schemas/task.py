@@ -293,6 +293,8 @@ class ExecutionPassRate(BaseModel):
 
 class ExecutionDetail(ExecutionListItem):
     environment_id: int | None
+    # 本次执行实际使用的环境名称（任务指定环境优先于用例绑定环境）
+    environment_name: str | None = None
     max_turns: int | None
     simulator_template_version: int | None
     judge_template_version: int | None

@@ -192,6 +192,11 @@ async def build_execution_detail(
     base = execution_to_item(
         record, task_name=task_name, case_code=case_code, case_name=case_name
     )
+    environment_name: str | None = None
+    if record.environment_id:
+        environment_name = await db.scalar(
+            select(Environment.name).where(Environment.id == record.environment_id)
+        )
     raw_payloads = [
         {
             "turn": turn.turn_index,
@@ -203,6 +208,7 @@ async def build_execution_detail(
     return ExecutionDetail(
         **base.model_dump(),
         environment_id=record.environment_id,
+        environment_name=environment_name,
         max_turns=record.max_turns,
         simulator_template_version=record.simulator_template_version,
         judge_template_version=record.judge_template_version,
@@ -224,9 +230,14 @@ async def build_execution_detail(
 
 
 def task_to_out(
-    task: BatchTask, *, env_name: str | None = None, run_count: int = 0
+    task: BatchTask,
+    *,
+    env_name: str | None = None,
+    run_count: int = 0,
+    unfinished_cases: int = 0,
 ) -> TaskOut:
     data = TaskOut.model_validate(task)
     data.environment_name = env_name
     data.run_count = run_count
+    data.unfinished_cases = unfinished_cases
     return data

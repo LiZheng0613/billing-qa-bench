@@ -129,28 +129,33 @@ async def test_demo_case_execution(case_code: str, expected_status: str) -> None
 
 
 async def test_task_environment_overrides_case_snapshot() -> None:
-    """任务显式指定的环境优先于用例快照中的环境。"""
+    """任务显式指定的环境优先于用例快照中的环境（含实际请求地址）。"""
     if not await _dependencies_ready():
         pytest.skip("PostgreSQL 或 Mock 服务不可用")
     loaded = await _load_demo_case("DEMO-SINGLE-001")
     if loaded is None:
         pytest.skip("演示用例 DEMO-SINGLE-001 未初始化，请先执行 init_db --demo")
-    _, _, snapshot = loaded
+    case_id, version, snapshot = loaded
     case_env_id = snapshot.get("environment_id")
     if not case_env_id:
         pytest.skip("演示用例未绑定环境")
 
     override_id: int | None = None
+    execution_id: int | None = None
     async with SessionLocal() as db:
         case_env = await db.get(Environment, case_env_id)
         assert case_env is not None
+        override_path = "/api/v1/chat" if case_env.api_path != "/api/v1/chat" else "/api/chat"
         override = Environment(
             code=f"PYTEST-ENV-OVERRIDE-{uuid.uuid4().hex[:8]}",
             name="pytest 任务指定环境",
             base_url=case_env.base_url,
             health_path=case_env.health_path,
             api_method=case_env.api_method,
-            api_path=case_env.api_path,
+            api_path=override_path,
+            is_stream=False,
+            timeout_seconds=case_env.timeout_seconds or 30,
+            verify_ssl=case_env.verify_ssl,
             is_active=True,
         )
         db.add(override)
@@ -164,7 +169,45 @@ async def test_task_environment_overrides_case_snapshot() -> None:
                 db, snapshot, default_environment_id=override_id
             )
         assert ctx.env.id == override_id
+
+        execution_id = await CaseExecutor().execute(
+            case_id=case_id,
+            case_version=version,
+            snapshot=snapshot,
+            source="DEBUG",
+            environment_id=override_id,
+        )
+        async with SessionLocal() as db:
+            record = await db.get(ExecutionRecord, execution_id)
+            assert record is not None
+            assert record.environment_id == override_id
+            # 执行快照也应固化为任务指定环境，避免轨迹里仍显示用例原环境
+            assert record.case_snapshot["environment_id"] == override_id
+            turns = (
+                (
+                    await db.execute(
+                        select(TurnTrace)
+                        .where(TurnTrace.execution_id == execution_id)
+                        .order_by(TurnTrace.turn_index)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert turns
+            for turn in turns:
+                assert (turn.request_payload or {}).get("url") == (
+                    f"{override.base_url}{override_path}"
+                )
     finally:
+        if execution_id is not None:
+            async with SessionLocal() as db:
+                await db.execute(delete(TurnTrace).where(TurnTrace.execution_id == execution_id))
+                await db.execute(delete(JudgeResult).where(JudgeResult.execution_id == execution_id))
+                await db.execute(
+                    delete(ExecutionRecord).where(ExecutionRecord.id == execution_id)
+                )
+                await db.commit()
         await _cleanup(env_id=override_id)
 
 
@@ -383,7 +426,7 @@ async def test_scheduler_auto_retries_llm_errors(monkeypatch: pytest.MonkeyPatch
         pytest.skip("演示用例缺失")
     case_id, version, _ = loaded
 
-    async def fail_complete(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+    async def fail_complete(self, *args, **kwargs):
         raise LLMError("模拟模型裁决异常")
 
     monkeypatch.setattr(CaseExecutor, "_complete", fail_complete)

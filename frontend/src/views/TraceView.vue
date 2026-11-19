@@ -197,6 +197,12 @@ onBeforeUnmount(() => {
         <template #sub>
           <p class="mt-2 text-xs text-slate-600">
             <span v-if="detail?.case_name">{{ detail.case_name }} · </span>
+            <span v-if="detail?.environment_name" class="mr-2">
+              实际执行环境
+              <span class="rounded-md border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
+                {{ detail.environment_name }}
+              </span>
+            </span>
             <span v-if="relationTask">
               所属批量任务
               <button class="font-mono text-indigo-600 underline decoration-dotted" @click="openTask">

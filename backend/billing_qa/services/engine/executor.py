@@ -112,6 +112,10 @@ class CaseExecutor:
         attempt_no: int = 1,
         enable_self_check: bool = False,
     ) -> int:
+        # 任务显式指定环境时，把它固化进本次执行快照，确保快照/轨迹与实际请求一致；
+        # 未指定时保留用例自身绑定，由用例快照决定。
+        if environment_id is not None:
+            snapshot = {**snapshot, "environment_id": environment_id}
         execution_id = await self._create_execution(
             case_id=case_id,
             case_version=case_version,

@@ -616,6 +616,13 @@ function turnRequestKeys(turn: TurnTrace): string[] {
               <StatusPill :status="detail.status" />
               <span class="tag">v{{ detail.case_version }}</span>
               <span class="tag">{{ sourceLabel(detail.source) }}</span>
+              <span
+                v-if="detail.environment_name"
+                class="tag border-indigo-200 bg-indigo-50 text-indigo-700"
+                title="本次执行实际使用的环境（任务指定环境优先）"
+              >
+                执行环境 {{ detail.environment_name }}
+              </span>
               <span v-if="detail.attempt_no > 1" class="tag border-amber-200 text-amber-700">
                 第 {{ detail.attempt_no }} 次尝试
               </span>

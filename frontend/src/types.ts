@@ -1136,6 +1136,8 @@ export interface ExecutionPassRate {
 
 export interface ExecutionDetail extends ExecutionListItem {
   environment_id: number | null
+  /** 本次执行实际使用的环境名称（任务指定环境优先于用例绑定环境） */
+  environment_name: string | null
   max_turns: number | null
   simulator_template_version: number | null
   judge_template_version: number | null
