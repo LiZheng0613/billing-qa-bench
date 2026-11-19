@@ -45,6 +45,37 @@ async def _initial_event(task_id: int) -> dict | None:
         return event.model_dump(mode="json")
 
 
+@router.websocket("/ws/tasks")
+async def task_list_socket(
+    websocket: WebSocket, token: str | None = Query(default=None)
+) -> None:
+    """批量任务列表实时事件流：一条连接接收所有任务的状态/进度。"""
+    try:
+        decode_access_token(token or "")
+    except HTTPException:
+        await websocket.close(code=4401)
+        return
+
+    await websocket.accept()
+    queue = await event_bus.subscribe_all()
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=20)
+            except TimeoutError:
+                await websocket.send_json(
+                    {"type": "ping", "timestamp": datetime.now().isoformat()}
+                )
+                continue
+            await websocket.send_json(event)
+    except WebSocketDisconnect:
+        logger.debug("任务列表 WS 客户端断开")
+    except Exception as exc:
+        logger.debug("任务列表 WS 会话结束: %s", exc)
+    finally:
+        await event_bus.unsubscribe_all(queue)
+
+
 @router.websocket("/ws/tasks/{task_id}")
 async def task_progress_socket(
     websocket: WebSocket,

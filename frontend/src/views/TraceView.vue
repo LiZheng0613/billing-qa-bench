@@ -6,12 +6,13 @@ import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import CaseTraceInspector from './components/CaseTraceInspector.vue'
-import type { BatchTask, ExecutionDetail } from '../types'
+import type { BatchTask, ExecutionDetail, TaskProgressEvent } from '../types'
 import { errorMessage } from '../utils/errors'
 import { useBreadcrumbStore } from '../stores/breadcrumb'
 import type { BreadcrumbItem } from '../stores/breadcrumb'
 import { useToastStore } from '../stores/toast'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
+import { useTaskEventStream } from '../composables/useTaskEventStream'
 
 const route = useRoute()
 const router = useRouter()
@@ -149,7 +150,7 @@ watch(
   { immediate: true },
 )
 
-// 执行中每 4 秒静默刷新，实时展示新增轮次、判分与自检结果；进入终态后自动停止。
+// 执行中的轮次/判分/自检没有轮次级事件，靠 4 秒轮询刷新，进入终态后自动停止。
 async function refreshDetailSilently(): Promise<void> {
   if (!executionId.value) return
   await loadDetail(executionId.value, { silent: true })
@@ -159,6 +160,17 @@ useAutoRefresh(refreshDetailSilently, {
   interval: 4000,
   shouldSkip: () => !executionActive.value,
 })
+
+// WebSocket 事件只在「用例完成」时发布：命中当前执行时立即拉一次终态，
+// 结果不用等下一个轮询周期。同任务其他用例的事件与当前执行无关，忽略。
+function applyExecutionEvent(event: TaskProgressEvent): void {
+  if (!event || event.type === 'ping') return
+  const current = detail.value
+  if (!current || event.execution?.id !== current.id) return
+  if (executionId.value) void loadDetail(executionId.value, { silent: true })
+}
+
+useTaskEventStream(applyExecutionEvent)
 
 onBeforeUnmount(() => {
   breadcrumb.clear()
@@ -217,7 +229,7 @@ onBeforeUnmount(() => {
           <span
             v-if="executionActive"
             class="inline-flex items-center gap-1 text-[11px] text-emerald-600"
-            title="执行中每 4 秒自动刷新"
+            title="执行中每 4 秒自动刷新，完成后立即更新"
           >
             <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
             执行中 · 自动刷新

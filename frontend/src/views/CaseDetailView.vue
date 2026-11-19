@@ -19,10 +19,11 @@ import type {
   FactAtom,
   ModelConfig,
   PromptListItem,
+  TaskProgressEvent,
   TestCase,
 } from '../types'
 import { useConfirm } from '../composables/useConfirm'
-import { useAutoRefresh } from '../composables/useAutoRefresh'
+import { useTaskEventStream } from '../composables/useTaskEventStream'
 import { errorMessage } from '../utils/errors'
 import {
   caseTypeLabel,
@@ -285,7 +286,7 @@ const executionPageCount = computed(() =>
   Math.max(1, Math.ceil(executionTotal.value / executionPageSize)),
 )
 const ACTIVE_EXECUTION_STATUSES = new Set(['PENDING', 'RUNNING'])
-/** 当前页存在执行中的记录时，历史列表需要自动刷新。 */
+/** 当前页存在执行中的记录时，展示实时更新标识（列表由 WS 事件驱动刷新）。 */
 const hasActiveExecution = computed(() =>
   executions.value.some((run) => ACTIVE_EXECUTION_STATUSES.has(run.status)),
 )
@@ -543,15 +544,20 @@ async function loadExecutions(silent = false): Promise<void> {
   }
 }
 
-// 历史记录：有执行中的记录时每 4 秒静默刷新一次；无执行任务时降频到 12 秒，
-// 以便及时发现从其他页面发起的新执行，同时避免空闲页面频繁请求。
-async function refreshExecutionsSilently(): Promise<void> {
-  await loadExecutions(true)
+// 历史记录由 WebSocket 事件驱动刷新：只处理当前用例的执行事件，并做节流。
+let liveReloadTimer: number | null = null
+function applyExecutionEvent(event: TaskProgressEvent): void {
+  if (!event || event.type === 'ping') return
+  const execution = event.execution
+  if (!execution || execution.case_id !== item.value?.id) return
+  if (liveReloadTimer !== null) return
+  liveReloadTimer = window.setTimeout(() => {
+    liveReloadTimer = null
+    void loadExecutions(true)
+  }, 600)
 }
 
-useAutoRefresh(refreshExecutionsSilently, {
-  interval: () => (hasActiveExecution.value ? 4000 : 12000),
-})
+useTaskEventStream(applyExecutionEvent, { onOpen: () => void loadExecutions(true) })
 
 function changeExecutionPage(next: number): void {
   if (next < 1 || next > executionPageCount.value || next === executionPage.value) return
@@ -593,6 +599,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocumentClick)
+  if (liveReloadTimer !== null) {
+    window.clearTimeout(liveReloadTimer)
+    liveReloadTimer = null
+  }
 })
 </script>
 
@@ -961,10 +971,10 @@ onBeforeUnmount(() => {
               <span
                 v-if="hasActiveExecution"
                 class="inline-flex items-center gap-1 text-[11px] text-emerald-600"
-                title="有执行中的记录，列表每 4 秒自动刷新"
+                title="有执行中的记录，进度由服务端实时推送"
               >
                 <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
-                执行中 · 自动刷新
+                执行中 · 实时推送
               </span>
             </header>
             <div v-if="executions.length" class="overflow-x-auto">

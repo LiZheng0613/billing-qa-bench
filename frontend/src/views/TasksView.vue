@@ -2,12 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from '../composables/useConfirm'
+import { useTaskEventStream } from '../composables/useTaskEventStream'
 import { api } from '../api'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import TaskCreateModal from './components/TaskCreateModal.vue'
-import type { BatchTask, TaskScheduleType } from '../types'
+import type { BatchTask, TaskProgressEvent, TaskScheduleType } from '../types'
 import { errorMessage } from '../utils/errors'
 import { formatDateTime, formatPercent, statusLabel } from '../utils/format'
 import {
@@ -70,15 +71,13 @@ const hasFilter = computed(() =>
   Boolean(keyword.value.trim() || statusFilter.value || scheduleFilter.value),
 )
 
-const ACTIVE_STATUSES = ['PENDING', 'RUNNING']
-const hasActiveTask = computed(() =>
-  tasks.value.some((item) => ACTIVE_STATUSES.includes(item.status)),
-)
-
+// 只有 RUNNING 任务的进度会持续变化；PENDING 任务需要用户手动启动或由计划派发，
+// 启动/终止等操作后列表会主动刷新，因此无需定时轮询。
+// 列表进度由 WebSocket 推送，不再定时轮询。
 let searchTimer: number | null = null
 let requestSeq = 0
-let pollTimer: number | null = null
 let followUpTimer: number | null = null
+let liveReloadTimer: number | null = null
 
 async function load(silent = false): Promise<boolean> {
   const seq = ++requestSeq
@@ -116,14 +115,38 @@ function scheduleFollowUpReload(): void {
   }, 900)
 }
 
-function startPolling(): void {
-  if (pollTimer !== null) return
-  pollTimer = window.setInterval(() => {
-    if (document.visibilityState !== 'visible') return
-    if (!hasActiveTask.value) return
+function scheduleListReload(): void {
+  if (liveReloadTimer !== null) return
+  liveReloadTimer = window.setTimeout(() => {
+    liveReloadTimer = null
     void load(true)
-  }, 3000)
+  }, 500)
 }
+
+function applyProgress(event: TaskProgressEvent): void {
+  if (!event || event.type === 'ping') return
+  const index = tasks.value.findIndex((item) => item.id === event.task_id)
+  if (index < 0) {
+    // 新派发的任务不在当前列表：节流补一次列表
+    scheduleListReload()
+    return
+  }
+  const current = tasks.value[index]
+  tasks.value.splice(index, 1, {
+    ...current,
+    status: event.status ?? current.status,
+    control_state: event.control_state ?? current.control_state,
+    finished_cases: event.finished_cases ?? current.finished_cases,
+    total_cases: event.total_cases ?? current.total_cases,
+    pass_count: event.pass_count ?? current.pass_count,
+    fail_count: event.fail_count ?? current.fail_count,
+    error_count: event.error_count ?? current.error_count,
+    max_turns_count: event.max_turns_count ?? current.max_turns_count,
+  })
+}
+
+// 列表更新完全由 WebSocket 事件驱动；连接建立后补一次对账。
+useTaskEventStream(applyProgress, { onOpen: () => void load(true) })
 
 function syncQuery(): void {
   const query: Record<string, string> = {}
@@ -351,13 +374,13 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (searchTimer !== null) window.clearTimeout(searchTimer)
-  if (pollTimer !== null) {
-    window.clearInterval(pollTimer)
-    pollTimer = null
-  }
   if (followUpTimer !== null) {
     window.clearTimeout(followUpTimer)
     followUpTimer = null
+  }
+  if (liveReloadTimer !== null) {
+    window.clearTimeout(liveReloadTimer)
+    liveReloadTimer = null
   }
 })
 </script>

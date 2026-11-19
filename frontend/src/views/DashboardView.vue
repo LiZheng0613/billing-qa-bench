@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState.vue'
 import MetricCard from '../components/MetricCard.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
+import { useTaskEventStream } from '../composables/useTaskEventStream'
 import type {
   BatchTask,
   Environment,
@@ -13,6 +14,7 @@ import type {
   ExecutionPassRate,
   FactStatsOverview,
   GraderEval,
+  TaskProgressEvent,
   TaskStatus,
 } from '../types'
 import { errorMessage } from '../utils/errors'
@@ -52,6 +54,42 @@ const capabilityTotal = ref(0)
 const latestEval = ref<GraderEval | null>(null)
 
 let refreshTimer: number | null = null
+
+function scheduleReload(): void {
+  if (refreshTimer !== null) return
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = null
+    void load(true)
+  }, 1500)
+}
+
+function applyTaskEvent(event: TaskProgressEvent): void {
+  if (!event || event.type === 'ping') return
+  const index = tasks.value.findIndex((item) => item.id === event.task_id)
+  if (index < 0) {
+    // 新任务或周期计划派生的 run 不在当前列表，节流拉一次完整数据
+    scheduleReload()
+    return
+  }
+  const current = tasks.value[index]
+  tasks.value.splice(index, 1, {
+    ...current,
+    status: event.status ?? current.status,
+    control_state: event.control_state ?? current.control_state,
+    finished_cases: event.finished_cases ?? current.finished_cases,
+    total_cases: event.total_cases ?? current.total_cases,
+    pass_count: event.pass_count ?? current.pass_count,
+    fail_count: event.fail_count ?? current.fail_count,
+    error_count: event.error_count ?? current.error_count,
+    max_turns_count: event.max_turns_count ?? current.max_turns_count,
+  })
+  // 终态会改变通过率/近期执行等聚合卡片，事件驱动补一次全量刷新
+  if (event.status && ['COMPLETED', 'ABORTED', 'FAILED'].includes(event.status)) {
+    scheduleReload()
+  }
+}
+
+useTaskEventStream(applyTaskEvent, { onOpen: () => void load(true) })
 
 const STATUS_ORDER: Array<{ key: TaskStatus | 'SCHEDULED'; label: string; color: string }> = [
   { key: 'RUNNING', label: '执行中', color: 'bg-indigo-500' },
@@ -205,13 +243,10 @@ function taskPassRate(task: BatchTask): string {
 
 onMounted(() => {
   void load()
-  refreshTimer = window.setInterval(() => {
-    if (!document.hidden) void load(true)
-  }, 20000)
 })
 
 onBeforeUnmount(() => {
-  if (refreshTimer !== null) window.clearInterval(refreshTimer)
+  if (refreshTimer !== null) window.clearTimeout(refreshTimer)
 })
 </script>
 

@@ -14,6 +14,8 @@ logger = get_logger(__name__)
 class EventBus:
     def __init__(self) -> None:
         self._subscribers: dict[int, set[asyncio.Queue[dict[str, Any]]]] = defaultdict(set)
+        # 全量订阅：批量任务列表页只建一条连接即可接收所有任务事件
+        self._all_subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._lock = asyncio.Lock()
 
     async def subscribe(self, task_id: int) -> asyncio.Queue[dict[str, Any]]:
@@ -30,9 +32,19 @@ class EventBus:
                 if not subscribers:
                     self._subscribers.pop(task_id, None)
 
+    async def subscribe_all(self) -> asyncio.Queue[dict[str, Any]]:
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=500)
+        async with self._lock:
+            self._all_subscribers.add(queue)
+        return queue
+
+    async def unsubscribe_all(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        async with self._lock:
+            self._all_subscribers.discard(queue)
+
     async def publish(self, task_id: int, event: dict[str, Any]) -> None:
         async with self._lock:
-            queues = list(self._subscribers.get(task_id, ()))
+            queues = [*self._subscribers.get(task_id, ()), *self._all_subscribers]
         for queue in queues:
             try:
                 queue.put_nowait(event)

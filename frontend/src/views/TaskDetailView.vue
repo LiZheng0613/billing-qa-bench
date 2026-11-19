@@ -63,7 +63,8 @@ const runsLoading = ref(false)
 const selectedRunId = ref<number | null>(null)
 
 let socket: WebSocket | null = null
-let pollTimer: number | null = null
+let reconnectTimer: number | null = null
+let unmounted = false
 let detailSeq = 0
 
 const isPeriodicPlan = computed(() => Boolean(plan.value))
@@ -282,10 +283,8 @@ function patchRun(next: BatchTask): void {
 function syncLive(detail: BatchTask): void {
   if (['RUNNING', 'PENDING'].includes(detail.status)) {
     connectSocket(detail.id)
-    startPolling(detail.id)
   } else {
     disconnectSocket()
-    stopPolling()
   }
 }
 
@@ -342,7 +341,6 @@ function applyEvent(event: TaskProgressEvent): void {
   }
   if (event.status && ['COMPLETED', 'ABORTED', 'FAILED'].includes(event.status)) {
     disconnectSocket()
-    stopPolling()
     window.setTimeout(() => {
       if (isPeriodicPlan.value) void loadRuns()
       else void loadRoot()
@@ -366,56 +364,48 @@ function connectSocket(id: number): void {
       }
     }
     ws.onerror = () => {
-      live.value = false
+      try {
+        ws.close()
+      } catch {
+        // ignore
+      }
     }
     ws.onclose = () => {
       if (socket === ws) {
         socket = null
         live.value = false
       }
+      scheduleReconnect()
     }
   } catch {
     live.value = false
+    scheduleReconnect()
   }
 }
 
+function scheduleReconnect(): void {
+  if (unmounted || reconnectTimer !== null) return
+  const current = task.value
+  if (!current || !['RUNNING', 'PENDING'].includes(current.status)) return
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null
+    const next = task.value
+    if (next && !unmounted) connectSocket(next.id)
+  }, 3000)
+}
+
 function disconnectSocket(): void {
+  if (reconnectTimer !== null) {
+    window.clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
   if (socket) {
     socket.onclose = null
+    socket.onerror = null
     socket.close()
     socket = null
   }
   live.value = false
-}
-
-function startPolling(id: number): void {
-  stopPolling()
-  pollTimer = window.setInterval(async () => {
-    try {
-      metrics.value = await api.tasks.metrics(id)
-      if (!live.value) {
-        const detail = await api.tasks.get(id)
-        if (task.value?.id !== detail.id) return
-        task.value = detail
-        patchRun(detail)
-        await loadExecutions(id)
-        if (!['RUNNING', 'PENDING'].includes(detail.status)) {
-          stopPolling()
-          disconnectSocket()
-          if (isPeriodicPlan.value) void loadRuns()
-        }
-      }
-    } catch {
-      stopPolling()
-    }
-  }, 4000)
-}
-
-function stopPolling(): void {
-  if (pollTimer !== null) {
-    window.clearInterval(pollTimer)
-    pollTimer = null
-  }
 }
 
 async function loadExecutions(id: number): Promise<void> {
@@ -451,7 +441,6 @@ async function refresh(): Promise<void> {
 async function selectRun(runId: number, resetPage = true): Promise<void> {
   if (selectedRunId.value === runId && task.value?.id === runId) return
   disconnectSocket()
-  stopPolling()
   selectedRunId.value = runId
   if (resetPage) executionPage.value = 1
   try {
@@ -692,7 +681,6 @@ watch(
   (id, previous) => {
     if (id === previous) return
     disconnectSocket()
-    stopPolling()
     notFound.value = false
     runsPage.value = 1
     selectedRunId.value = null
@@ -709,8 +697,8 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  unmounted = true
   disconnectSocket()
-  stopPolling()
 })
 </script>
 
