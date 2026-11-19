@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from billing_qa.api.v1.router import api_router
 from billing_qa.core.config import settings
@@ -48,8 +48,8 @@ app = FastAPI(
     version="0.1.0",
     description="问账智能客服批量测试平台：批量回归、多轮对话模拟、白盒链路追踪与混合裁决。",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=f"{settings.api_prefix}/docs",
+    redoc_url=f"{settings.api_prefix}/redoc",
     openapi_url=f"{settings.api_prefix}/openapi.json",
 )
 
@@ -111,6 +111,18 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
 
 
 app.include_router(api_router, prefix=settings.api_prefix)
+
+
+@app.get("/docs", include_in_schema=False)
+async def docs_redirect() -> RedirectResponse:
+    """兼容旧链接：Swagger 文档已迁移到 /api/v1/docs。"""
+    return RedirectResponse(url=f"{settings.api_prefix}/docs")
+
+
+@app.get("/redoc", include_in_schema=False)
+async def redoc_redirect() -> RedirectResponse:
+    """兼容旧链接：ReDoc 文档已迁移到 /api/v1/redoc。"""
+    return RedirectResponse(url=f"{settings.api_prefix}/redoc")
 
 
 @app.get("/health", tags=["系统"], summary="健康检查")
