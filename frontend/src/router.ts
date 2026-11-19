@@ -136,9 +136,6 @@ export const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
-  if (to.name === 'login' && getToken()) {
-    return { name: 'dashboard' }
-  }
   if (to.meta.public) return true
   if (!getToken()) {
     return { name: 'login', query: { redirect: to.fullPath } }
