@@ -192,6 +192,10 @@ def test_judge_one_tolerates_partial_json(monkeypatch: Any) -> None:
 
 
 def test_judge_one_rejects_non_scoring_json(monkeypatch: Any) -> None:
+    from billing_qa.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "llm_json_retry_backoff_seconds", 0.0)
+
     class FakeClient:
         def __init__(self, model: Any) -> None:
             self.model = model
@@ -219,6 +223,54 @@ def test_judge_one_rejects_non_scoring_json(monkeypatch: Any) -> None:
                 temperature=None,
             )
         )
+
+
+def test_judge_one_recovers_after_format_retry(monkeypatch: Any) -> None:
+    """模型输出不稳定（先坏后好）时，裁决应通过纠错重试自愈而不是报错。"""
+    from billing_qa.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "llm_json_retry_backoff_seconds", 0.0)
+
+    class FakeClient:
+        def __init__(self, model: Any) -> None:
+            self.model = model
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def chat(self, messages: Any, **kwargs: Any) -> Any:
+            if len(messages) == 2:  # 首次调用：system + user 原始对话
+                return SimpleNamespace(
+                    content="综合来看该回答数据准确，我认为可以通过。",
+                    prompt_tokens=100,
+                    completion_tokens=50,
+                )
+            return SimpleNamespace(
+                content='{"pass": true, "total_score": 91, "reason": "取数一致"}',
+                prompt_tokens=120,
+                completion_tokens=60,
+            )
+
+    monkeypatch.setattr("billing_qa.services.engine.judge.LLMClient", FakeClient)
+    model = SimpleNamespace(id=9, name="不稳定裁判", model_name="mock/judge-b")
+    outcome = asyncio.run(
+        _judge_one(
+            model,  # type: ignore[arg-type]
+            "评分",
+            termination_status="COMPLETED",
+            threshold=60,
+            temperature=None,
+        )
+    )
+    assert outcome.pass_flag is True
+    assert outcome.total_score == 91
+    # 重试产生的过程说明进入 policy_notes，token 按全部尝试累计
+    assert any("重试" in note for note in outcome.policy_notes)
+    assert outcome.prompt_tokens == 220
+    assert outcome.completion_tokens == 110
 
 
 def test_run_judges_avg_strategy(monkeypatch: Any) -> None:

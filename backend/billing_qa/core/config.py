@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     task_retention_days: int = 30
     schedule_poll_interval_seconds: float = 15.0
 
+    # ---------- LLM JSON 输出修复重试 ----------
+    # 模型返回 200 但内容不是约定的标准化 JSON（Markdown 代码块 / 噪声 / 缺字段）时，
+    # 额外携带纠错反馈重试的次数；总调用次数 = 1 + llm_json_retry_attempts。
+    llm_json_retry_attempts: int = 2
+    # 每次重试前的基准退避秒数（指数递增并带随机抖动，上限 8s）
+    llm_json_retry_backoff_seconds: float = 1.0
+
     # ---------- Mock ----------
     mock_llm_base_url: str = "http://127.0.0.1:8001/v1"
     mock_target_base_url: str = "http://127.0.0.1:8002"

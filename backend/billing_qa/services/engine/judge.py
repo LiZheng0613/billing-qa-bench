@@ -11,7 +11,7 @@ from billing_qa.core.config import settings
 from billing_qa.core.logging import get_logger
 from billing_qa.services.adapter.renderer import format_history, render_prompt
 from billing_qa.services.llm.client import LLMClient, LLMError, ModelContext
-from billing_qa.services.llm.json_parser import parse_json_object
+from billing_qa.services.llm.retry import chat_json
 
 logger = get_logger(__name__)
 
@@ -193,6 +193,20 @@ def coerce_judgement(
     return passed, total, dimensions, tags, reason, notes
 
 
+# 裁决输出的最低契约：评分相关字段至少出现一个即可（缺维度分时按总分折算）
+JUDGE_SCORE_KEYS = ("total_score", "dimension_scores", "pass")
+
+
+def _validate_judge_payload(data: dict[str, Any]) -> str | None:
+    """校验裁判输出契约：出现任一评分相关字段即可，否则返回失败原因。"""
+    if not any(key in data for key in JUDGE_SCORE_KEYS):
+        return (
+            "缺少评分字段（total_score / dimension_scores / pass 至少出现一个）: "
+            f"{str(data)[:200]}"
+        )
+    return None
+
+
 async def _judge_one(
     model: ModelContext,
     prompt: str,
@@ -201,8 +215,11 @@ async def _judge_one(
     threshold: float,
     temperature: float | None,
 ) -> JudgeOutcome:
+    # 模型输出不稳定（Markdown 代码块 / 噪声 / 缺评分字段）时由 chat_json
+    # 携带纠错反馈重试，避免单次坏输出直接让裁判失败、进而把用例打成 ERROR。
     async with LLMClient(model) as client:
-        result = await client.chat(
+        chat = await chat_json(
+            client,
             [
                 {
                     "role": "system",
@@ -212,18 +229,17 @@ async def _judge_one(
             ],
             json_mode=True,
             temperature=temperature if temperature is not None else 0.0,
+            validator=_validate_judge_payload,
         )
-    data = parse_json_object(result.content)
-    # OpenCode 走提示约束而非 OpenAI 的 response_format，模型可能省略部分键；
-    # coerce_judgement 已支持按总分折算维度，这里只要求出现评分相关键即可。
-    if not any(key in data for key in ("total_score", "dimension_scores", "pass")):
-        raise LLMError(
-            "裁判输出缺少评分字段（total_score / dimension_scores / pass）："
-            f"{result.content[:200]}"
-        )
+    data = chat.data
     passed, total, dimensions, tags, reason, notes = coerce_judgement(
         data, termination_status=termination_status, threshold=threshold
     )
+    if chat.retried:
+        notes.append(
+            f"裁判输出格式异常（前 {chat.attempts - 1} 次解析/校验失败），"
+            f"已通过纠错重试修复（共 {chat.attempts} 次调用）"
+        )
     return JudgeOutcome(
         model_id=model.id,
         model_name=f"{model.name}({model.model_name})",
@@ -234,8 +250,8 @@ async def _judge_one(
         reason=reason,
         raw_response=data,
         judge_prompt=prompt,
-        prompt_tokens=result.prompt_tokens,
-        completion_tokens=result.completion_tokens,
+        prompt_tokens=chat.prompt_tokens,
+        completion_tokens=chat.completion_tokens,
         policy_notes=notes,
     )
 
