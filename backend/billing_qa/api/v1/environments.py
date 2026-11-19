@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -14,7 +15,7 @@ from billing_qa.api.v1.serializers import env_to_out, env_variable_to_out
 from billing_qa.core.authz import require_module_access
 from billing_qa.core.context import CurrentUser
 from billing_qa.core.crypto import decrypt_value, encrypt_value, mask_value
-from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
+from billing_qa.core.exceptions import ConflictError, NotFoundError, TargetApiError, ValidationError
 from billing_qa.core.permissions import PermissionCode
 from billing_qa.core.security import get_current_operator, get_current_user
 from billing_qa.db.session import get_db
@@ -25,6 +26,8 @@ from billing_qa.schemas.common import MessageResponse, Page
 from billing_qa.schemas.environment import (
     DEFAULT_BODY_TEMPLATE,
     BasicAuthIn,
+    EnvDebugChatRequest,
+    EnvDebugChatResult,
     EnvironmentCreate,
     EnvironmentOut,
     EnvironmentUpdate,
@@ -37,7 +40,11 @@ from billing_qa.schemas.environment import (
     VariableBatchUpdate,
 )
 from billing_qa.services.adapter.renderer import find_variables, format_history, render_structure
-from billing_qa.services.adapter.session import init_session_id, resolve_session_mode
+from billing_qa.services.adapter.session import (
+    init_session_id,
+    resolve_session_mode,
+    session_updates_from_response,
+)
 from billing_qa.services.adapter.target_api import (
     EnvContext,
     TargetApiAdapter,
@@ -399,28 +406,13 @@ def _variable_origins(
     return origins
 
 
-@router.post(
-    "/{env_id}/preview",
-    response_model=EnvPreviewResponse,
-    summary="请求报文预览（选示例用例带入变量）",
-)
-async def preview_request(
-    env_id: int,
-    payload: EnvPreviewRequest,
-    db: AsyncSession = Depends(get_db),
-) -> EnvPreviewResponse:
-    """只读预览：用示例用例的请求变量与会话绑定配置渲染一次请求报文。"""
-    env = await _get_env(db, env_id)
-    case = await db.get(TestCase, payload.case_id)
-    if case is None or case.deleted_at is not None:
-        raise NotFoundError("示例用例不存在或已删除")
-
-    ctx = EnvContext.from_orm(env)
-    case_vars = case.request_variables or {}
-    mode = resolve_session_mode(ctx.session_mode)
-    query = _preview_query(case)
-    session_id = init_session_id(mode, None)
-
+def _render_preview_request(
+    ctx: EnvContext,
+    case_vars: dict[str, Any],
+    query: str,
+    session_id: str | None,
+) -> tuple[dict[str, Any], Any, list[str]]:
+    """用环境模板 + 用例变量渲染一次请求（不发起真实前置接口）。"""
     variables: dict[str, Any] = dict(ctx.variables)
     variables.update(case_vars)
     for name in _prehook_variables(ctx):
@@ -449,6 +441,31 @@ async def preview_request(
     body = render_structure(
         ctx.body_template or dict(DEFAULT_BODY_TEMPLATE), variables, missing
     )
+    return headers or {}, body, missing
+
+
+@router.post(
+    "/{env_id}/preview",
+    response_model=EnvPreviewResponse,
+    summary="请求报文预览（选示例用例带入变量）",
+)
+async def preview_request(
+    env_id: int,
+    payload: EnvPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+) -> EnvPreviewResponse:
+    """只读预览：用示例用例的请求变量与会话绑定配置渲染一次请求报文。"""
+    env = await _get_env(db, env_id)
+    case = await db.get(TestCase, payload.case_id)
+    if case is None or case.deleted_at is not None:
+        raise NotFoundError("示例用例不存在或已删除")
+
+    ctx = EnvContext.from_orm(env)
+    case_vars = case.request_variables or {}
+    mode = resolve_session_mode(ctx.session_mode)
+    query = _preview_query(case)
+    session_id = init_session_id(mode, None)
+    headers, body, missing = _render_preview_request(ctx, case_vars, query, session_id)
 
     warnings: list[str] = []
     unique_missing = list(dict.fromkeys(missing))
@@ -467,4 +484,87 @@ async def preview_request(
         session_id=session_id,
         query=query,
         warnings=warnings,
+    )
+
+
+@router.post(
+    "/{env_id}/debug-chat",
+    response_model=EnvDebugChatResult,
+    summary="调试发送单条消息（不落库）",
+)
+async def debug_chat(
+    env_id: int,
+    payload: EnvDebugChatRequest,
+    db: AsyncSession = Depends(get_db),
+) -> EnvDebugChatResult:
+    """探活调试：选一条用例把消息直发目标环境，仅回显报文，不写执行记录。"""
+    env = await _get_env(db, env_id)
+    case = await db.get(TestCase, payload.case_id)
+    if case is None or case.deleted_at is not None:
+        raise NotFoundError("调试用例不存在或已删除")
+
+    ctx = EnvContext.from_orm(env)
+    case_vars = case.request_variables or {}
+    mode = resolve_session_mode(ctx.session_mode)
+    query = (payload.query or "").strip() or _preview_query(case)
+    if not query:
+        raise ValidationError("调试消息内容不能为空")
+    session_id = init_session_id(mode, None)
+
+    # 无论本次调用成败，都回显渲染后的请求报文，便于排查模板/鉴权/变量问题
+    headers, body, _ = _render_preview_request(ctx, case_vars, query, session_id)
+    request_preview = {
+        "method": ctx.api_method,
+        "url": ctx.chat_url,
+        "headers": _sanitize_headers({str(k): str(v) for k, v in (headers or {}).items()}),
+        "body": body,
+    }
+
+    adapter = TargetApiAdapter(ctx)
+    started = time.perf_counter()
+    result: Any = None
+    ok = True
+    message = "调试消息发送成功"
+    try:
+        result = await adapter.chat(
+            query=query,
+            session_id=session_id,
+            extra_variables=case_vars,
+        )
+    except TargetApiError as exc:
+        ok = False
+        message = str(exc)
+    except Exception as exc:
+        ok = False
+        message = f"{type(exc).__name__}: {exc}"
+    finally:
+        adapter.close()
+    if result is not None and result.request_payload:
+        # 成功时用真实发送的报文（含前置接口注入的变量）覆盖预渲染结果
+        request_preview = result.request_payload
+    latency = (
+        result.latency_ms if result is not None else round((time.perf_counter() - started) * 1000, 2)
+    )
+
+    return EnvDebugChatResult(
+        ok=ok,
+        message=message,
+        persisted=False,
+        query=query,
+        latency_ms=latency,
+        status_code=result.status_code if result is not None else None,
+        session_mode_resolved=mode,
+        session_id=(
+            session_updates_from_response(mode, session_id, result.session_id)
+            if result is not None
+            else session_id
+        ),
+        final_answer=(result.final_answer or None) if result is not None else None,
+        intent=result.intent if result is not None else None,
+        generated_sql=result.generated_sql if result is not None else None,
+        api_params=result.api_params if result is not None else None,
+        raw_db_data=result.raw_db_data if result is not None else None,
+        tool_calls=result.tool_calls if result is not None else None,
+        request_preview=request_preview,
+        response=dict(result.response_payload or {}) if result is not None else {},
     )

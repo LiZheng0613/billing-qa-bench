@@ -304,11 +304,12 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 - **字段名由模板决定**：例如 `"conversationId": "{{session_id}}"` 或 `"sessionid": "{{session_id}}"`，不同接口可各自定义，平台不写死字段名；`SERVER_RETURNED` 模式下首轮渲染为空字符串，由目标接口按首轮对话处理。
 - **接口配置页**：环境编辑弹窗内提供「Basic 鉴权」「前置接口钩子」、可用占位符清单与变量来源标注，并可选一条示例用例做**报文预览**（只读，不落库）。
+- **探活调试**：环境列表的「调试」可选一条用例，把其提问（可临时修改）经请求模板与用例变量渲染后**直接发送到目标环境**，回显请求/响应报文、耗时、会话与白盒取数；本次发送不写执行记录、不产生任务数据、不更新探活状态，仅用于连通性与功能调试。
 - **执行结果**：对话轮次页展示每轮会话徽标、会话连续性小结、用例变量来源标记；不一致时会提示「上下文可能未延续」。
 
 真实 Agent 报文（前置取 `conversationId`、Basic 鉴权、首轮回填空 `sessionid`）的完整配置示例见 [`docs/AGENT_INTEGRATION_GUIDE.md`](docs/AGENT_INTEGRATION_GUIDE.md)。
 
-相关接口：`POST /environments/{id}/preview`（body `{"case_id": 123}`，返回渲染后的 `headers` / `body` / `origins` / `session_mode_resolved`）。
+相关接口：`POST /environments/{id}/preview`（body `{"case_id": 123}`，返回渲染后的 `headers` / `body` / `origins` / `session_mode_resolved`）；`POST /environments/{id}/debug-chat`（body `{"case_id": 123, "query": "可选覆盖提问"}`，直发目标环境并回显报文，`persisted=false`）。
 
 ### 6.8 执行异常自动重试
 
@@ -415,7 +416,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | 分组 | 主要接口 |
 | --- | --- |
 | 认证 | `POST /auth/login`、`GET /auth/me` |
-| 环境 | `GET/POST /environments`、`PUT/DELETE /environments/{id}`、`GET/PUT /environments/{id}/variables`、`POST /environments/{id}/health-check`、`GET /environments/{id}/usage`、`POST /environments/{id}/preview`（选示例用例渲染报文） |
+| 环境 | `GET/POST /environments`、`PUT/DELETE /environments/{id}`、`GET/PUT /environments/{id}/variables`、`POST /environments/{id}/health-check`、`GET /environments/{id}/usage`、`POST /environments/{id}/preview`（选示例用例渲染报文）、`POST /environments/{id}/debug-chat`（探活调试：选用例直发消息，不落库） |
 | 模型 | `GET/POST /models`、`PUT/DELETE /models/{id}`、`POST /models/{id}/test`、`POST /models/opencode/catalog`（拉取 OpenCode Serve 可用模型与 Agent） |
 | Prompt | `GET/POST /prompts`、`GET/PUT/DELETE /prompts/{id}`、`POST /prompts/{id}/versions`、`GET /prompts/{id}/versions/{version}`、`GET /prompts/{id}/usage`、`POST /prompts/{id}/sandbox` |
 | 用例 | `GET/POST /cases`、`GET/PUT/DELETE /cases/{id}`、`POST /cases/{id}/debug`、`POST /cases/ai-draft`（AI 草稿）、`GET /cases/{id}/facts`、`POST /cases/{id}/facts/{fact_id}/verify`、`POST /cases/{id}/review`、`POST /cases/{id}/freeze`、`GET /cases/{id}/revisions`、`GET /cases/{id}/revisions/diff`、`POST /cases/{id}/rollback`、`GET /cases/{id}/trend`、`GET /cases/{id}/executions`、`GET /cases/compare/runs`、`POST /cases/import`、`GET /cases/export` |

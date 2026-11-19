@@ -188,6 +188,32 @@ export interface EnvPreviewResult {
   warnings: string[]
 }
 
+export interface EnvDebugChatPayload {
+  case_id: number
+  /** 调试消息内容，留空则使用用例配置的提问 */
+  query?: string | null
+}
+
+export interface EnvDebugChatResult {
+  ok: boolean
+  message: string
+  /** 固定为 false：调试发送不写入执行记录 */
+  persisted: boolean
+  query: string
+  latency_ms: number | null
+  status_code: number | null
+  session_mode_resolved: string
+  session_id: string | null
+  final_answer: string | null
+  intent: string | null
+  generated_sql: string | null
+  api_params: unknown
+  raw_db_data: unknown
+  tool_calls: unknown[] | null
+  request_preview: Record<string, unknown>
+  response: Record<string, unknown>
+}
+
 export interface PreHookConfig {
   enabled: boolean
   method: string

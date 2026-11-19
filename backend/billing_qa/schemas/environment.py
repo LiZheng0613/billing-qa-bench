@@ -267,6 +267,36 @@ class EnvPreviewRequest(BaseModel):
     case_id: int = Field(ge=1, description="示例用例 id")
 
 
+class EnvDebugChatRequest(BaseModel):
+    """探活调试：选一条用例，把消息直接发给目标环境，不产生执行记录。"""
+
+    case_id: int = Field(ge=1, description="选中的用例 id")
+    query: str | None = Field(
+        default=None, max_length=4000, description="调试消息内容，留空则使用用例配置的提问"
+    )
+
+
+class EnvDebugChatResult(BaseModel):
+    """一次调试发送的请求报文与响应结果（只读，不落库）。"""
+
+    ok: bool
+    message: str
+    persisted: bool = False
+    query: str
+    latency_ms: float | None = None
+    status_code: int | None = None
+    session_mode_resolved: str
+    session_id: str | None = None
+    final_answer: str | None = None
+    intent: str | None = None
+    generated_sql: str | None = None
+    api_params: Any = None
+    raw_db_data: Any = None
+    tool_calls: list | None = None
+    request_preview: dict[str, Any] = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
+
+
 class EnvPreviewResponse(BaseModel):
     """渲染后的请求报文与占位符来源标注（只读，不落库）。"""
 

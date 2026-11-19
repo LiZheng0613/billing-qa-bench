@@ -23,6 +23,8 @@ import type {
   Environment,
   EnvironmentPayload,
   EnvironmentUsage,
+  EnvDebugChatPayload,
+  EnvDebugChatResult,
   EnvPreviewResult,
   EnvVariable,
   EnvVariableInput,
@@ -204,6 +206,8 @@ export const api = {
     usage: (id: number) => http.get<EnvironmentUsage>(`/environments/${id}/usage`),
     preview: (id: number, caseId: number) =>
       http.post<EnvPreviewResult>(`/environments/${id}/preview`, { case_id: caseId }),
+    debugChat: (id: number, payload: EnvDebugChatPayload) =>
+      http.post<EnvDebugChatResult>(`/environments/${id}/debug-chat`, payload),
   },
 
   // ---------------------------------------------------------------- 模型

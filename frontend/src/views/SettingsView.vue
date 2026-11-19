@@ -9,6 +9,7 @@ import type {
   BasicAuthInput,
   Environment,
   EnvironmentPayload,
+  EnvDebugChatResult,
   EnvPreviewResult,
   EnvVariableInput,
   ModelConfig,
@@ -47,7 +48,6 @@ const envSaving = ref(false)
 const envCreating = ref(false)
 const envModalOpen = ref(false)
 const editingEnv = ref<Environment | null>(null)
-const checkingId = ref<number | null>(null)
 // 敏感字段默认以密码框展示，勾选后在表单中明文显示明文。
 const showSecrets = ref(false)
 
@@ -474,20 +474,101 @@ async function removeEnv(item: Environment): Promise<void> {
   }
 }
 
-async function checkHealth(item: Environment): Promise<void> {
-  checkingId.value = item.id
+// ---- 探活调试：选用例内容直发目标环境，不写执行记录 ----
+const debugOpen = ref(false)
+const debugEnv = ref<Environment | null>(null)
+const debugCases = ref<TestCase[]>([])
+const debugCaseId = ref<number | null>(null)
+const debugQuery = ref('')
+const debugLoadingCases = ref(false)
+const debugSending = ref(false)
+const debugResult = ref<EnvDebugChatResult | null>(null)
+const debugError = ref('')
+
+const debugRequestText = computed(() =>
+  debugResult.value ? prettyJson(debugResult.value.request_preview) : '',
+)
+const debugResponseText = computed(() =>
+  debugResult.value ? prettyJson(debugResult.value.response) : '',
+)
+const debugRawDataText = computed(() =>
+  debugResult.value
+    ? prettyJson({
+        api_params: debugResult.value.api_params,
+        raw_db_data: debugResult.value.raw_db_data,
+      })
+    : '',
+)
+
+function caseDebugQuery(item: TestCase): string {
+  if (item.query) return item.query
+  if (item.initial_query) return item.initial_query
+  const first = item.turns?.[0]
+  if (first && typeof first === 'object' && 'query' in first) {
+    return String(first.query ?? '')
+  }
+  return ''
+}
+
+async function openDebug(item: Environment): Promise<void> {
+  debugEnv.value = item
+  debugCases.value = []
+  debugCaseId.value = null
+  debugQuery.value = ''
+  debugResult.value = null
+  debugError.value = ''
+  debugOpen.value = true
+  debugLoadingCases.value = true
   try {
-    const result = await api.environments.healthCheck(item.id)
-    if (result.ok) {
-      toast.success(`探活成功：${formatMs(result.latency_ms)} · ${result.message}`)
-    } else {
-      toast.error(`探活失败：${result.message}`)
+    const page = await api.cases.list({ environment_id: item.id, page_size: 200 })
+    debugCases.value = [...page.items].sort((a, b) => b.id - a.id)
+    if (debugCases.value.length) {
+      debugCaseId.value = debugCases.value[0].id
+      applyDebugCase()
     }
-    await loadEnvironments()
   } catch (exc) {
-    toast.error(errorMessage(exc))
+    debugError.value = errorMessage(exc)
   } finally {
-    checkingId.value = null
+    debugLoadingCases.value = false
+  }
+}
+
+function applyDebugCase(): void {
+  const item = debugCases.value.find((candidate) => candidate.id === debugCaseId.value)
+  debugQuery.value = item ? caseDebugQuery(item) : ''
+  debugResult.value = null
+  debugError.value = ''
+}
+
+async function sendDebugMessage(): Promise<void> {
+  if (!debugEnv.value) return
+  if (!debugCaseId.value) {
+    toast.error('请先选择一个用例')
+    return
+  }
+  if (!debugQuery.value.trim()) {
+    toast.error('调试消息内容不能为空')
+    return
+  }
+  debugSending.value = true
+  debugError.value = ''
+  try {
+    const result = await api.environments.debugChat(debugEnv.value.id, {
+      case_id: debugCaseId.value,
+      query: debugQuery.value.trim(),
+    })
+    debugResult.value = result
+    if (result.ok) {
+      toast.success(`调试成功：${formatMs(result.latency_ms)} · ${result.message}`)
+    } else {
+      toast.error(`调试失败：${result.message}`)
+    }
+  } catch (exc) {
+    debugResult.value = null
+    debugError.value = errorMessage(exc)
+    toast.error(debugError.value)
+  } finally {
+    debugSending.value = false
   }
 }
 
@@ -1051,13 +1132,7 @@ onMounted(() => {
               </td>
               <td class="td">
                 <div class="flex flex-wrap justify-end gap-1">
-                  <button
-                    class="btn-ghost btn-xs"
-                    :disabled="checkingId === item.id"
-                    @click="checkHealth(item)"
-                  >
-                    {{ checkingId === item.id ? '探活中…' : '探活' }}
-                  </button>
+                  <button class="btn-primary btn-xs" @click="openDebug(item)">调试</button>
                   <button class="btn-ghost btn-xs" @click="openVariables(item)">变量</button>
                   <button class="btn-ghost btn-xs" @click="openEditEnv(item)">编辑</button>
                   <button class="btn-danger btn-xs" @click="removeEnv(item)">删除</button>
@@ -1662,6 +1737,142 @@ onMounted(() => {
         <button class="btn-ghost" @click="variablesOpen = false">取消</button>
         <button class="btn-primary" :disabled="variablesSaving" @click="submitVariables">
           {{ variablesSaving ? '保存中…' : '保存变量' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- ---------------------------------------------------------- 探活调试 -->
+    <BaseModal
+      v-model="debugOpen"
+      :title="debugEnv ? `探活调试 · ${debugEnv.code}` : '探活调试'"
+      width="xl"
+      subtitle="选择用例内容直发目标执行环境，仅回显报文；本次执行不记录数据"
+    >
+      <div class="space-y-3">
+        <div class="rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+          调试发送不会写入执行记录、任务结果或更新探活状态，仅用于连通性与功能验证。
+        </div>
+
+        <div
+          v-if="debugEnv"
+          class="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-[11px] text-slate-600 sm:grid-cols-2"
+        >
+          <p class="truncate font-mono">
+            {{ debugEnv.api_method }} {{ debugEnv.base_url }}{{ debugEnv.api_path }}
+          </p>
+          <p class="flex flex-wrap items-center gap-1 sm:justify-end">
+            <span class="rounded-md bg-white px-1.5 py-0.5">
+              {{ debugEnv.is_stream ? 'SSE 流式' : '非流式' }}
+            </span>
+            <span class="rounded-md bg-white px-1.5 py-0.5">
+              会话 {{ debugEnv.session_mode === 'CLIENT_GENERATED' ? '客户端生成' : '服务端返回' }}
+            </span>
+            <span v-if="debugEnv.pre_hook?.enabled" class="rounded-md bg-white px-1.5 py-0.5 text-amber-700">
+              前置接口
+            </span>
+            <span v-if="debugEnv.basic_auth" class="rounded-md bg-white px-1.5 py-0.5 text-emerald-700">
+              Basic 鉴权
+            </span>
+            <span v-if="debugEnv.mtls?.enabled" class="rounded-md bg-white px-1.5 py-0.5 text-sky-700">
+              mTLS
+            </span>
+          </p>
+        </div>
+
+        <div>
+          <label class="label">用例内容</label>
+          <select
+            v-model.number="debugCaseId"
+            class="input text-sm"
+            :disabled="debugLoadingCases || !debugCases.length"
+            @change="applyDebugCase"
+          >
+            <option v-if="debugLoadingCases" :value="null">加载用例中…</option>
+            <option v-else-if="!debugCases.length" :value="null">该环境暂未绑定用例</option>
+            <option v-for="item in debugCases" :key="item.id" :value="item.id">
+              {{ item.code }} · {{ item.name }}
+            </option>
+          </select>
+        </div>
+
+        <div>
+          <label class="label">调试消息</label>
+          <textarea
+            v-model="debugQuery"
+            class="input text-sm"
+            rows="3"
+            placeholder="选择用例后自动带入其提问，可直接修改后发送"
+          />
+          <p class="mt-1 text-[11px] leading-relaxed text-slate-500">
+            消息按该环境的请求头/请求体模板渲染，并带入用例级请求变量；配置了前置接口时会真实执行一次。
+          </p>
+        </div>
+
+        <div v-if="debugError" class="rounded-xl bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+          {{ debugError }}
+        </div>
+
+        <div v-if="debugResult" class="space-y-2">
+          <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+            <StatusPill :status="debugResult.ok ? 'PASS' : 'FAIL'" size="sm" />
+            <span>{{ debugResult.message }}</span>
+            <span v-if="debugResult.status_code">HTTP {{ debugResult.status_code }}</span>
+            <span>耗时 {{ formatMs(debugResult.latency_ms) }}</span>
+            <span v-if="debugResult.session_id" class="font-mono">
+              session {{ debugResult.session_id }}
+            </span>
+            <span v-if="debugResult.intent" class="rounded-full bg-slate-100 px-2 py-0.5">
+              intent {{ debugResult.intent }}
+            </span>
+            <span class="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">未落库</span>
+          </div>
+
+          <div v-if="debugResult.final_answer" class="rounded-xl border border-slate-200 bg-white p-2">
+            <div class="mb-1 text-[11px] font-medium text-slate-500">最终回复</div>
+            <p class="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
+              {{ debugResult.final_answer }}
+            </p>
+          </div>
+
+          <div class="grid gap-2 lg:grid-cols-2">
+            <div>
+              <div class="mb-1 text-[11px] font-medium text-slate-500">请求报文（变量已渲染）</div>
+              <pre
+                class="max-h-56 overflow-auto rounded-lg bg-slate-900 p-2 font-mono text-[11px] leading-relaxed text-slate-100"
+              >{{ debugRequestText }}</pre>
+            </div>
+            <div>
+              <div class="mb-1 text-[11px] font-medium text-slate-500">响应报文</div>
+              <pre
+                class="max-h-56 overflow-auto rounded-lg bg-slate-900 p-2 font-mono text-[11px] leading-relaxed text-slate-100"
+              >{{ debugResponseText }}</pre>
+            </div>
+          </div>
+
+          <div class="grid gap-2 lg:grid-cols-2">
+            <div>
+              <div class="mb-1 text-[11px] font-medium text-slate-500">生成 SQL</div>
+              <pre
+                class="max-h-40 overflow-auto rounded-lg border border-slate-200 bg-white p-2 font-mono text-[11px] leading-relaxed text-slate-700"
+              >{{ debugResult.generated_sql || '—' }}</pre>
+            </div>
+            <div>
+              <div class="mb-1 text-[11px] font-medium text-slate-500">底层取数 / 请求参数</div>
+              <pre
+                class="max-h-40 overflow-auto rounded-lg border border-slate-200 bg-white p-2 font-mono text-[11px] leading-relaxed text-slate-700"
+              >{{ debugRawDataText }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn-ghost" @click="debugOpen = false">关闭</button>
+        <button
+          class="btn-primary"
+          :disabled="debugSending || debugLoadingCases || !debugCaseId"
+          @click="sendDebugMessage"
+        >
+          {{ debugSending ? '发送中…' : '发送调试消息' }}
         </button>
       </template>
     </BaseModal>
