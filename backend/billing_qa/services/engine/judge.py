@@ -215,8 +215,9 @@ async def _judge_one(
     threshold: float,
     temperature: float | None,
 ) -> JudgeOutcome:
-    # 模型输出不稳定（Markdown 代码块 / 噪声 / 缺评分字段）时由 chat_json
-    # 携带纠错反馈重试，避免单次坏输出直接让裁判失败、进而把用例打成 ERROR。
+    # 温度优先级：调用方显式覆盖 > 模型配置 temperature > 角色默认值（裁判 0.0）。
+    # 传 None 让客户端回退到 ModelContext.temperature，配置页的温度才会真正生效；
+    # 模型未配置 temperature 时 effective_temperature 已按 JUDGE 角色回退为 0.0。
     async with LLMClient(model) as client:
         chat = await chat_json(
             client,
@@ -228,7 +229,7 @@ async def _judge_one(
                 {"role": "user", "content": prompt},
             ],
             json_mode=True,
-            temperature=temperature if temperature is not None else 0.0,
+            temperature=temperature,
             validator=_validate_judge_payload,
         )
     data = chat.data
