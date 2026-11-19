@@ -538,6 +538,19 @@ async function retryFailed(): Promise<void> {
   }
 }
 
+async function retryCase(caseId: number): Promise<void> {
+  if (!task.value || !Number.isFinite(caseId)) return
+  try {
+    const result = await api.tasks.retryCase(task.value.id, caseId)
+    toast.success(result.message)
+    // 后端已把任务切回 RUNNING，重新拉取后可自动接入 WebSocket 实时进度
+    await loadTaskDetail(task.value.id)
+    if (isPeriodicPlan.value) void loadRuns()
+  } catch (exc) {
+    reportError(exc)
+  }
+}
+
 async function exportResults(): Promise<void> {
   if (!task.value || exporting.value) return
   exporting.value = true
@@ -961,6 +974,7 @@ onBeforeUnmount(() => {
           @stop-plan="stopPlan"
           @toggle-plan="togglePlan"
           @select-execution="openExecution"
+          @retry-case="retryCase"
           @page-change="changeExecutionPage"
           @mode-change="changeMode"
           @filter-change="applyExecutionFilters"
@@ -992,6 +1006,7 @@ onBeforeUnmount(() => {
         @stop-plan="stopPlan"
         @toggle-plan="togglePlan"
         @select-execution="openExecution"
+        @retry-case="retryCase"
         @page-change="changeExecutionPage"
         @mode-change="changeMode"
         @filter-change="applyExecutionFilters"

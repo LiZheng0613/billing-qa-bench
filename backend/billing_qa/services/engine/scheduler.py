@@ -70,6 +70,31 @@ class BatchScheduler:
             self._workers[task_id] = worker
         return True
 
+    async def retry_case(self, task_id: int, case_id: int) -> bool:
+        """在当前批次内单独重跑一条用例。
+
+        与 :meth:`start` 互斥（同一任务同时只允许一个 worker），任务立即
+        切回 RUNNING 以便前端连接实时进度；执行完成后按用例最新一次结果
+        重算指标并收口为 COMPLETED。返回 False 表示任务正在运行。
+        """
+        async with self._lock(task_id):
+            if self.is_running(task_id):
+                return False
+            async with SessionLocal() as db:
+                task = await db.get(BatchTask, task_id)
+                if task is None:
+                    return False
+                task.status = TaskStatus.RUNNING
+                task.control_state = "RUNNING"
+                task.started_at = task.started_at or now()
+                task.finished_at = None
+                await db.commit()
+            await control_store.set_state(task_id, "RUNNING")
+            worker = asyncio.create_task(self._run_case_retry(task_id, case_id))
+            self._workers[task_id] = worker
+        logger.info("单用例重试已启动 task=%s case=%s", task_id, case_id)
+        return True
+
     async def abort(self, task_id: int) -> None:
         await control_store.set_state(task_id, "ABORTING")
         if not self.is_running(task_id):
@@ -285,6 +310,85 @@ class BatchScheduler:
             await control_store.set_state(task_id, "FAILED")
         finally:
             self._workers.pop(task_id, None)
+
+    # ------------------------------------------------------------------ #
+    # 单用例重试
+    # ------------------------------------------------------------------ #
+    async def _run_case_retry(self, task_id: int, case_id: int) -> None:
+        """在当前批次内重跑单条用例：复用执行器，结果作为该用例的最新一次尝试。"""
+        cancelled = False
+        try:
+            async with SessionLocal() as db:
+                task = await db.get(BatchTask, task_id)
+                if task is None:
+                    logger.warning("单用例重试任务不存在 task=%s", task_id)
+                    return
+                environment_id = task.environment_id
+                enable_self_check = bool(task.enable_self_check)
+                latest = (
+                    await db.execute(
+                        select(ExecutionRecord)
+                        .where(
+                            ExecutionRecord.task_id == task_id,
+                            ExecutionRecord.case_id == case_id,
+                        )
+                        .order_by(ExecutionRecord.id.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                attempt_no = int(latest.attempt_no if latest is not None else 0) + 1
+
+            snapshot, version = await self._load_case_snapshot(case_id)
+            if snapshot is None:
+                logger.warning("单用例重试跳过：用例不存在或已删除 case=%s", case_id)
+                return
+            await self._publish_status_by_id(task_id)
+            execution_id = await CaseExecutor().execute(
+                case_id=case_id,
+                case_version=version,
+                snapshot=snapshot,
+                task_id=task_id,
+                source=ExecutionSource.RETRY,
+                environment_id=environment_id,
+                attempt_no=attempt_no,
+                enable_self_check=enable_self_check,
+            )
+            await self._publish_progress(task_id, execution_id, case_id, version)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        except Exception:
+            logger.exception("单用例重试执行失败 task=%s case=%s", task_id, case_id)
+        finally:
+            try:
+                await self._finish_case_retry(task_id, cancelled=cancelled)
+            finally:
+                self._workers.pop(task_id, None)
+
+    async def _finish_case_retry(self, task_id: int, *, cancelled: bool) -> None:
+        """单用例重试结束后收口任务状态并重算指标。"""
+        state = await control_store.get_state(task_id)
+        aborted = cancelled or state in {"ABORTING", "ABORTED"}
+        async with SessionLocal() as db:
+            task = await db.get(BatchTask, task_id)
+            if task is None:
+                return
+            metrics = await compute_task_metrics(db, task)
+            apply_metrics_to_task(task, metrics)
+            if aborted:
+                task.status = TaskStatus.ABORTED
+                task.control_state = "ABORTED"
+            else:
+                task.status = TaskStatus.COMPLETED
+                task.control_state = "FINISHED"
+                task.error_message = None
+            task.finished_at = now()
+            await db.commit()
+            await control_store.set_state(task_id, "ABORTED" if aborted else "FINISHED")
+            await self._publish_status(task)
+        logger.info(
+            "单用例重试结束 task=%s aborted=%s", task_id, aborted
+        )
 
     # ------------------------------------------------------------------ #
     # 数据加载与事件

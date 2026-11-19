@@ -42,6 +42,7 @@ const emit = defineEmits<{
   (e: 'stop-plan'): void
   (e: 'toggle-plan', active: boolean): void
   (e: 'select-execution', executionId: number): void
+  (e: 'retry-case', caseId: number): void
   (e: 'page-change', page: number): void
   (e: 'mode-change', latestPerCase: boolean): void
   (
@@ -98,6 +99,28 @@ const canRetry = computed(
     !isPlan.value &&
     Boolean(props.task && ['COMPLETED', 'ABORTED', 'FAILED'].includes(props.task.status)),
 )
+
+// 单用例重试：仅「用例最新」视图下展示，避免对历史尝试行误操作；
+// 任务运行中禁用，防止与批次执行并发写入同一用例结果。
+const SINGLE_RETRYABLE_STATUSES = new Set([
+  'FAIL',
+  'ERROR',
+  'MAX_TURNS_EXCEEDED',
+  'REPETITION_ABORT',
+  'ABORTED',
+])
+const taskRunning = computed(
+  () => Boolean(props.task && ['RUNNING', 'PENDING'].includes(props.task.status)),
+)
+function canRetryCase(item: CaseExecutionItem): boolean {
+  return (
+    props.latestPerCase &&
+    !taskRunning.value &&
+    item.case_id !== null &&
+    item.case_id !== undefined &&
+    SINGLE_RETRYABLE_STATUSES.has(item.status)
+  )
+}
 const canRunNow = computed(() => planWaiting.value && planActive.value)
 const canEnablePlan = computed(() => planWaiting.value && !planActive.value)
 const planActive = computed(
@@ -729,9 +752,19 @@ onBeforeUnmount(clearFilterTimer)
               <td class="td tabular-nums">{{ formatMs(item.latency_ms) }}</td>
               <td class="td text-xs text-slate-500">{{ formatDateTime(item.started_at) }}</td>
               <td class="td text-right">
-                <button class="btn-ghost btn-xs" @click.stop="emit('select-execution', item.id)">
-                  查看结果
-                </button>
+                <div class="inline-flex items-center gap-1">
+                  <button
+                    v-if="canRetryCase(item)"
+                    class="btn-ghost btn-xs"
+                    title="在当前批次内重跑该用例，作为最新一次执行结果"
+                    @click.stop="emit('retry-case', item.case_id as number)"
+                  >
+                    重试
+                  </button>
+                  <button class="btn-ghost btn-xs" @click.stop="emit('select-execution', item.id)">
+                    查看结果
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>

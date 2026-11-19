@@ -36,7 +36,7 @@ from billing_qa.services.engine.schedule import (
     generate_task_code,
     initial_next_run,
 )
-from billing_qa.services.engine.scheduler import scheduler
+from billing_qa.services.engine.scheduler import RETRYABLE_STATUSES, scheduler
 from billing_qa.services.io.execution_excel import (
     bool_text,
     build_task_results_xlsx,
@@ -520,6 +520,46 @@ async def retry_failed(task_id: int, db: AsyncSession = Depends(get_db)) -> Mess
     await db.commit()
     await scheduler.start(task_id, retry_failed=True)
     return MessageResponse(message=f"已提交 {failed} 条历史失败记录的重跑（按用例取最新一次）")
+
+
+@router.post(
+    "/{task_id}/cases/{case_id}/retry",
+    response_model=MessageResponse,
+    summary="批次内单用例重试",
+)
+async def retry_case(
+    task_id: int, case_id: int, db: AsyncSession = Depends(get_db)
+) -> MessageResponse:
+    """在当前批次内单独重跑一条用例，作为该用例的最新一次尝试。
+
+    用于自动重试后仍异常、但仍希望每个用例都有最终状态的场景。
+    仅当任务未运行、且该用例最近一次执行为失败/异常类状态时允许。
+    """
+    task = await _get_task(db, task_id)
+    if scheduler.is_running(task_id):
+        raise ConflictError("任务正在运行，无法发起单用例重试")
+    if int(case_id) not in {int(item) for item in (task.case_ids or [])}:
+        raise NotFoundError("该用例不在当前批次中")
+    latest = (
+        await db.execute(
+            select(ExecutionRecord)
+            .where(
+                ExecutionRecord.task_id == task_id,
+                ExecutionRecord.case_id == case_id,
+            )
+            .order_by(ExecutionRecord.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if latest is None:
+        raise NotFoundError("该用例在当前批次尚无执行记录")
+    if latest.status in {"RUNNING", "PENDING"}:
+        raise ConflictError("该用例正在执行中，请稍后再试")
+    if latest.status not in RETRYABLE_STATUSES:
+        raise ConflictError("该用例最近一次执行不处于可重试状态")
+    if not await scheduler.retry_case(task_id, case_id):
+        raise ConflictError("任务正在运行，无法发起单用例重试")
+    return MessageResponse(message="已提交单用例重试，结果将实时更新")
 
 
 @router.get(
