@@ -1,0 +1,62 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontFamily': 'Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif', 'primaryColor': '#eef2ff', 'primaryBorderColor': '#6366f1', 'primaryTextColor': '#1e293b', 'lineColor': '#64748b', 'secondaryColor': '#f8fafc', 'tertiaryColor': '#ffffff'}}}%%
+erDiagram
+    sys_user ||--o{ sys_user_role : "拥有"
+    sys_role ||--o{ sys_user_role : "被分配"
+    sys_role ||--o{ sys_role_permission : "包含"
+    sys_permission ||--o{ sys_role_permission : "被授予"
+    sys_user ||--o{ sys_audit_log : "产生"
+
+    sys_user {
+        bigint id PK "主键"
+        varchar username UK "登录名，创建后不可改"
+        varchar username_lower UK "大小写不敏感登录"
+        varchar display_name "展示名"
+        varchar password_hash "Argon2id"
+        varchar status "ACTIVE / DISABLED / LOCKED"
+        int token_version "改密/改角色/禁用时 +1"
+        datetime last_login_at "最近登录"
+        datetime created_at "创建时间"
+    }
+
+    sys_role {
+        bigint id PK "主键"
+        varchar code UK "SYSTEM_ADMIN / CASE_OPERATOR ..."
+        varchar name "角色名称"
+        varchar data_scope "ALL / ENV / OWN（二期启用）"
+        boolean is_system "内置角色不可删除"
+        varchar status "ACTIVE / DISABLED"
+    }
+
+    sys_permission {
+        bigint id PK "主键"
+        varchar code UK "case:update"
+        varchar name "权限名称"
+        varchar module "case / task / user ..."
+        varchar action "read / write / review ..."
+        int sort "展示排序"
+    }
+
+    sys_user_role {
+        bigint user_id PK "FK -> sys_user.id"
+        bigint role_id PK "FK -> sys_role.id"
+        datetime created_at "分配时间"
+    }
+
+    sys_role_permission {
+        bigint role_id PK "FK -> sys_role.id"
+        bigint permission_id PK "FK -> sys_permission.id"
+        datetime created_at "授权时间"
+    }
+
+    sys_audit_log {
+        bigint id PK "主键"
+        bigint actor_id "FK -> sys_user.id"
+        varchar actor_username "用户名快照"
+        varchar action "user.assign_roles / case.review"
+        varchar resource "user / case / task ..."
+        varchar resource_id "对象 ID"
+        varchar ip "来源 IP"
+        boolean success "是否成功"
+        json detail "脱敏后的前后变化"
+        datetime created_at "发生时间"
+    }

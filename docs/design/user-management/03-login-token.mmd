@@ -1,0 +1,37 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontFamily': 'Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif', 'primaryColor': '#eef2ff', 'primaryBorderColor': '#6366f1', 'primaryTextColor': '#1e293b', 'lineColor': '#64748b', 'secondaryColor': '#f8fafc', 'tertiaryColor': '#ffffff', 'actorBkg': '#eef2ff', 'actorBorder': '#6366f1', 'signalColor': '#475569', 'signalTextColor': '#1e293b', 'noteBkgColor': '#fef9c3', 'noteBorderColor': '#ca8a04'}, 'sequence': {'mirrorActors': false, 'messageAlign': 'center'}}}%%
+sequenceDiagram
+    autonumber
+    participant B as 浏览器
+    participant A as 认证接口
+    participant S as 账号服务
+    participant DB as PostgreSQL
+    participant API as 业务接口
+    participant AD as 管理员
+
+    B->>A: POST /auth/login（username, password）
+    A->>S: 校验账号与密码
+    S->>DB: 查询用户 + 角色
+    DB-->>S: status / password_hash / token_version
+    S->>S: Argon2id 校验 + 失败计数
+    S->>DB: 更新 last_login_at / IP
+    S-->>A: 用户信息 + 权限并集
+    A-->>B: JWT{sub: uid, ver} + profile + permissions
+
+    B->>API: GET /cases（Bearer Token）
+    API->>DB: 解析 uid/ver，读取用户
+    DB-->>API: status / token_version
+    API->>DB: 查询角色权限并集
+    DB-->>API: permissions
+    alt 权限不足
+        API-->>B: 403 FORBIDDEN
+    else 权限通过
+        API->>API: 对象级校验（归属 / 状态 / 职责分离）
+        API-->>B: 200 数据
+    end
+
+    Note over AD,DB: 管理员禁用账号 / 重置密码 / 调整角色
+    AD->>DB: token_version += 1
+    B->>API: 携带旧 Token 请求
+    API->>DB: 校验 token_version
+    DB-->>API: ver 不匹配
+    API-->>B: 401 TOKEN_REVOKED

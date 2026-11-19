@@ -1,5 +1,6 @@
 import { downloadFile, http } from './client'
 import type {
+  AuditLog,
   BatchTask,
   Caliber,
   CandidatePromoteResult,
@@ -41,9 +42,11 @@ import type {
   ModelConfig,
   ModelPayload,
   ModelTestResult,
+  NotificationItem,
   OpenCodeCatalog,
   OpenCodeCatalogPayload,
   Page,
+  Permission,
   ProbeResult,
   PromptListItem,
   PromptTemplate,
@@ -51,9 +54,13 @@ import type {
   PromptVersion,
   RawExecution,
   RevisionDiff,
+  Role,
+  RoleDetail,
   RunCompare,
   SandboxRequest,
   SandboxResponse,
+  SystemUser,
+  SystemUserDetail,
   TaskMetrics,
   TaskRunsPage,
   TaskScheduleType,
@@ -106,6 +113,79 @@ export const api = {
   login: (username: string, password: string) =>
     http.post<LoginResponse>('/auth/login', { username, password }),
   me: () => http.get<UserInfo>('/auth/me'),
+  changePassword: (old_password: string, new_password: string) =>
+    http.post<LoginResponse>('/auth/change-password', { old_password, new_password }),
+  logout: () => http.post<MessageResponse>('/auth/logout'),
+
+  // ---------------------------------------------------------------- 系统管理
+  users: {
+    list: (query?: {
+      keyword?: string
+      status?: string
+      role_id?: number
+      page?: number
+      page_size?: number
+    }) => http.get<Page<SystemUser>>('/users', query),
+    get: (id: number) => http.get<SystemUserDetail>(`/users/${id}`),
+    create: (payload: {
+      username: string
+      display_name: string
+      email?: string | null
+      phone?: string | null
+      password: string
+      role_ids: number[]
+    }) => http.post<SystemUserDetail>('/users', payload),
+    update: (
+      id: number,
+      payload: {
+        display_name?: string
+        email?: string | null
+        phone?: string | null
+        status?: string
+      },
+    ) => http.patch<SystemUserDetail>(`/users/${id}`, payload),
+    setRoles: (id: number, role_ids: number[]) =>
+      http.put<SystemUserDetail>(`/users/${id}/roles`, { role_ids }),
+    resetPassword: (id: number) =>
+      http.post<{ temp_password: string; message: string }>(
+        `/users/${id}/reset-password`,
+      ),
+    unlock: (id: number) => http.post<SystemUserDetail>(`/users/${id}/unlock`),
+  },
+  roles: {
+    list: () => http.get<Role[]>('/roles'),
+    get: (id: number) => http.get<RoleDetail>(`/roles/${id}`),
+    create: (payload: {
+      code: string
+      name: string
+      description?: string | null
+      data_scope?: string
+      permission_codes: string[]
+    }) => http.post<RoleDetail>('/roles', payload),
+    update: (
+      id: number,
+      payload: { name?: string; description?: string | null; data_scope?: string; status?: string },
+    ) => http.patch<RoleDetail>(`/roles/${id}`, payload),
+    setPermissions: (id: number, permission_codes: string[]) =>
+      http.put<RoleDetail>(`/roles/${id}/permissions`, { permission_codes }),
+    remove: (id: number) => http.delete<MessageResponse>(`/roles/${id}`),
+    permissions: () => http.get<Permission[]>('/roles/permissions/catalog'),
+  },
+  auditLogs: {
+    list: (query?: {
+      page?: number
+      page_size?: number
+      actor_id?: number
+      action?: string
+      resource?: string
+      success?: boolean
+      date_from?: string
+      date_to?: string
+    }) => http.get<Page<AuditLog>>('/audit-logs', query),
+  },
+  notifications: {
+    list: (limit = 5) => http.get<NotificationItem[]>('/notifications', { limit }),
+  },
 
   // ---------------------------------------------------------------- 环境
   environments: {

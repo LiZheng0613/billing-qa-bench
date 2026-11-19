@@ -10,9 +10,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import model_to_out
+from billing_qa.core.authz import require_module_access
 from billing_qa.core.crypto import decrypt_value, encrypt_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
-from billing_qa.core.security import get_current_operator
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import ModelConnectionType, ModelRole
 from billing_qa.models.model_config import ModelConfig
@@ -31,7 +31,16 @@ from billing_qa.services.llm.client import LLMClient, ModelContext
 from billing_qa.services.llm.opencode_catalog import fetch_opencode_catalog
 
 router = APIRouter(
-    prefix="/models", tags=["模型注册"], dependencies=[Depends(get_current_operator)]
+    prefix="/models",
+    tags=["模型注册"],
+    dependencies=[
+        Depends(
+            require_module_access(
+                "model:read",
+                ("model:write", "model:test", "model:secret_read"),
+            )
+        )
+    ],
 )
 
 

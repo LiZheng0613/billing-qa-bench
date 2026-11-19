@@ -25,6 +25,7 @@ from billing_qa.core.logging import get_logger
 from billing_qa.db.migrations import upgrade_schema
 from billing_qa.db.seed import seed_builtin_prompts
 from billing_qa.db.session import SessionLocal, engine
+from billing_qa.services.auth.seed import sync_auth_seed
 
 logger = get_logger(__name__)
 
@@ -82,6 +83,8 @@ async def init_database(with_demo: bool = False, reset: bool = False) -> None:
             logger.info("已写入内置 Prompt 模板: %s", ", ".join(created))
         else:
             logger.info("内置 Prompt 模板已存在，跳过")
+        await sync_auth_seed(db)
+        logger.info("权限目录、内置角色与引导管理员已同步")
         if with_demo:
             from billing_qa.db.seed_demo import seed_demo_data
 

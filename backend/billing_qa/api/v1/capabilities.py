@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from billing_qa.core.authz import require_module_access
 from billing_qa.core.crypto import encrypt_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
-from billing_qa.core.security import get_current_operator
 from billing_qa.db.base import now
 from billing_qa.db.session import get_db
 from billing_qa.models.capability import Capability, DataSource
@@ -32,7 +32,17 @@ from billing_qa.schemas.ops import (
 from billing_qa.services.capability.service import execute_capability, probe_data_source
 from billing_qa.services.facts import iter_envelope_facts
 
-router = APIRouter(tags=["取数资产"], dependencies=[Depends(get_current_operator)])
+router = APIRouter(
+    tags=["取数资产"],
+    dependencies=[
+        Depends(
+            require_module_access(
+                "capability:read",
+                ("capability:write", "capability:execute"),
+            )
+        )
+    ],
+)
 
 
 # ---------------------------------------------------------------------- #

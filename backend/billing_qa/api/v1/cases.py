@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import build_execution_detail, case_to_out
+from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.logging import get_logger
 from billing_qa.core.security import get_current_operator
@@ -80,7 +81,25 @@ from billing_qa.services.revision.snapshot import (
 )
 
 router = APIRouter(
-    prefix="/cases", tags=["测试用例"], dependencies=[Depends(get_current_operator)]
+    prefix="/cases",
+    tags=["测试用例"],
+    dependencies=[
+        Depends(
+            require_module_access(
+                "case:read",
+                (
+                    "case:create",
+                    "case:update",
+                    "case:delete",
+                    "case:import",
+                    "case:review",
+                    "case:freeze",
+                    "case:rollback",
+                    "case:debug",
+                ),
+            )
+        )
+    ],
 )
 
 logger = get_logger(__name__)

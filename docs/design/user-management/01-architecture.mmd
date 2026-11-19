@@ -1,0 +1,50 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontFamily': 'Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif', 'primaryColor': '#eef2ff', 'primaryBorderColor': '#6366f1', 'primaryTextColor': '#1e293b', 'lineColor': '#64748b', 'secondaryColor': '#f8fafc', 'tertiaryColor': '#ffffff', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff'}, 'flowchart': {'curve': 'basis', 'nodeSpacing': 55, 'rankSpacing': 65}}}%%
+flowchart TB
+    subgraph FE["浏览器端 · Vue 3"]
+        direction LR
+        UI["页面与操作按钮<br/>v-if=auth.can()"]
+        GUARD["路由守卫<br/>meta.permission"]
+        STORE["Auth Store<br/>user + permissions"]
+    end
+
+    subgraph API["FastAPI 接入层"]
+        direction LR
+        JWT["JWT 认证<br/>get_current_user<br/>校验 status + ver"]
+        PERM["权限依赖<br/>require_permission<br/>资源:动作"]
+        AUDIT["审计中间件<br/>登录 / 写操作 / 403"]
+    end
+
+    subgraph SVC["业务服务层"]
+        direction LR
+        BIZ["用例 / 任务 / 执行服务"]
+        OBJ["对象级守卫<br/>归属 / 状态 / 职责分离"]
+        ACCOUNT["账号服务<br/>用户 / 角色 / 密码"]
+    end
+
+    subgraph DATA["数据层"]
+        direction LR
+        PG[("PostgreSQL<br/>sys_* + 业务表")]
+        REDIS[("Redis<br/>登录限流 / 权限缓存")]
+    end
+
+    STORE --> UI
+    GUARD --> STORE
+    UI -->|"HTTP + Bearer Token"| JWT
+    JWT --> PERM
+    PERM --> BIZ
+    PERM --> ACCOUNT
+    BIZ --> OBJ
+    OBJ --> PG
+    ACCOUNT --> PG
+    AUDIT -->|"审计记录"| PG
+    JWT --> REDIS
+    PERM -.->|"401 / 403"| UI
+
+    classDef client fill:#eef2ff,stroke:#6366f1,color:#1e293b
+    classDef gateway fill:#ecfeff,stroke:#0891b2,color:#1e293b
+    classDef service fill:#f0fdf4,stroke:#16a34a,color:#1e293b
+    classDef data fill:#fff7ed,stroke:#ea580c,color:#1e293b
+    class UI,GUARD,STORE client
+    class JWT,PERM,AUDIT gateway
+    class BIZ,OBJ,ACCOUNT service
+    class PG,REDIS data

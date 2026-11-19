@@ -74,6 +74,18 @@ class ExecutionStatus(StrEnum):
     ABORTED = "ABORTED"
 
 
+class UserStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    DISABLED = "DISABLED"
+    LOCKED = "LOCKED"
+
+
+class DataScope(StrEnum):
+    ALL = "ALL"
+    ENV = "ENV"
+    OWN = "OWN"
+
+
 class TerminationStatus(StrEnum):
     GOAL_ACHIEVED = "GOAL_ACHIEVED"
     GIVE_UP = "GIVE_UP"

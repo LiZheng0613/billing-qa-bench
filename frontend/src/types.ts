@@ -50,16 +50,104 @@ export interface ErrorBody {
 }
 
 // ------------------------------------------------------------------ 认证
+export interface UserProfile {
+  id: number
+  username: string
+  display_name: string
+  roles: string[]
+  permissions: string[]
+  must_change_password: boolean
+}
+
 export interface LoginResponse {
   access_token: string
   token_type: string
   expires_in: number
   username: string
+  user: UserProfile
 }
 
-export interface UserInfo {
+export interface UserInfo extends UserProfile {
+  role?: string
+}
+
+// ------------------------------------------------------------------ 系统管理
+export interface RoleBrief {
+  id: number
+  code: string
+  name: string
+}
+
+export interface SystemUser {
+  id: number
   username: string
-  role: string
+  display_name: string
+  email: string | null
+  phone: string | null
+  status: string
+  roles: RoleBrief[]
+  last_login_at: string | null
+  created_at: string | null
+  must_change_password: boolean
+}
+
+export interface SystemUserDetail extends SystemUser {
+  last_login_ip: string | null
+  created_by: number | null
+  updated_at: string | null
+}
+
+export interface Role {
+  id: number
+  code: string
+  name: string
+  description: string | null
+  data_scope: string
+  is_system: boolean
+  status: string
+  user_count: number
+  permission_count: number
+}
+
+export interface RoleDetail extends Role {
+  permission_codes: string[]
+}
+
+export interface Permission {
+  id: number
+  code: string
+  name: string
+  module: string
+  action: string
+  description: string | null
+  sort: number
+}
+
+export interface AuditLog {
+  id: number
+  created_at: string
+  actor_id: number | null
+  actor_username: string
+  action: string
+  resource: string
+  resource_id: string | null
+  method: string | null
+  path: string | null
+  ip: string | null
+  status_code: number | null
+  success: boolean
+  detail: Record<string, unknown> | null
+}
+
+export interface NotificationItem {
+  id: number
+  title: string
+  message: string
+  level: 'info' | 'success' | 'warning' | 'error'
+  actor: string | null
+  resource: string
+  resource_id: string | null
+  created_at: string
 }
 
 // ------------------------------------------------------------------ 环境

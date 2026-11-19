@@ -14,6 +14,7 @@ from billing_qa.api.v1.cases import (
     _validate_references,
     _validate_strategy,
 )
+from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.security import get_current_operator
 from billing_qa.db.session import get_db
@@ -31,7 +32,11 @@ from billing_qa.schemas.ops import (
 )
 
 router = APIRouter(
-    prefix="/candidates", tags=["用例候选池"], dependencies=[Depends(get_current_operator)]
+    prefix="/candidates",
+    tags=["用例候选池"],
+    dependencies=[
+        Depends(require_module_access("candidate:read", ("candidate:triage", "candidate:promote")))
+    ],
 )
 
 

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from billing_qa.core.authz import require_module_access
 from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.security import get_current_operator
@@ -56,7 +57,11 @@ _SANDBOX_MODEL_ROLES: dict[str, ModelRole] = {
 }
 
 router = APIRouter(
-    prefix="/prompts", tags=["Prompt 资产"], dependencies=[Depends(get_current_operator)]
+    prefix="/prompts",
+    tags=["Prompt 资产"],
+    dependencies=[
+        Depends(require_module_access("prompt:read", ("prompt:write", "prompt:rollback")))
+    ],
 )
 
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from billing_qa.core.security import get_current_operator
+from billing_qa.core.authz import require_module_access
 from billing_qa.db.session import get_db
 from billing_qa.models.candidate import GraderEval
 from billing_qa.schemas.common import Page
@@ -14,7 +14,9 @@ from billing_qa.schemas.ops import GraderEvalOut, GraderEvalRunRequest
 from billing_qa.services.grading.mutants import MUTANTS, run_mutants
 
 router = APIRouter(
-    prefix="/grader", tags=["判分器自检"], dependencies=[Depends(get_current_operator)]
+    prefix="/grader",
+    tags=["判分器自检"],
+    dependencies=[Depends(require_module_access("grader:run", ("grader:run",)))],
 )
 
 

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from billing_qa.core.security import get_current_operator
+from billing_qa.core.authz import require_module_access
 from billing_qa.db.session import get_db
 from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.gold_query import FactResult
@@ -17,7 +17,9 @@ from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.ops import DatasetStatItem, FactStatItem, FactStatsOverview
 
 router = APIRouter(
-    prefix="/stats", tags=["统计"], dependencies=[Depends(get_current_operator)]
+    prefix="/stats",
+    tags=["统计"],
+    dependencies=[Depends(require_module_access("stats:read", ("stats:read",)))],
 )
 
 

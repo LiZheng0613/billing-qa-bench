@@ -1,0 +1,21 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontFamily': 'Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif', 'primaryColor': '#eef2ff', 'primaryBorderColor': '#6366f1', 'primaryTextColor': '#1e293b', 'lineColor': '#64748b', 'secondaryColor': '#f8fafc', 'tertiaryColor': '#ffffff'}, 'flowchart': {'curve': 'basis', 'nodeSpacing': 45, 'rankSpacing': 50}}}%%
+flowchart TD
+    START(["请求到达"]) --> T{"携带 Bearer Token?"}
+    T -- "否" --> U401(["401 UNAUTHORIZED"])
+    T -- "是" --> J{"JWT 有效且未过期?"}
+    J -- "否" --> U401
+    J -- "是" --> S{"账号 ACTIVE 且<br/>token_version 一致?"}
+    S -- "否" --> U401B(["401 TOKEN_REVOKED / DISABLED"])
+    S -- "是" --> P{"拥有所需权限码?"}
+    P -- "否" --> F403(["403 FORBIDDEN<br/>记录审计"])
+    P -- "是" --> O{"对象级校验通过?<br/>归属 / 状态 / 职责分离"}
+    O -- "否" --> F403
+    O -- "是" --> EXEC["执行操作"]
+    EXEC --> AUDIT["写审计日志"]
+    AUDIT --> OK(["200 / 201"])
+
+    classDef ok fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef deny fill:#ffe4e6,stroke:#e11d48,color:#881337
+    classDef step fill:#eef2ff,stroke:#6366f1,color:#1e293b
+    class START,EXEC,AUDIT,OK step
+    class U401,U401B,F403 deny

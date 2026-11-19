@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用户管理 · 方案对比</title>
+<style>
+  :root {
+    --canvas: #f5f5f7;
+    --line: #e8e8ed;
+    --line-soft: #f0f0f4;
+    --line-strong: #dcdfe6;
+    --ink: #111827;
+    --ink-soft: #374151;
+    --muted: #6b7280;
+    --faint: #9ca3af;
+    --brand: #4f46e5;
+    --brand-deep: #4338ca;
+    --brand-soft: #eef2ff;
+    --brand-edge: #e0e7ff;
+    --green: #059669;
+    --green-soft: #ecfdf5;
+    --amber: #b45309;
+    --amber-soft: #fffbeb;
+    --rose: #e11d48;
+    --rose-soft: #fff1f2;
+    --slate-soft: #f1f5f9;
+    --violet: #7e22ce;
+    --violet-soft: #f3e8ff;
+    --blue: #0369a1;
+    --blue-soft: #e0f2fe;
+    --shadow: 0 1px 2px rgba(17, 24, 39, .04), 0 18px 40px -36px rgba(17, 24, 39, .55);
+    --shadow-lift: 0 2px 6px rgba(17, 24, 39, .06), 0 26px 50px -34px rgba(17, 24, 39, .45);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--canvas); color: var(--ink);
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  ::selection { background: #e0e7ff; color: #312e81; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; background-clip: content-box; }
+
+  .app { display: flex; min-height: 100vh; }
+  .rail { width: 88px; flex: none; position: sticky; top: 0; height: 100vh; padding: 16px 0 16px 16px; }
+  .rail-inner {
+    height: 100%; display: flex; flex-direction: column; align-items: center;
+    background: #fff; border: 1px solid var(--line); border-radius: 20px;
+    box-shadow: var(--shadow); padding: 14px 10px 12px;
+  }
+  .brand { display: flex; align-items: center; justify-content: center; padding: 0 0 16px; }
+  .brand-mark {
+    width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center;
+    color: #fff; font-weight: 700; font-size: 13px;
+    background: linear-gradient(135deg, #6366f1, #4338ca);
+    box-shadow: 0 6px 14px -8px rgba(79, 70, 229, .9);
+  }
+  .rail-nav { width: 100%; flex: 1; display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
+  .rail-item {
+    width: 44px; height: 44px; border: 0; border-radius: 12px; background: transparent;
+    color: #64748b; display: grid; place-items: center; position: relative;
+  }
+  .rail-item.active { background: var(--brand-soft); color: var(--brand); }
+  .rail-item .ico { width: 18px; height: 18px; }
+  .rail-lock {
+    position: absolute; right: 7px; bottom: 7px; width: 12px; height: 12px;
+    border-radius: 50%; background: #fff; color: var(--brand); display: grid; place-items: center;
+    box-shadow: 0 0 0 1px var(--brand-edge);
+  }
+  .rail-lock .ico { width: 7px; height: 7px; }
+  .rail-foot { width: 100%; border-top: 1px solid var(--line-soft); padding-top: 12px; display: grid; place-items: center; }
+
+  .workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .topbar {
+    position: sticky; top: 0; z-index: 30; height: 64px; flex: none;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 0 28px; background: rgba(245, 245, 247, .86); backdrop-filter: blur(10px);
+  }
+  .crumb { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--faint); }
+  .crumb b { color: var(--ink-soft); font-weight: 600; }
+  .crumb .sep { color: #cbd5e1; }
+  .design-badge {
+    display: inline-flex; align-items: center; height: 18px; padding: 0 6px; margin-left: 3px;
+    border-radius: 5px; background: #fff; border: 1px solid var(--line); color: #94a3b8;
+    font-size: 8.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .top-right { display: flex; align-items: center; gap: 10px; }
+  .search {
+    width: 220px; height: 34px; display: flex; align-items: center; gap: 8px;
+    padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: #94a3b8;
+  }
+  .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 11.5px; color: var(--ink); }
+  .search kbd { font: 10px/1 Inter, sans-serif; color: #94a3b8; border: 1px solid var(--line); background: var(--canvas); border-radius: 5px; padding: 3px 5px; }
+  .icon-btn {
+    width: 34px; height: 34px; border: 1px solid var(--line); background: #fff; border-radius: 10px;
+    display: grid; place-items: center; color: #64748b; position: relative;
+  }
+  .icon-btn .ico { width: 16px; height: 16px; }
+  .bell-dot { position: absolute; top: 7px; right: 8px; width: 6px; height: 6px; background: #f43f5e; border: 1.5px solid #fff; border-radius: 50%; }
+  .account { display: flex; align-items: center; gap: 8px; padding: 3px 3px 3px 8px; border: 1px solid transparent; border-radius: 999px; background: transparent; }
+  .account-meta { line-height: 1.2; text-align: left; }
+  .account-meta .name { font-size: 11.5px; font-weight: 600; }
+  .account-meta .role { font-size: 9.5px; color: var(--muted); }
+
+  main { padding: 10px 28px 40px; }
+  .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 8px 0 16px; }
+  .eyebrow-row { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; }
+  .eyebrow { margin: 0; font-size: 9.5px; font-weight: 700; letter-spacing: .18em; color: #94a3b8; text-transform: uppercase; }
+  .admin-chip {
+    display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px;
+    border-radius: 999px; background: var(--brand-soft); border: 1px solid var(--brand-edge);
+    color: #4338ca; font-size: 8.5px; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+  }
+  .admin-chip .ico { width: 10px; height: 10px; }
+  .page-title { margin: 0; font-size: 23px; line-height: 1.15; letter-spacing: -.035em; font-weight: 650; }
+  .page-sub { margin: 7px 0 0; max-width: 580px; font-size: 11.5px; line-height: 1.6; color: var(--muted); }
+  .head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+  .btn {
+    height: 34px; padding: 0 13px; border-radius: 10px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink-soft); font-size: 11.5px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 7px; transition: .15s; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--line-strong); box-shadow: 0 2px 6px rgba(17,24,39,.05); }
+  .btn .ico { width: 14px; height: 14px; }
+  .btn-sm { height: 30px; padding: 0 10px; font-size: 10.5px; border-radius: 9px; }
+  .btn-primary {
+    background: linear-gradient(180deg, #6366f1, #4f46e5); border-color: #4f46e5; color: #fff;
+    box-shadow: 0 6px 14px -10px rgba(79, 70, 229, .9);
+  }
+  .btn-primary:hover { background: linear-gradient(180deg, #575bf0, #4338ca); border-color: #4338ca; }
+  .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
+  .btn-ghost:hover { background: #fff; border-color: var(--line); color: var(--ink); }
+  .btn-danger { color: var(--rose); border-color: #fecdd3; background: #fff; }
+  .btn-danger:hover { background: var(--rose-soft); border-color: #fda4af; }
+
+  .design-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .ds-btn {
+    display: flex; align-items: center; gap: 9px; text-align: left; padding: 9px 10px;
+    border: 1px solid var(--line); border-radius: 13px; background: #fff; box-shadow: var(--shadow);
+    transition: .15s; min-width: 0;
+  }
+  .ds-btn:hover { border-color: var(--brand-edge); box-shadow: var(--shadow-lift); }
+  .ds-btn.active { border-color: #c7d2fe; background: #f8f8ff; box-shadow: 0 0 0 3px rgba(79,70,229,.06), var(--shadow); }
+  .ds-letter {
+    width: 25px; height: 25px; border-radius: 8px; flex: none; display: grid; place-items: center;
+    background: var(--slate-soft); color: #64748b; font-size: 10.5px; font-weight: 700;
+  }
+  .ds-btn.active .ds-letter { background: var(--brand); color: #fff; }
+  .ds-copy { min-width: 0; }
+  .ds-copy b { display: block; font-size: 11px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ds-copy small { display: block; margin-top: 1px; font-size: 9px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ds-tag {
+    margin-left: auto; flex: none; font-size: 8px; font-weight: 700; letter-spacing: .04em;
+    color: var(--brand); background: var(--brand-soft); border: 1px solid var(--brand-edge);
+    padding: 2px 5px; border-radius: 4px;
+  }
+
+  .variant { display: none; animation: rise .2s ease-out; }
+  .variant.active { display: block; }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px; height: 19px; padding: 0 7px;
+    border-radius: 999px; font-size: 9px; font-weight: 600; white-space: nowrap;
+    background: var(--slate-soft); color: #475569;
+  }
+  .tag.indigo { background: var(--brand-soft); color: #4338ca; }
+  .tag.amber { background: var(--amber-soft); color: var(--amber); }
+  .tag.green { background: var(--green-soft); color: var(--green); }
+  .tag.violet { background: var(--violet-soft); color: var(--violet); }
+  .tag.slate { background: var(--slate-soft); color: #475569; }
+  .tag .dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .8; }
+
+  .avatar {
+    width: 32px; height: 32px; border-radius: 10px; flex: none;
+    display: grid; place-items: center; font-size: 11px; font-weight: 700;
+    color: #4338ca; background: #e0e7ff; letter-spacing: -.02em;
+  }
+  .avatar.sm { width: 30px; height: 30px; border-radius: 9px; font-size: 10.5px; }
+  .avatar.lg { width: 44px; height: 44px; border-radius: 13px; font-size: 14px; }
+  .avatar.violet { color: #6d28d9; background: #f3e8ff; }
+  .avatar.amber { color: #b45309; background: #fef3c7; }
+  .avatar.emerald { color: #047857; background: #d1fae5; }
+  .avatar.slate { color: #475569; background: #e2e8f0; }
+  .avatar.blue { color: #0369a1; background: #e0f2fe; }
+  .avatar.rose { color: #be123c; background: #ffe4e6; }
+
+  .variant-note {
+    display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; margin-bottom: 10px;
+    border: 1px dashed #d9d9e3; border-radius: 11px; background: rgba(255,255,255,.55);
+    font-size: 10px; line-height: 1.55; color: var(--muted);
+  }
+  .variant-note b { color: var(--ink-soft); font-weight: 650; }
+  .variant-note .ico { width: 13px; height: 13px; flex: none; margin-top: 1px; color: var(--brand); }
+  .ico { display: inline-block; vertical-align: middle; }
+  .mono { font-family: "JetBrains Mono", Consolas, monospace; }
+
+  .field {
+    height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 9px;
+    border: 1px solid var(--line); border-radius: 9px; background: #fff; color: #94a3b8; font-size: 11px;
+  }
+  .field:focus-within { border-color: #c7d2fe; box-shadow: 0 0 0 3px rgba(79,70,229,.07); }
+  .field input { border: 0; outline: 0; background: transparent; width: 148px; font-size: 11px; color: var(--ink); }
+  .field .ico { width: 13px; height: 13px; }
+  .select {
+    height: 30px; border: 1px solid var(--line); border-radius: 9px; background: #fff;
+    padding: 0 26px 0 9px; font-size: 11px; color: var(--ink-soft); outline: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+  }
+
+  /* ---------- shared user detail ---------- */
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+  .info .k { font-size: 9px; color: var(--faint); }
+  .info .v { margin-top: 2px; font-size: 10.5px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .info .v.mono { font-size: 9.5px; }
+  .ud-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #94a3b8; }
+  .ud-label .right { font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--brand); }
+  .ud-section { padding: 12px 0; border-top: 1px solid var(--line-soft); }
+  .ud-section:first-child { border-top: 0; padding-top: 2px; }
+  .status { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: #475569; }
+  .status .dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px #ecfdf5; }
+  .status.disabled .dot { background: #94a3b8; box-shadow: 0 0 0 3px #f1f5f9; }
+  .status.locked .dot { background: #f59e0b; box-shadow: 0 0 0 3px #fffbeb; }
+
+  .role-options { display: flex; flex-direction: column; gap: 4px; }
+  .role-option { display: flex; align-items: flex-start; gap: 8px; padding: 7px 8px; border: 1px solid transparent; border-radius: 9px; cursor: pointer; }
+  .role-option:hover { background: #fafaff; border-color: var(--brand-edge); }
+  .role-option.checked { background: #f8f8ff; border-color: var(--brand-edge); }
+  .role-option input {
+    appearance: none; width: 14px; height: 14px; margin: 2px 0 0; border-radius: 4px;
+    border: 1.5px solid #cbd5e1; background: #fff; flex: none; position: relative; cursor: pointer;
+  }
+  .role-option input:checked { background: var(--brand); border-color: var(--brand); }
+  .role-option input:checked::after { content: ""; position: absolute; left: 3.5px; top: .5px; width: 5px; height: 9px; border: solid #fff; border-width: 0 1.7px 1.7px 0; transform: rotate(45deg); }
+  .role-copy { min-width: 0; }
+  .role-copy .rn { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; }
+  .role-copy .rd { margin-top: 1px; font-size: 9px; line-height: 1.45; color: var(--faint); }
+  .mini { margin-left: auto; font-size: 8.5px; color: #94a3b8; background: #f1f5f9; border-radius: 999px; padding: 2px 5px; white-space: nowrap; }
+  .role-option.checked .mini { background: var(--brand-soft); color: var(--brand); }
+  .perm-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { font-size: 9.5px; color: #475569; background: #f8fafc; border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; }
+  .chip.more { color: var(--brand); background: var(--brand-soft); border-color: var(--brand-edge); font-weight: 600; }
+  .notice { display: flex; gap: 7px; padding: 8px 9px; border-radius: 9px; background: var(--amber-soft); border: 1px solid #fde68a; color: #92400e; font-size: 9px; line-height: 1.5; }
+  .notice .ico { width: 12px; height: 12px; flex: none; margin-top: 1px; }
+
+  /* ---------- variant A: master detail ---------- */
+  .user-master { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 10px; align-items: start; }
+  .list-stack { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .security-card { padding: 12px; }
+  .sc-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 7px; }
+  .sc-head b { font-size: 10.5px; font-weight: 650; }
+  .sc-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid var(--line-soft); font-size: 9px; color: var(--faint); }
+  .sc-row:first-of-type { border-top: 0; }
+  .sc-row b { color: var(--ink-soft); font-weight: 600; font-size: 9.5px; }
+  .sc-note { margin-top: 7px; padding: 7px 8px; border-radius: 7px; background: #f8fafc; border: 1px solid var(--line-soft); font-size: 8.5px; line-height: 1.5; color: var(--faint); }
+  .user-list { overflow: hidden; }
+  .ul-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 9px; border-bottom: 1px solid var(--line-soft); }
+  .ul-head b { font-size: 11.5px; font-weight: 650; }
+  .ul-head small { display: block; margin-top: 1px; font-size: 9px; color: var(--faint); }
+  .ul-add { margin-left: auto; width: 25px; height: 25px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: #64748b; display: grid; place-items: center; }
+  .ul-add .ico { width: 13px; height: 13px; }
+  .ul-search { display: flex; align-items: center; gap: 6px; height: 28px; margin: 8px 10px 0; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; color: #94a3b8; }
+  .ul-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 10px; color: var(--ink); }
+  .ul-search .ico { width: 12px; height: 12px; }
+  .ul-filters { display: flex; gap: 3px; padding: 7px 10px 6px; overflow-x: auto; }
+  .ul-filter { border: 0; background: transparent; color: #94a3b8; font-size: 8.5px; font-weight: 600; padding: 3px 6px; border-radius: 5px; white-space: nowrap; }
+  .ul-filter:hover { background: var(--canvas); color: var(--ink-soft); }
+  .ul-filter.active { background: var(--brand-soft); color: var(--brand); }
+  .ul-body { padding: 0 5px; }
+  .urow {
+    width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 7px; border: 1px solid transparent;
+    border-radius: 9px; background: transparent; text-align: left; transition: .12s;
+  }
+  .urow:hover { background: #fafaff; }
+  .urow.active { background: #f7f7ff; border-color: var(--brand-edge); box-shadow: inset 2px 0 0 var(--brand); }
+  .urow-copy { min-width: 0; flex: 1; }
+  .urow-name { display: flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; }
+  .urow-name .dot { width: 5px; height: 5px; border-radius: 50%; background: #22c55e; }
+  .urow-name .dot.disabled { background: #94a3b8; }
+  .urow-name .dot.locked { background: #f59e0b; }
+  .urow-meta { margin-top: 1px; font-size: 8.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ul-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line-soft); font-size: 8.5px; color: var(--faint); }
+  .pager { display: flex; gap: 3px; }
+  .pager button { min-width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: var(--muted); font-size: 8.5px; }
+  .pager button.active { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-edge); }
+  .pager button:disabled { opacity: .4; }
+
+  .user-detail { overflow: hidden; }
+  .ud-head { display: flex; align-items: flex-start; gap: 10px; padding: 13px 14px; border-bottom: 1px solid var(--line-soft); }
+  .ud-title { min-width: 0; }
+  .ud-name { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 650; letter-spacing: -.02em; }
+  .ud-handle { margin-top: 2px; font-size: 9.5px; color: var(--faint); font-family: "JetBrains Mono", Consolas, monospace; }
+  .ud-head .status { margin-top: 4px; }
+  .ud-actions { margin-left: auto; display: flex; gap: 5px; flex: none; }
+  .ud-body { padding: 0 14px; }
+  .ud-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--line-soft); background: #fcfcfd; }
+  .activity { display: flex; flex-direction: column; gap: 7px; }
+  .activity-row { display: flex; align-items: center; gap: 7px; font-size: 9.5px; color: var(--ink-soft); }
+  .activity-row .dot { width: 5px; height: 5px; border-radius: 50%; background: #22c55e; flex: none; }
+  .activity-row .dot.amber { background: #f59e0b; }
+  .activity-row time { margin-left: auto; font-size: 8.5px; color: var(--faint); white-space: nowrap; }
+
+  /* ---------- variant B: table + drawer ---------- */
+  .table-stage { position: relative; min-height: 780px; }
+  .user-table-card { overflow: hidden; }
+  .ut-toolbar { display: flex; align-items: center; gap: 7px; padding: 11px 12px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }
+  .ut-toolbar .field input { width: 130px; }
+  .ut-toolbar .spacer { flex: 1; }
+  .ut-toolbar .hint { font-size: 9px; color: var(--faint); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 620px; }
+  thead th { text-align: left; padding: 8px 10px; font-size: 8.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #94a3b8; background: #fcfcfd; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+  tbody td { padding: 8px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; white-space: nowrap; }
+  tbody tr { cursor: pointer; transition: background .12s; }
+  tbody tr:hover { background: #fafaff; }
+  tbody tr.selected { background: #f7f7ff; box-shadow: inset 2px 0 0 var(--brand); }
+  tbody tr:last-child td { border-bottom: 0; }
+  .cb { appearance: none; width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid #cbd5e1; background: #fff; position: relative; cursor: pointer; vertical-align: middle; }
+  .cb:checked { background: var(--brand); border-color: var(--brand); }
+  .cb:checked::after { content: ""; position: absolute; left: 3.5px; top: .5px; width: 5px; height: 9px; border: solid #fff; border-width: 0 1.7px 1.7px 0; transform: rotate(45deg); }
+  .user-cell { display: flex; align-items: center; gap: 8px; }
+  .user-cell .n { font-size: 10.5px; font-weight: 600; }
+  .user-cell .h { margin-top: 1px; font-size: 8.5px; color: var(--faint); font-family: "JetBrains Mono", Consolas, monospace; }
+  .table-time { font-size: 9.5px; color: #64748b; }
+  .table-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--line-soft); font-size: 9px; color: var(--faint); }
+
+  .drawer {
+    position: absolute; top: 52px; right: 0; bottom: 0; width: 356px; display: flex; flex-direction: column;
+    background: #fff; border-radius: 16px; border: 1px solid var(--line);
+    box-shadow: -24px 0 48px -28px rgba(17,24,39,.5), 0 18px 40px -30px rgba(17,24,39,.4);
+    transform: translateX(14px); opacity: 0; pointer-events: none; transition: .2s; overflow: hidden;
+  }
+  .drawer.open { transform: none; opacity: 1; pointer-events: auto; }
+  .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); }
+  .drawer-head b { font-size: 11px; font-weight: 650; }
+  .drawer-close { width: 25px; height: 25px; border: 0; border-radius: 7px; background: transparent; color: #94a3b8; display: grid; place-items: center; }
+  .drawer-close:hover { background: var(--canvas); color: var(--ink); }
+  .drawer-close .ico { width: 14px; height: 14px; }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 12px 12px 0; }
+  .drawer-identity { display: flex; align-items: center; gap: 9px; }
+  .drawer-identity .ud-name { font-size: 13px; }
+  .drawer-actions { display: flex; gap: 6px; margin: 10px 0 2px; }
+  .drawer .ud-section { padding: 10px 0; }
+  .drawer .info-grid { gap: 7px 10px; }
+  .drawer .ud-label { margin-bottom: 6px; }
+  .drawer .role-option { padding: 6px 7px; }
+  .drawer .role-copy .rd { display: none; }
+  .drawer-foot { display: flex; justify-content: flex-end; gap: 6px; padding: 9px 12px; border-top: 1px solid var(--line-soft); background: #fcfcfd; }
+
+  .toast {
+    position: fixed; right: 22px; bottom: 22px; z-index: 90; max-width: 320px;
+    background: #111827; color: #f8fafc; border-radius: 12px; padding: 10px 13px;
+    font-size: 11px; line-height: 1.5; box-shadow: 0 16px 40px -14px rgba(0,0,0,.5);
+    opacity: 0; transform: translateY(8px); pointer-events: none; transition: .2s;
+  }
+  .toast.show { opacity: 1; transform: none; }
+
+  @media (max-width: 1060px) {
+    .rail { width: 78px; padding: 12px 0 12px 12px; }
+    .rail-inner { padding: 12px 9px 10px; }
+    .brand { padding-bottom: 14px; }
+  }
+  @media (max-width: 780px) {
+    .rail { width: 72px; padding: 12px 0 12px 10px; }
+    .rail-inner { padding: 12px 8px 10px; }
+    .topbar { padding: 0 16px; }
+    main { padding: 8px 16px 32px; }
+    .search { display: none; }
+    .account-meta { display: none; }
+    .page-head { flex-direction: column; align-items: flex-start; }
+    .head-actions { width: 100%; }
+    .head-actions .btn-primary { margin-left: auto; }
+    .design-switch { grid-template-columns: 1fr; }
+    .user-master { grid-template-columns: 1fr; }
+    .hide-sm { display: none !important; }
+    .drawer { width: min(356px, calc(100% - 16px)); }
+    .table-stage { min-height: 720px; }
+  }
+  @media (max-width: 560px) {
+    .table-stage { min-height: 780px; }
+    .drawer { width: calc(100% - 12px); }
+    .ud-actions { display: none; }
+    .drawer .role-option:nth-child(n+5) { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail-inner">
+      <div class="brand"><div class="brand-mark">问</div></div>
+      <div class="rail-nav">
+        <button class="rail-item active" title="用户与权限 · 仅系统管理员可见">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path stroke-linecap="round" stroke-linejoin="round" d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span class="rail-lock"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="5" y="10" width="14" height="10" rx="2"/><path stroke-linecap="round" d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+        </button>
+      </div>
+      <div class="rail-foot"><div class="avatar">张</div></div>
+    </div>
+  </aside>
+
+  <div class="workspace">
+    <header class="topbar">
+      <div class="crumb">
+        <span>系统管理</span><span class="sep">/</span><b>用户管理</b><span class="design-badge">Design</span>
+      </div>
+      <div class="top-right">
+        <label class="search">
+          <svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m20 20-3.5-3.5"/></svg>
+          <input placeholder="搜索用户或角色" aria-label="搜索">
+          <kbd>⌘ K</kbd>
+        </label>
+        <button class="icon-btn" aria-label="通知"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span class="bell-dot"></span></button>
+        <button class="account" onclick="toast('张明 · 系统管理员')">
+          <div class="avatar">张</div>
+          <div class="account-meta"><div class="name">张明</div><div class="role">系统管理员</div></div>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><path stroke-linecap="round" d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="page-head">
+        <div>
+          <div class="eyebrow-row">
+            <p class="eyebrow">Access Control</p>
+            <span class="admin-chip"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="10" width="14" height="10" rx="2"/><path stroke-linecap="round" d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>仅系统管理员可见</span>
+          </div>
+          <h1 class="page-title">用户管理</h1>
+          <p class="page-sub">系统管理员可管理当前系统的全部账号。两套布局对比：主从列表适合小团队，表格 + 抽屉适合账号增长。</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn" onclick="toast('导出用户清单：CSV / Excel')">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+            导出
+          </button>
+          <button class="btn btn-primary" onclick="toast('新建用户：账号 / 角色 / 初始密码')">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+            新建用户
+          </button>
+        </div>
+      </section>
+
+      <div class="design-switch" role="tablist" aria-label="用户管理设计备选方案">
+        <button class="ds-btn active" data-variant="a" role="tab">
+          <span class="ds-letter">A</span>
+          <span class="ds-copy"><b>主从列表</b><small>左侧用户列表，右侧始终可见详情</small></span>
+          <span class="ds-tag">推荐</span>
+        </button>
+        <button class="ds-btn" data-variant="b" role="tab">
+          <span class="ds-letter">B</span>
+          <span class="ds-copy"><b>表格 + 侧滑抽屉</b><small>保留完整表格，详情按需滑出</small></span>
+        </button>
+      </div>
+
+      <!-- ================= Variant A ================= -->
+      <section class="variant active" id="variant-a" role="tabpanel">
+        <div class="variant-note">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h10M4 18h7"/></svg>
+          <span><b>方案 A：</b>左侧紧凑用户列表 + 右侧固定详情。12 个账号规模下最顺手，不用反复打开抽屉。</span>
+        </div>
+
+        <div class="user-master">
+          <div class="list-stack">
+          <aside class="card user-list">
+            <div class="ul-head">
+              <div><b>用户</b><small>12 个账号</small></div>
+              <button class="ul-add" title="新建用户" onclick="toast('新建用户')"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+            <label class="ul-search">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m20 20-3.5-3.5"/></svg>
+              <input id="userFilterA" placeholder="搜索姓名或用户名">
+            </label>
+            <div class="ul-filters">
+              <button class="ul-filter active" data-status="all">全部 12</button>
+              <button class="ul-filter" data-status="启用">启用 9</button>
+              <button class="ul-filter" data-status="禁用">禁用 2</button>
+              <button class="ul-filter" data-status="锁定">锁定 1</button>
+            </div>
+            <div class="ul-body" id="userListA">
+              <button class="urow" data-user="zhangming">
+                <div class="avatar sm">张</div>
+                <div class="urow-copy"><div class="urow-name">张明 <span class="dot"></span></div><div class="urow-meta">zhangming · 系统管理员</div></div>
+              </button>
+              <button class="urow" data-user="liqian">
+                <div class="avatar sm violet">李</div>
+                <div class="urow-copy"><div class="urow-name">李倩 <span class="dot"></span></div><div class="urow-meta">liqian · 用例操作员</div></div>
+              </button>
+              <button class="urow active" data-user="wangtao">
+                <div class="avatar sm amber">王</div>
+                <div class="urow-copy"><div class="urow-name">王涛 <span class="dot"></span></div><div class="urow-meta">wangtao · 用例审核员</div></div>
+              </button>
+              <button class="urow" data-user="chenchen">
+                <div class="avatar sm emerald">陈</div>
+                <div class="urow-copy"><div class="urow-name">陈晨 <span class="dot"></span></div><div class="urow-meta">chenchen · 测试执行员</div></div>
+              </button>
+              <button class="urow" data-user="zhaomin">
+                <div class="avatar sm slate">赵</div>
+                <div class="urow-copy"><div class="urow-name">赵敏 <span class="dot disabled"></span></div><div class="urow-meta">zhaomin · 只读观察员</div></div>
+              </button>
+              <button class="urow" data-user="liuyang">
+                <div class="avatar sm blue">刘</div>
+                <div class="urow-copy"><div class="urow-name">刘洋 <span class="dot locked"></span></div><div class="urow-meta">liuyang · 用例操作员</div></div>
+              </button>
+            </div>
+            <div class="ul-foot"><span>1–6 / 12</span><div class="pager"><button disabled>‹</button><button class="active">1</button><button>2</button><button>›</button></div></div>
+          </aside>
+          <aside class="card security-card">
+            <div class="sc-head"><b>登录安全</b><span class="tag green"><span class="dot"></span>策略正常</span></div>
+            <div class="sc-row"><span>会话有效期</span><b>8 小时</b></div>
+            <div class="sc-row"><span>失败锁定</span><b>5 次 / 15 分钟</b></div>
+            <div class="sc-row"><span>密码哈希</span><b>Argon2id</b></div>
+            <div class="sc-note">禁用账号、重置密码或调整角色后，该用户现有登录会话立即失效。</div>
+          </aside>
+          </div>
+
+          <article class="card user-detail">
+            <div class="ud-head">
+              <div class="avatar lg amber" id="aAvatar">王</div>
+              <div class="ud-title">
+                <div class="ud-name"><span id="aName">王涛</span><span class="tag amber" id="aRoleTag">用例审核员</span></div>
+                <div class="ud-handle" id="aHandle">wangtao</div>
+                <div class="status" id="aStatus"><span class="dot"></span>启用</div>
+              </div>
+              <div class="ud-actions">
+                <button class="btn btn-sm" onclick="toast('已生成临时密码，需用户首次登录后修改')">重置密码</button>
+                <button class="btn btn-sm btn-danger" onclick="toast('禁用后该用户会话立即失效')">禁用</button>
+              </div>
+            </div>
+            <div class="ud-body">
+              <section class="ud-section">
+                <div class="ud-label">基础信息 <button class="right" style="border:0;background:transparent" onclick="toast('编辑基础信息')">编辑</button></div>
+                <div class="info-grid">
+                  <div class="info"><div class="k">邮箱</div><div class="v" id="aEmail">wangtao@corp.com</div></div>
+                  <div class="info"><div class="k">手机</div><div class="v" id="aPhone">138 0013 8000</div></div>
+                  <div class="info"><div class="k">最近登录</div><div class="v" id="aLast">昨天 18:22</div></div>
+                  <div class="info"><div class="k">创建时间</div><div class="v" id="aCreated">2025-08-09</div></div>
+                  <div class="info"><div class="k">登录 IP</div><div class="v mono" id="aIp">10.12.3.44</div></div>
+                  <div class="info"><div class="k">用户 ID</div><div class="v mono" id="aUid">usr_003</div></div>
+                </div>
+              </section>
+              <section class="ud-section">
+                <div class="ud-label">角色 <span id="aRoleCount">已选 1 个</span></div>
+                <div class="role-options" id="aRoles">
+                  <label class="role-option"><input type="checkbox" data-role="admin"><div class="role-copy"><div class="rn">系统管理员 <span class="mini">2 人</span></div><div class="rd">全部权限，包含用户、环境与密钥管理</div></div></label>
+                  <label class="role-option"><input type="checkbox" data-role="operator"><div class="role-copy"><div class="rn">用例操作员 <span class="mini">4 人</span></div><div class="rd">编写、导入、调试用例，创建并执行任务</div></div></label>
+                  <label class="role-option checked"><input type="checkbox" data-role="reviewer" checked><div class="role-copy"><div class="rn">用例审核员 <span class="mini">3 人</span></div><div class="rd">审核、冻结、回滚用例，维护取数资产</div></div></label>
+                  <label class="role-option"><input type="checkbox" data-role="tester"><div class="role-copy"><div class="rn">测试执行员 <span class="mini">2 人</span></div><div class="rd">执行批量任务、查看 Trace、导出结果</div></div></label>
+                  <label class="role-option"><input type="checkbox" data-role="viewer"><div class="role-copy"><div class="rn">只读观察员 <span class="mini">1 人</span></div><div class="rd">只读查看看板、用例与执行结果</div></div></label>
+                </div>
+                <div class="notice" style="margin-top:8px"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>调整角色后，该用户现有登录会话立即失效。</div>
+              </section>
+              <section class="ud-section">
+                <div class="ud-label">生效权限 <span id="aPermCount">18 项</span></div>
+                <div class="perm-chips" id="aChips"><span class="chip">用例审核</span><span class="chip">用例冻结</span><span class="chip">用例回滚</span><span class="chip">资产编辑</span><span class="chip">任务执行</span><span class="chip more">+ 13 项</span></div>
+              </section>
+              <section class="ud-section">
+                <div class="ud-label">最近活动 <button class="right" style="border:0;background:transparent" onclick="toast('查看审计日志')">查看审计</button></div>
+                <div class="activity">
+                  <div class="activity-row"><span class="dot"></span>登录成功<time>今天 09:42</time></div>
+                  <div class="activity-row"><span class="dot"></span>审核通过 CASE-1038<time>昨天 18:22</time></div>
+                  <div class="activity-row"><span class="dot amber"></span>登录失败 1 次<time>11-17 10:18</time></div>
+                </div>
+              </section>
+            </div>
+            <div class="ud-foot"><button class="btn btn-sm btn-ghost" onclick="toast('已取消修改')">取消</button><button class="btn btn-sm btn-primary" onclick="toast('已保存：用户信息与角色已更新')">保存变更</button></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ================= Variant B ================= -->
+      <section class="variant" id="variant-b" role="tabpanel">
+        <div class="variant-note">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h16v16H4zM4 10h16M10 4v16"/></svg>
+          <span><b>方案 B：</b>保留完整表格，点击用户行从右侧滑出详情。账号增长后更易扩展，表格可承载批量操作。</span>
+        </div>
+
+        <div class="table-stage">
+          <article class="card user-table-card">
+            <div class="ut-toolbar">
+              <label class="field"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m20 20-3.5-3.5"/></svg><input placeholder="搜索姓名或用户名"></label>
+              <select class="select" aria-label="角色"><option>全部角色</option><option>系统管理员</option><option>用例操作员</option><option>用例审核员</option><option>测试执行员</option><option>只读观察员</option></select>
+              <select class="select" aria-label="状态"><option>全部状态</option><option>启用</option><option>禁用</option><option>锁定</option></select>
+              <span class="hint">点击行查看详情</span>
+              <span class="spacer"></span>
+              <span class="hint">已选 1 项</span>
+              <button class="btn btn-sm" onclick="toast('批量禁用需二次确认')">批量禁用</button>
+            </div>
+            <div class="table-wrap">
+              <table aria-label="用户列表">
+                <thead><tr><th style="width:28px"><input class="cb" type="checkbox" aria-label="全选"></th><th>用户</th><th>角色</th><th>状态</th><th class="hide-sm">最近登录</th><th>操作</th></tr></thead>
+                <tbody id="userRowsB">
+                  <tr data-user="zhangming"><td><input class="cb" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="user-cell"><div class="avatar sm">张</div><div><div class="n">张明</div><div class="h">zhangming</div></div></div></td><td><span class="tag indigo">系统管理员</span></td><td><span class="status"><span class="dot"></span>启用</span></td><td class="table-time hide-sm">今天 09:42</td><td><button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();applyUser(this.closest('tr').dataset.user)">详情</button></td></tr>
+                  <tr data-user="liqian"><td><input class="cb" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="user-cell"><div class="avatar sm violet">李</div><div><div class="n">李倩</div><div class="h">liqian</div></div></div></td><td><span class="tag violet">用例操作员</span></td><td><span class="status"><span class="dot"></span>启用</span></td><td class="table-time hide-sm">今天 10:18</td><td><button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();applyUser(this.closest('tr').dataset.user)">详情</button></td></tr>
+                  <tr class="selected" data-user="wangtao"><td><input class="cb" type="checkbox" checked onclick="event.stopPropagation()"></td><td><div class="user-cell"><div class="avatar sm amber">王</div><div><div class="n">王涛</div><div class="h">wangtao</div></div></div></td><td><span class="tag amber">用例审核员</span></td><td><span class="status"><span class="dot"></span>启用</span></td><td class="table-time hide-sm">昨天 18:22</td><td><button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();applyUser(this.closest('tr').dataset.user)">详情</button></td></tr>
+                  <tr data-user="chenchen"><td><input class="cb" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="user-cell"><div class="avatar sm emerald">陈</div><div><div class="n">陈晨</div><div class="h">chenchen</div></div></div></td><td><span class="tag green">测试执行员</span></td><td><span class="status"><span class="dot"></span>启用</span></td><td class="table-time hide-sm">昨天 15:04</td><td><button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();applyUser(this.closest('tr').dataset.user)">详情</button></td></tr>
+                  <tr data-user="zhaomin"><td><input class="cb" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="user-cell"><div class="avatar sm slate">赵</div><div><div class="n">赵敏</div><div class="h">zhaomin</div></div></div></td><td><span class="tag slate">只读观察员</span></td><td><span class="status disabled"><span class="dot"></span>已禁用</span></td><td class="table-time hide-sm">11-10 16:30</td><td><button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();applyUser(this.closest('tr').dataset.user)">详情</button></td></tr>
+                  <tr data-user="liuyang"><td><input class="cb" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="user-cell"><div class="avatar sm blue">刘</div><div><div class="n">刘洋</div><div class="h">liuyang</div></div></div></td><td><span class="tag violet">用例操作员</span></td><td><span class="status locked"><span class="dot"></span>已锁定</span></td><td class="table-time hide-sm">11-18 09:12</td><td><button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();applyUser(this.closest('tr').dataset.user)">详情</button></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-foot"><span>显示 1–6，共 12 个账号</span><div class="pager"><button disabled>‹</button><button class="active">1</button><button>2</button><button>›</button></div></div>
+          </article>
+
+          <aside class="card drawer open" id="userDrawer">
+            <div class="drawer-head"><b>用户详情</b><button class="drawer-close" onclick="closeDrawer()" aria-label="关闭详情"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+            <div class="drawer-body">
+              <div class="drawer-identity">
+                <div class="avatar lg amber" id="dAvatar">王</div>
+                <div class="ud-title"><div class="ud-name"><span id="dName">王涛</span><span class="tag amber" id="dRoleTag">用例审核员</span></div><div class="ud-handle" id="dHandle">wangtao</div><div class="status" id="dStatus"><span class="dot"></span>启用</div></div>
+              </div>
+              <div class="drawer-actions">
+                <button class="btn btn-sm" onclick="toast('已生成临时密码，需用户首次登录后修改')">重置密码</button>
+                <button class="btn btn-sm btn-danger" onclick="toast('禁用后该用户会话立即失效')">禁用账号</button>
+              </div>
+              <section class="ud-section">
+                <div class="ud-label">基础信息</div>
+                <div class="info-grid">
+                  <div class="info"><div class="k">邮箱</div><div class="v" id="dEmail">wangtao@corp.com</div></div>
+                  <div class="info"><div class="k">手机</div><div class="v" id="dPhone">138 0013 8000</div></div>
+                  <div class="info"><div class="k">最近登录</div><div class="v" id="dLast">昨天 18:22</div></div>
+                  <div class="info"><div class="k">创建时间</div><div class="v" id="dCreated">2025-08-09</div></div>
+                  <div class="info"><div class="k">登录 IP</div><div class="v mono" id="dIp">10.12.3.44</div></div>
+                  <div class="info"><div class="k">用户 ID</div><div class="v mono" id="dUid">usr_003</div></div>
+                </div>
+              </section>
+              <section class="ud-section">
+                <div class="ud-label">角色 <span id="dRoleCount">已选 1 个</span></div>
+                <div class="role-options" id="dRoles">
+                  <label class="role-option"><input type="checkbox" data-role="admin"><div class="role-copy"><div class="rn">系统管理员 <span class="mini">2 人</span></div><div class="rd">全部权限，包含用户、环境与密钥管理</div></div></label>
+                  <label class="role-option"><input type="checkbox" data-role="operator"><div class="role-copy"><div class="rn">用例操作员 <span class="mini">4 人</span></div><div class="rd">编写、导入、调试用例，创建并执行任务</div></div></label>
+                  <label class="role-option checked"><input type="checkbox" data-role="reviewer" checked><div class="role-copy"><div class="rn">用例审核员 <span class="mini">3 人</span></div><div class="rd">审核、冻结、回滚用例，维护取数资产</div></div></label>
+                  <label class="role-option"><input type="checkbox" data-role="tester"><div class="role-copy"><div class="rn">测试执行员 <span class="mini">2 人</span></div><div class="rd">执行批量任务、查看 Trace、导出结果</div></div></label>
+                  <label class="role-option"><input type="checkbox" data-role="viewer"><div class="role-copy"><div class="rn">只读观察员 <span class="mini">1 人</span></div><div class="rd">只读查看看板、用例与执行结果</div></div></label>
+                </div>
+              </section>
+              <section class="ud-section">
+                <div class="ud-label">生效权限 <span id="dPermCount">18 项</span></div>
+                <div class="perm-chips" id="dChips"><span class="chip">用例审核</span><span class="chip">用例冻结</span><span class="chip">用例回滚</span><span class="chip">资产编辑</span><span class="chip">任务执行</span><span class="chip more">+ 13 项</span></div>
+              </section>
+              <div class="notice"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>保存后该用户现有登录会话立即失效。</div>
+            </div>
+            <div class="drawer-foot"><button class="btn btn-sm btn-ghost" onclick="closeDrawer()">取消</button><button class="btn btn-sm btn-primary" onclick="toast('已保存：用户信息与角色已更新')">保存变更</button></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+  const users = {
+    zhangming: { name: '张明', handle: 'zhangming', initials: '张', tone: '', role: 'admin', roleLabel: '系统管理员', roleTag: 'indigo', status: '启用', email: 'zhangming@corp.com', phone: '138 0013 8001', last: '今天 09:42', created: '2025-03-02', ip: '10.12.3.44', uid: 'usr_001' },
+    liqian: { name: '李倩', handle: 'liqian', initials: '李', tone: 'violet', role: 'operator', roleLabel: '用例操作员', roleTag: 'violet', status: '启用', email: 'liqian@corp.com', phone: '138 0013 8002', last: '今天 10:18', created: '2025-06-18', ip: '10.12.4.18', uid: 'usr_002' },
+    wangtao: { name: '王涛', handle: 'wangtao', initials: '王', tone: 'amber', role: 'reviewer', roleLabel: '用例审核员', roleTag: 'amber', status: '启用', email: 'wangtao@corp.com', phone: '138 0013 8000', last: '昨天 18:22', created: '2025-08-09', ip: '10.12.3.44', uid: 'usr_003' },
+    chenchen: { name: '陈晨', handle: 'chenchen', initials: '陈', tone: 'emerald', role: 'tester', roleLabel: '测试执行员', roleTag: 'green', status: '启用', email: 'chenchen@corp.com', phone: '138 0013 8003', last: '昨天 15:04', created: '2025-09-21', ip: '10.12.6.11', uid: 'usr_004' },
+    zhaomin: { name: '赵敏', handle: 'zhaomin', initials: '赵', tone: 'slate', role: 'viewer', roleLabel: '只读观察员', roleTag: 'slate', status: '已禁用', email: 'zhaomin@corp.com', phone: '138 0013 8004', last: '11-10 16:30', created: '2025-10-12', ip: '10.12.5.72', uid: 'usr_005' },
+    liuyang: { name: '刘洋', handle: 'liuyang', initials: '刘', tone: 'blue', role: 'operator', roleLabel: '用例操作员', roleTag: 'violet', status: '已锁定', email: 'liuyang@corp.com', phone: '138 0013 8005', last: '11-18 09:12', created: '2025-11-03', ip: '10.12.5.72', uid: 'usr_006' }
+  };
+
+  const roleMeta = {
+    admin: { count: 30, chips: ['全部权限', '用户管理', '角色授权', '密钥读取'], extra: '+ 26 项' },
+    operator: { count: 15, chips: ['用例编写', '用例调试', '任务执行', '结果导出'], extra: '+ 11 项' },
+    reviewer: { count: 18, chips: ['用例审核', '用例冻结', '用例回滚', '资产编辑', '任务执行'], extra: '+ 13 项' },
+    tester: { count: 9, chips: ['任务执行', '任务停止', '结果导出'], extra: '+ 6 项' },
+    viewer: { count: 4, chips: ['全局只读', '看板查看', '结果查看'], extra: '+ 1 项' }
+  };
+
+  function toast(message) {
+    const el = document.getElementById('toast');
+    el.textContent = message;
+    el.classList.add('show');
+    clearTimeout(window.__toastTimer);
+    window.__toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  }
+
+  function setVariant(name) {
+    document.querySelectorAll('.ds-btn').forEach(b => b.classList.toggle('active', b.dataset.variant === name));
+    document.querySelectorAll('.variant').forEach(v => v.classList.toggle('active', v.id === 'variant-' + name));
+    if (name === 'b') openDrawer();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function statusHtml(status) {
+    const cls = status === '已禁用' ? ' disabled' : status === '已锁定' ? ' locked' : '';
+    return '<span class="status' + cls + '"><span class="dot"></span>' + status + '</span>';
+  }
+
+  function setRoleChecks(container, key) {
+    container.querySelectorAll('input[data-role]').forEach(input => {
+      input.checked = input.dataset.role === key;
+      input.closest('.role-option').classList.toggle('checked', input.checked);
+    });
+    container.querySelectorAll('.role-option').forEach(opt => opt.classList.toggle('checked', opt.querySelector('input').checked));
+  }
+
+  function setChips(chipsEl, countEl, key) {
+    const meta = roleMeta[key];
+    chipsEl.innerHTML = meta.chips.map(c => '<span class="chip">' + c + '</span>').join('') + '<span class="chip more">' + meta.extra + '</span>';
+    countEl.textContent = meta.count + ' 项';
+  }
+
+  function applyUser(key, silent = false) {
+    const u = users[key];
+    if (!u) return;
+    document.querySelectorAll('.urow').forEach(row => row.classList.toggle('active', row.dataset.user === key));
+    document.querySelectorAll('#userRowsB tr').forEach(row => row.classList.toggle('selected', row.dataset.user === key));
+    ['a', 'd'].forEach(prefix => {
+      const av = document.getElementById(prefix + 'Avatar');
+      if (av) { av.className = 'avatar lg ' + u.tone; av.textContent = u.initials; }
+      const name = document.getElementById(prefix + 'Name');
+      if (name) name.textContent = u.name;
+      const tag = document.getElementById(prefix + 'RoleTag');
+      if (tag) { tag.className = 'tag ' + u.roleTag; tag.textContent = u.roleLabel; }
+      const handle = document.getElementById(prefix + 'Handle');
+      if (handle) handle.textContent = u.handle;
+      const status = document.getElementById(prefix + 'Status');
+      if (status) status.outerHTML = statusHtml(u.status).replace('<span class="status', '<span id="' + prefix + 'Status" class="status');
+      const email = document.getElementById(prefix + 'Email');
+      if (email) email.textContent = u.email;
+      const phone = document.getElementById(prefix + 'Phone');
+      if (phone) phone.textContent = u.phone;
+      const last = document.getElementById(prefix + 'Last');
+      if (last) last.textContent = u.last;
+      const created = document.getElementById(prefix + 'Created');
+      if (created) created.textContent = u.created;
+      const ip = document.getElementById(prefix + 'Ip');
+      if (ip) ip.textContent = u.ip;
+      const uid = document.getElementById(prefix + 'Uid');
+      if (uid) uid.textContent = u.uid;
+    });
+    setRoleChecks(document.getElementById('aRoles'), u.role);
+    setRoleChecks(document.getElementById('dRoles'), u.role);
+    document.getElementById('aRoleCount').textContent = '已选 1 个';
+    document.getElementById('dRoleCount').textContent = '已选 1 个';
+    setChips(document.getElementById('aChips'), document.getElementById('aPermCount'), u.role);
+    setChips(document.getElementById('dChips'), document.getElementById('dPermCount'), u.role);
+    document.getElementById('userDrawer').classList.add('open');
+    if (!silent) toast('已选中：' + u.name);
+  }
+
+  function openDrawer() {
+    document.getElementById('userDrawer').classList.add('open');
+  }
+  function closeDrawer() {
+    document.getElementById('userDrawer').classList.remove('open');
+  }
+
+  document.querySelectorAll('.ds-btn').forEach(btn => btn.addEventListener('click', () => setVariant(btn.dataset.variant)));
+  document.querySelectorAll('.urow').forEach(row => row.addEventListener('click', () => applyUser(row.dataset.user)));
+  document.querySelectorAll('#userRowsB tr').forEach(row => row.addEventListener('click', () => applyUser(row.dataset.user)));
+
+  document.querySelectorAll('.role-options').forEach(container => {
+    container.querySelectorAll('input[data-role]').forEach(input => {
+      input.addEventListener('change', () => {
+        input.closest('.role-option').classList.toggle('checked', input.checked);
+        const checked = [...container.querySelectorAll('input:checked')];
+        const prefix = container.id === 'aRoles' ? 'a' : 'd';
+        const countEl = document.getElementById(prefix + 'RoleCount');
+        const chipsEl = document.getElementById(prefix + 'Chips');
+        const permEl = document.getElementById(prefix + 'PermCount');
+        if (countEl) countEl.textContent = '已选 ' + checked.length + ' 个';
+        if (checked.length === 1) setChips(chipsEl, permEl, checked[0].dataset.role);
+        else if (checked.length > 1) {
+          chipsEl.innerHTML = '<span class="chip">多角色权限并集</span><span class="chip more">去重计算</span>';
+          permEl.textContent = '并集';
+        } else {
+          chipsEl.innerHTML = '<span class="chip" style="color:#94a3b8">未分配角色</span>';
+          permEl.textContent = '0 项';
+        }
+      });
+    });
+  });
+
+  const searchA = document.getElementById('userFilterA');
+  searchA.addEventListener('input', () => {
+    const q = searchA.value.trim().toLowerCase();
+    document.querySelectorAll('#userListA .urow').forEach(row => {
+      const u = users[row.dataset.user];
+      row.style.display = (u.name + ' ' + u.handle + ' ' + u.roleLabel).toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+
+  document.querySelectorAll('.ul-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.ul-filter').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const status = btn.dataset.status;
+      document.querySelectorAll('#userListA .urow').forEach(row => {
+        const u = users[row.dataset.user];
+        row.style.display = (status === 'all' || u.status === status) ? '' : 'none';
+      });
+    });
+  });
+
+  applyUser('wangtao', true);
+</script>
+</body>
+</html>

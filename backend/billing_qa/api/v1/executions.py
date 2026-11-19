@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from billing_qa.api.v1.serializers import build_execution_detail, execution_to_item
+from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import NotFoundError
-from billing_qa.core.security import get_current_operator
 from billing_qa.db.session import get_db
 from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.task import BatchTask
@@ -21,7 +21,16 @@ from billing_qa.schemas.common import Page
 from billing_qa.schemas.task import ExecutionDetail, ExecutionListItem, ExecutionPassRate
 
 router = APIRouter(
-    prefix="/executions", tags=["执行追踪"], dependencies=[Depends(get_current_operator)]
+    prefix="/executions",
+    tags=["执行追踪"],
+    dependencies=[
+        Depends(
+            require_module_access(
+                "execution:read",
+                ("execution:retry", "execution:export"),
+            )
+        )
+    ],
 )
 
 

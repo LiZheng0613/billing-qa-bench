@@ -6,15 +6,17 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import ConflictError, NotFoundError
-from billing_qa.core.security import get_current_operator
 from billing_qa.db.session import get_db
 from billing_qa.models.candidate import Caliber
 from billing_qa.schemas.common import MessageResponse, Page
 from billing_qa.schemas.ops import CaliberCreate, CaliberOut, CaliberUpdate
 
 router = APIRouter(
-    prefix="/calibers", tags=["业务口径"], dependencies=[Depends(get_current_operator)]
+    prefix="/calibers",
+    tags=["业务口径"],
+    dependencies=[Depends(require_module_access("caliber:read", ("caliber:write",)))],
 )
 
 

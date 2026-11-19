@@ -1,20 +1,58 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { api } from '../api'
 import { useAuthStore } from '../stores/auth'
 import { useBreadcrumbStore } from '../stores/breadcrumb'
 import type { BreadcrumbItem } from '../stores/breadcrumb'
+import type { NotificationItem } from '../types'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const breadcrumbStore = useBreadcrumbStore()
 
+const notifyOpen = ref(false)
+const notifications = ref<NotificationItem[]>([])
+const badgeCount = computed(() => Math.min(notifications.value.length, 9))
+
+function notifyTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const minutes = Math.floor((Date.now() - date.getTime()) / 60000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  if (minutes < 1440) return `${Math.floor(minutes / 60)} 小时前`
+  return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+}
+
+async function loadNotifications(): Promise<void> {
+  if (!auth.can('audit:read')) return
+  try {
+    notifications.value = await api.notifications.list(5)
+  } catch {
+    notifications.value = []
+  }
+}
+
+onMounted(() => {
+  void loadNotifications()
+})
+
+watch(
+  () => route.fullPath,
+  () => {
+    notifyOpen.value = false
+  },
+)
+
 interface NavItem {
   name: string
   label: string
   path: string
   icon: string
+  permission?: string
+  adminOnly?: boolean
 }
 
 const navItems: NavItem[] = [
@@ -23,32 +61,63 @@ const navItems: NavItem[] = [
     label: '测试大盘',
     path: '/',
     icon: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+    permission: 'dashboard:read',
   },
   {
     name: 'tasks',
     label: '批量任务',
     path: '/tasks',
     icon: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+    permission: 'task:read',
   },
   {
     name: 'cases',
     label: '用例资产',
     path: '/cases',
     icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4',
+    permission: 'case:read',
   },
   {
     name: 'prompts',
     label: 'Prompt 资产',
     path: '/prompts',
     icon: 'm8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14',
+    permission: 'prompt:read',
   },
   {
     name: 'ops',
     label: '运营后台',
     path: '/ops',
     icon: 'M4 19V9m5 10V5m5 14v-7m5 7V8M3 21h18',
+    permission: 'stats:read',
+  },
+  {
+    name: 'access',
+    label: '用户与权限',
+    path: '/access/users',
+    icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm13 14v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
+    adminOnly: true,
   },
 ]
+
+const visibleNavItems = computed(() =>
+  navItems.filter((item) => {
+    if (item.adminOnly && !auth.isAdmin) return false
+    if (item.permission && !auth.can(item.permission)) return false
+    return true
+  }),
+)
+
+const roleLabel = computed(() => {
+  if (auth.isAdmin) return '系统管理员'
+  const labels: Record<string, string> = {
+    CASE_OPERATOR: '用例操作员',
+    CASE_REVIEWER: '用例审核员',
+    TEST_OPERATOR: '测试执行员',
+    VIEWER: '只读观察员',
+  }
+  return labels[auth.roles[0] ?? ''] ?? '操作员'
+})
 
 const activeName = computed(
   () => (route.meta.nav as string | undefined) ?? (route.name as string) ?? 'dashboard',
@@ -102,7 +171,7 @@ function logout(): void {
               工作台
             </p>
             <RouterLink
-              v-for="item in navItems"
+              v-for="item in visibleNavItems"
               :key="item.name"
               :to="item.path"
               class="flex h-10 w-full items-center gap-2.5 rounded-[11px] px-2.5 text-[12px] font-medium transition duration-150 max-xl:h-11 max-xl:w-11 max-xl:justify-center max-xl:px-0"
@@ -133,15 +202,93 @@ function logout(): void {
           >
             <div
               class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600"
-              :title="auth.username || 'admin'"
+              :title="auth.displayName"
             >
-              {{ (auth.username || 'A').slice(0, 1).toUpperCase() }}
+              {{ (auth.displayName || 'A').slice(0, 1).toUpperCase() }}
             </div>
             <div class="min-w-0 flex-1 max-xl:hidden">
               <p class="truncate text-[11.5px] font-medium leading-tight text-ink">
-                {{ auth.username || 'admin' }}
+                {{ auth.displayName }}
               </p>
-              <p class="truncate text-[9.5px] text-slate-600">管理员</p>
+              <p class="truncate text-[9.5px] text-slate-600">{{ roleLabel }}</p>
+            </div>
+            <div v-if="auth.can('audit:read')" class="relative">
+              <button
+                class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-canvas hover:text-ink"
+                title="通知"
+                aria-label="通知"
+                :aria-expanded="notifyOpen"
+                @click="notifyOpen = !notifyOpen"
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+                </svg>
+                <span
+                  v-if="badgeCount"
+                  class="absolute right-0.5 top-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full border border-white bg-rose-500 px-1 text-[7px] font-bold leading-none text-white"
+                >
+                  {{ badgeCount }}
+                </span>
+              </button>
+
+              <div
+                v-if="notifyOpen"
+                class="absolute bottom-0 left-full z-50 ml-2 w-72 rounded-2xl border border-line bg-white p-3 shadow-2xl max-md:left-auto max-md:right-0"
+                @click.stop
+              >
+                <div class="flex items-center justify-between gap-2 border-b border-line-soft pb-2">
+                  <div>
+                    <p class="text-[11.5px] font-semibold text-ink">通知</p>
+                    <p class="mt-0.5 text-[9px] text-slate-500">账号、角色与权限变更</p>
+                  </div>
+                  <span class="rounded-full border border-brand-edge bg-brand-soft px-2 py-0.5 text-[8.5px] font-semibold text-brand">
+                    {{ notifications.length }} 条
+                  </span>
+                </div>
+                <div v-if="notifications.length" class="mt-1">
+                  <div
+                    v-for="item in notifications.slice(0, 3)"
+                    :key="item.id"
+                    class="flex gap-2 border-t border-line-soft px-1 py-2 first:border-t-0"
+                  >
+                    <span
+                      class="grid h-6 w-6 shrink-0 place-items-center rounded-lg"
+                      :class="{
+                        'bg-emerald-50 text-emerald-600': item.level === 'success',
+                        'bg-amber-50 text-amber-600': item.level === 'warning',
+                        'bg-rose-50 text-rose-600': item.level === 'error',
+                        'bg-indigo-50 text-indigo-600': item.level === 'info',
+                      }"
+                    >
+                      <svg v-if="item.level === 'success'" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <path stroke-linecap="round" d="m5 12 4 4L19 6" />
+                      </svg>
+                      <svg v-else-if="item.level === 'info'" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <circle cx="12" cy="12" r="9" />
+                        <path stroke-linecap="round" d="M12 11v5M12 8h.01" />
+                      </svg>
+                      <svg v-else class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <path stroke-linecap="round" d="M12 9v4m0 4h.01" />
+                        <circle cx="12" cy="12" r="9" />
+                      </svg>
+                    </span>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-[10px] font-semibold text-ink-soft">{{ item.title }}</p>
+                      <p class="mt-0.5 line-clamp-2 text-[9px] leading-relaxed text-slate-500">{{ item.message }}</p>
+                      <p class="mt-0.5 text-[8px] text-slate-400">{{ notifyTime(item.created_at) }}</p>
+                    </div>
+                  </div>
+                </div>
+                <p v-else class="py-5 text-center text-[10px] text-slate-400">暂无通知</p>
+                <RouterLink
+                  v-if="auth.isAdmin"
+                  to="/access/audit"
+                  class="mt-1 block border-t border-line-soft pt-2 text-[9.5px] font-semibold text-brand"
+                  @click="notifyOpen = false"
+                >
+                  查看全部审计日志
+                </RouterLink>
+              </div>
             </div>
             <RouterLink
               to="/settings"
@@ -202,12 +349,6 @@ function logout(): void {
             </template>
           </div>
           <div class="flex items-center gap-2">
-            <span
-              class="hidden items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10.5px] font-medium text-emerald-700 sm:inline-flex"
-            >
-              <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
-              API /api/v1
-            </span>
             <button class="btn-ghost btn-xs lg:hidden" @click="logout">退出</button>
           </div>
         </header>
