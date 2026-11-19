@@ -17,6 +17,7 @@ from billing_qa.models.execution import ExecutionRecord, JudgeResult, TurnTrace
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase as CaseModel
 from billing_qa.models.test_case import TestCaseRevision as CaseRevision
+from billing_qa.services.engine.context import load_execution_context
 from billing_qa.services.engine.executor import CaseExecutor
 from billing_qa.services.engine.metrics import compute_task_metrics
 from billing_qa.services.engine.scheduler import scheduler
@@ -124,6 +125,46 @@ async def test_demo_case_execution(case_code: str, expected_status: str) -> None
             assert record.termination_status == "MAX_TURNS_EXCEEDED"
             assert record.pass_flag is False
             assert record.turns_used == int(snapshot.get("max_turns") or 0)
+
+
+async def test_task_environment_overrides_case_snapshot() -> None:
+    """任务显式指定的环境优先于用例快照中的环境。"""
+    if not await _dependencies_ready():
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
+    loaded = await _load_demo_case("DEMO-SINGLE-001")
+    if loaded is None:
+        pytest.skip("演示用例 DEMO-SINGLE-001 未初始化，请先执行 init_db --demo")
+    _, _, snapshot = loaded
+    case_env_id = snapshot.get("environment_id")
+    if not case_env_id:
+        pytest.skip("演示用例未绑定环境")
+
+    override_id: int | None = None
+    async with SessionLocal() as db:
+        case_env = await db.get(Environment, case_env_id)
+        assert case_env is not None
+        override = Environment(
+            code=f"PYTEST-ENV-OVERRIDE-{uuid.uuid4().hex[:8]}",
+            name="pytest 任务指定环境",
+            base_url=case_env.base_url,
+            health_path=case_env.health_path,
+            api_method=case_env.api_method,
+            api_path=case_env.api_path,
+            is_active=True,
+        )
+        db.add(override)
+        await db.commit()
+        await db.refresh(override)
+        override_id = int(override.id)
+
+    try:
+        async with SessionLocal() as db:
+            ctx = await load_execution_context(
+                db, snapshot, default_environment_id=override_id
+            )
+        assert ctx.env.id == override_id
+    finally:
+        await _cleanup(env_id=override_id)
 
 
 async def test_dynamic_hidden_context_release() -> None:

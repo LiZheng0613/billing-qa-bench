@@ -129,8 +129,12 @@ async def load_execution_context(
     *,
     default_environment_id: int | None = None,
 ) -> ExecutionContext:
-    """根据用例快照加载一次执行所需的全部依赖。"""
-    environment_id = snapshot.get("environment_id") or default_environment_id
+    """根据用例快照加载一次执行所需的全部依赖。
+
+    环境优先级：任务显式指定的环境 > 用例快照中的环境。批量任务创建时若选择了
+    环境，表示用户要求整批用例都跑在该环境上，不能被用例自身的绑定覆盖。
+    """
+    environment_id = default_environment_id or snapshot.get("environment_id")
     if not environment_id:
         raise ValidationError("用例未绑定执行环境，且任务未指定环境")
     env = (
