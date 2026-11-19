@@ -982,6 +982,8 @@ export interface BatchTask {
   error_message: string | null
   environment_name?: string | null
   run_count?: number
+  /** 未完成用例数（未执行 / 执行中 / 已终止），用于判断是否可续做 */
+  unfinished_cases?: number
 }
 
 export interface StatusDistribution {

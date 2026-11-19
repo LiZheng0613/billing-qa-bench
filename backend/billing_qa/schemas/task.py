@@ -132,6 +132,8 @@ class TaskOut(ORMModel):
     environment_name: str | None = None
     # 周期计划已派生的执行次数（非计划任务恒为 0）
     run_count: int = 0
+    # 未完成用例数（未执行 / 执行中 / 已终止），用于判断是否可续做
+    unfinished_cases: int = 0
 
 
 class StatusDistribution(BaseModel):

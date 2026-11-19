@@ -53,6 +53,7 @@ CASE_TYPE_LABELS: dict[str, str] = {
 SOURCE_LABELS: dict[str, str] = {
     "BATCH": "批量执行",
     "RETRY": "失败重跑",
+    "RESUME": "继续执行",
     "DEBUG": "单条调试",
     "SANDBOX": "沙盒",
 }

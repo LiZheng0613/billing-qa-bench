@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import exists, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -46,6 +46,9 @@ RETRYABLE_STATUSES = {
     ExecutionStatus.ABORTED,
 }
 
+# 未完成状态：续做只补跑这些用例，已有最终判定的用例保持原结果。
+UNFINISHED_STATUSES = {"RUNNING", "PENDING", "ABORTED"}
+
 
 class BatchScheduler:
     def __init__(self) -> None:
@@ -66,11 +69,13 @@ class BatchScheduler:
     # ------------------------------------------------------------------ #
     # 生命周期
     # ------------------------------------------------------------------ #
-    async def start(self, task_id: int, *, retry_failed: bool = False) -> bool:
+    async def start(
+        self, task_id: int, *, retry_failed: bool = False, resume: bool = False
+    ) -> bool:
         async with self._lock(task_id):
             if self.is_running(task_id):
                 return False
-            worker = asyncio.create_task(self._run(task_id, retry_failed))
+            worker = asyncio.create_task(self._run(task_id, retry_failed, resume))
             self._workers[task_id] = worker
         return True
 
@@ -128,7 +133,7 @@ class BatchScheduler:
 
         进程退出后 worker 已不存在，任务不可能自行继续；这里直接标记为
         ABORTED，不留下无人推进的中间态。已完成的用例结果保留，可点击
-        「失败重跑」从断点继续。
+        「继续执行」从未完成处续做。
         """
         async with SessionLocal() as db:
             rows = await db.execute(
@@ -142,7 +147,7 @@ class BatchScheduler:
                 task.status = TaskStatus.ABORTED
                 task.control_state = "ABORTED"
                 task.finished_at = task.finished_at or now()
-                task.error_message = "服务重启导致任务中断，已自动终止，可点击失败重跑继续"
+                task.error_message = "服务重启导致任务中断，已自动终止，可通过「继续执行」续做未完成用例"
                 await control_store.set_state(task.id, "ABORTED")
                 await self._close_running_executions(
                     db, task.id, "服务重启导致任务中断"
@@ -158,19 +163,23 @@ class BatchScheduler:
     # ------------------------------------------------------------------ #
     # 主循环
     # ------------------------------------------------------------------ #
-    async def _run(self, task_id: int, retry_failed: bool) -> None:
+    async def _run(self, task_id: int, retry_failed: bool, resume: bool) -> None:
         try:
             async with SessionLocal() as db:
                 task = await db.get(BatchTask, task_id)
                 if task is None:
                     logger.warning("任务不存在 task=%s", task_id)
                     return
-                case_ids = await self._select_case_ids(db, task, retry_failed)
+                case_ids = await self._select_case_ids(
+                    db, task, retry_failed=retry_failed, resume=resume
+                )
+                attempt_bases = await self._attempt_bases(db, task.id)
                 task.total_cases = len(task.case_ids or [])
                 if not case_ids:
                     task.status = TaskStatus.COMPLETED
                     task.control_state = "FINISHED"
                     task.finished_at = now()
+                    task.error_message = None
                     metrics = await compute_task_metrics(db, task)
                     apply_metrics_to_task(task, metrics)
                     await db.commit()
@@ -181,6 +190,7 @@ class BatchScheduler:
                 task.control_state = "RUNNING"
                 task.started_at = task.started_at or now()
                 task.finished_at = None
+                task.error_message = None
                 await db.commit()
                 environment_id = task.environment_id
                 concurrency = max(1, min(task.concurrency or 3, 20))
@@ -195,6 +205,15 @@ class BatchScheduler:
                 task_name = task.name
 
             retry_enabled = retry_on_error or retry_on_env_error
+            # 续做 / 失败重跑写入不同来源，Trace 与导出可区分本次补跑的性质；
+            # 自动重试仍统一记为 RETRY。
+            base_source = (
+                ExecutionSource.RESUME
+                if resume
+                else ExecutionSource.RETRY
+                if retry_failed
+                else ExecutionSource.BATCH
+            )
 
             await control_store.set_state(task_id, "RUNNING")
             await self._publish_status_by_id(task_id)
@@ -219,6 +238,7 @@ class BatchScheduler:
             async def worker(case_id: int) -> None:
                 async with semaphore:
                     attempt = 0
+                    attempt_base = attempt_bases.get(case_id, 0)
                     while True:
                         # 每一轮尝试都重新检查终止指令，避免重试绕过控制
                         if not await self._not_aborted(task_id):
@@ -229,9 +249,7 @@ class BatchScheduler:
                             logger.warning("用例不存在或已删除 case=%s", case_id)
                             return
                         source = (
-                            ExecutionSource.RETRY
-                            if attempt > 0 or retry_failed
-                            else ExecutionSource.BATCH
+                            ExecutionSource.RETRY if attempt > 0 else base_source
                         )
                         executor = CaseExecutor()
                         execution_id = await executor.execute(
@@ -241,7 +259,7 @@ class BatchScheduler:
                             task_id=task_id,
                             source=source,
                             environment_id=environment_id,
-                            attempt_no=attempt + 1,
+                            attempt_no=attempt_base + attempt + 1,
                             enable_self_check=enable_self_check,
                         )
                         await self._publish_progress(
@@ -611,16 +629,47 @@ class BatchScheduler:
         return bool(root.schedule_active)
 
     async def _select_case_ids(
-        self, db: AsyncSession, task: BatchTask, retry_failed: bool
+        self,
+        db: AsyncSession,
+        task: BatchTask,
+        retry_failed: bool = False,
+        resume: bool = False,
     ) -> list[int]:
+        """按本次启动的语义挑选要执行的用例。
+
+        - 首次/普通启动：只补没跑过的用例，避免重复覆盖已有结果；
+        - 失败重跑（retry_failed）：失败/异常/已终止与未跑过的用例全部重跑；
+        - 续做（resume）：只补未完成（未跑 / 执行中 / 已终止）的用例，
+          已有最终判定的用例保持原结果，不因续做被重跑。
+        """
         case_ids = [int(item) for item in (task.case_ids or [])]
         latest = {record.case_id: record for record in await latest_executions(db, task.id)}
-        selected: list[int] = []
-        for case_id in case_ids:
-            record = latest.get(case_id)
-            if record is None or record.status in {"RUNNING", "PENDING"} or (retry_failed and record.status in RETRYABLE_STATUSES):
-                selected.append(case_id)
-        return selected
+
+        def needs_run(record: ExecutionRecord | None) -> bool:
+            if record is None or record.status in {"RUNNING", "PENDING"}:
+                return True
+            if resume:
+                return record.status in UNFINISHED_STATUSES
+            if retry_failed:
+                return record.status in RETRYABLE_STATUSES
+            return False
+
+        return [case_id for case_id in case_ids if needs_run(latest.get(case_id))]
+
+    @staticmethod
+    async def _attempt_bases(db: AsyncSession, task_id: int) -> dict[int, int]:
+        """每个用例当前的最大尝试次数，续跑时从其后继续编号。"""
+        rows = (
+            await db.execute(
+                select(
+                    ExecutionRecord.case_id,
+                    func.max(ExecutionRecord.attempt_no),
+                )
+                .where(ExecutionRecord.task_id == task_id)
+                .group_by(ExecutionRecord.case_id)
+            )
+        ).all()
+        return {int(case_id): int(attempt or 0) for case_id, attempt in rows}
 
     @staticmethod
     async def _load_error_kind(execution_id: int) -> str | None:

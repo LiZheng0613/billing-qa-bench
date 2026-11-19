@@ -32,14 +32,22 @@ from billing_qa.schemas.task import (
     TaskRunSummary,
     TaskScheduleUpdate,
 )
-from billing_qa.services.engine.metrics import apply_metrics_to_task, compute_task_metrics
+from billing_qa.services.engine.metrics import (
+    apply_metrics_to_task,
+    compute_task_metrics,
+    latest_executions,
+)
 from billing_qa.services.engine.schedule import (
     clone_for_run,
     generate_task_code,
     initial_next_run,
     round_task_name,
 )
-from billing_qa.services.engine.scheduler import RETRYABLE_STATUSES, scheduler
+from billing_qa.services.engine.scheduler import (
+    RETRYABLE_STATUSES,
+    UNFINISHED_STATUSES,
+    scheduler,
+)
 from billing_qa.services.io.execution_excel import (
     bool_text,
     build_task_results_xlsx,
@@ -95,6 +103,74 @@ async def _env_name(db: AsyncSession, env_id: int | None) -> str | None:
     return (
         await db.execute(select(Environment.name).where(Environment.id == env_id))
     ).scalar_one_or_none()
+
+
+async def _latest_by_case(db: AsyncSession, task_id: int) -> dict[int, ExecutionRecord]:
+    """按用例取最新一次执行记录。"""
+    return {record.case_id: record for record in await latest_executions(db, task_id)}
+
+
+async def _unfinished_case_ids(db: AsyncSession, task: BatchTask) -> list[int]:
+    """未完成用例：从未执行、仍在执行，或执行被终止。
+
+    已有最终判定（通过 / 失败 / 异常 / 熔断）的用例不算未完成，
+    续做时保持原结果，不重复执行。
+    """
+    latest = await _latest_by_case(db, task.id)
+    unfinished: list[int] = []
+    for case_id in task.case_ids or []:
+        record = latest.get(int(case_id))
+        if record is None or record.status in UNFINISHED_STATUSES:
+            unfinished.append(int(case_id))
+    return unfinished
+
+
+async def _unfinished_counts(
+    db: AsyncSession, tasks: list[BatchTask]
+) -> dict[int, int]:
+    """批量计算任务列表页的未完成用例数，避免逐条查询。"""
+    if not tasks:
+        return {}
+    task_by_id = {task.id: task for task in tasks}
+    task_ids = list(task_by_id)
+    latest_ids = (
+        select(func.max(ExecutionRecord.id).label("max_id"))
+        .where(ExecutionRecord.task_id.in_(task_ids))
+        .group_by(ExecutionRecord.task_id, ExecutionRecord.case_id)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(
+                ExecutionRecord.task_id,
+                ExecutionRecord.case_id,
+                ExecutionRecord.status,
+            ).where(ExecutionRecord.id.in_(select(latest_ids.c.max_id)))
+        )
+    ).all()
+    statuses: dict[int, dict[int, str]] = {task_id: {} for task_id in task_ids}
+    for task_id, case_id, status in rows:
+        statuses[int(task_id)][int(case_id)] = status
+    counts: dict[int, int] = {}
+    for task_id, task in task_by_id.items():
+        latest = statuses.get(task_id, {})
+        counts[task_id] = sum(
+            1
+            for case_id in (task.case_ids or [])
+            if int(case_id) not in latest
+            or latest[int(case_id)] in UNFINISHED_STATUSES
+        )
+    return counts
+
+
+async def _task_out(db: AsyncSession, task: BatchTask, *, run_count: int = 0) -> TaskOut:
+    unfinished = await _unfinished_counts(db, [task])
+    return task_to_out(
+        task,
+        env_name=await _env_name(db, task.environment_id),
+        run_count=run_count,
+        unfinished_cases=unfinished.get(task.id, 0),
+    )
 
 
 @router.get("", response_model=Page[TaskOut], summary="任务列表")
@@ -160,12 +236,14 @@ async def list_tasks(
             for source_id, count in count_rows
             if source_id is not None
         }
+    unfinished_counts = await _unfinished_counts(db, list(rows))
     return Page[TaskOut](
         items=[
             task_to_out(
                 item,
                 env_name=env_names.get(item.environment_id or 0),
                 run_count=run_counts.get(item.id, 0),
+                unfinished_cases=unfinished_counts.get(item.id, 0),
             )
             for item in rows
         ],
@@ -286,13 +364,13 @@ async def create_task(
     if payload.auto_start and payload.schedule_type == TaskScheduleType.IMMEDIATE:
         await scheduler.start(task.id)
         await db.refresh(task)
-    return task_to_out(task, env_name=await _env_name(db, task.environment_id))
+    return await _task_out(db, task)
 
 
 @router.get("/{task_id}", response_model=TaskOut, summary="任务详情")
 async def get_task(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskOut:
     task = await _get_task(db, task_id)
-    return task_to_out(task, env_name=await _env_name(db, task.environment_id))
+    return await _task_out(db, task)
 
 
 PERIODIC_PLAN_TYPES = {TaskScheduleType.DAILY.value, TaskScheduleType.WEEKLY.value}
@@ -391,7 +469,7 @@ async def run_task_now(task_id: int, db: AsyncSession = Depends(get_db)) -> Task
             raise ConflictError("任务已在运行中")
         run = task
     await db.refresh(run)
-    return task_to_out(run, env_name=await _env_name(db, run.environment_id))
+    return await _task_out(db, run)
 
 
 @router.put("/{task_id}/schedule", response_model=TaskOut, summary="调整定时计划")
@@ -465,7 +543,7 @@ async def update_schedule(
             task.control_state = "ABORTED"
     await db.commit()
     await db.refresh(task)
-    return task_to_out(task, env_name=await _env_name(db, task.environment_id))
+    return await _task_out(db, task)
 
 
 @router.post("/{task_id}/abort", response_model=MessageResponse, summary="终止任务")
@@ -508,7 +586,7 @@ async def stop_plan(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskOut
             task.finished_at = now()
         await db.commit()
         await db.refresh(task)
-        return task_to_out(task, env_name=await _env_name(db, task.environment_id))
+        return await _task_out(db, task)
 
     if not task.schedule_active and task.status == TaskStatus.ABORTED:
         raise ConflictError("计划已停止")
@@ -532,7 +610,7 @@ async def stop_plan(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskOut
         await scheduler.abort(run.id)
 
     await db.refresh(task)
-    return task_to_out(task, env_name=await _env_name(db, task.environment_id))
+    return await _task_out(db, task)
 
 
 @router.post(
@@ -542,27 +620,66 @@ async def retry_failed(task_id: int, db: AsyncSession = Depends(get_db)) -> Mess
     task = await _get_task(db, task_id)
     if scheduler.is_running(task_id):
         raise ConflictError("任务正在运行，无法发起重跑")
-    failed = (
-        await db.execute(
-            select(func.count())
-            .select_from(ExecutionRecord)
-            .where(
-                ExecutionRecord.task_id == task_id,
-                ExecutionRecord.status.in_(
-                    ["FAIL", "ERROR", "MAX_TURNS_EXCEEDED", "REPETITION_ABORT", "ABORTED"]
-                ),
-            )
-        )
-    ).scalar_one()
-    if not failed:
+    latest = await _latest_by_case(db, task_id)
+    targets: list[int] = []
+    for case_id in task.case_ids or []:
+        record = latest.get(int(case_id))
+        # 没跑过、卡在执行中，以及失败/异常/熔断/已终止的用例都纳入重跑。
+        if (
+            record is None
+            or record.status in {"RUNNING", "PENDING"}
+            or record.status in RETRYABLE_STATUSES
+        ):
+            targets.append(int(case_id))
+    if not targets:
         raise ConflictError("没有可重跑的失败/异常用例")
     task.status = TaskStatus.RUNNING
     task.control_state = "RUNNING"
     task.error_message = None
     task.finished_at = None
     await db.commit()
-    await scheduler.start(task_id, retry_failed=True)
-    return MessageResponse(message=f"已提交 {failed} 条历史失败记录的重跑（按用例取最新一次）")
+    if not await scheduler.start(task_id, retry_failed=True):
+        raise ConflictError("任务已在运行中")
+    return MessageResponse(
+        message=f"已提交 {len(targets)} 条失败/未完成用例的重跑（按用例取最新一次）"
+    )
+
+
+@router.post(
+    "/{task_id}/resume", response_model=MessageResponse, summary="续做未完成用例"
+)
+async def resume_task(task_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
+    """终止或异常结束后，从未完成处继续执行。
+
+    与「失败重跑」的区别：续做只补跑未执行 / 执行中 / 被终止的用例，
+    已有最终判定的用例（含失败）保持原结果，不会被重新执行。
+    """
+    task = await _get_task(db, task_id)
+    if _is_plan(task):
+        raise ConflictError("定时/周期计划不支持整体续做，请在其历次执行中选择批次续做")
+    if scheduler.is_running(task_id):
+        raise ConflictError("任务正在运行，无法发起续做")
+    if task.status not in {TaskStatus.ABORTED, TaskStatus.FAILED}:
+        raise ConflictError("仅已终止或异常结束的任务支持续做")
+    unfinished = await _unfinished_case_ids(db, task)
+    if not unfinished:
+        raise ConflictError(
+            "所有用例都已有最终结果，无需续做；如需重跑失败用例请使用「失败重跑」"
+        )
+    task.status = TaskStatus.RUNNING
+    task.control_state = "RUNNING"
+    task.started_at = task.started_at or now()
+    task.finished_at = None
+    task.error_message = None
+    await db.commit()
+    if not await scheduler.start(task_id, resume=True):
+        raise ConflictError("任务已在运行中")
+    return MessageResponse(
+        message=(
+            f"已续做 {len(unfinished)} 条未完成用例，"
+            "已完成/已判定的用例结果保持不变"
+        )
+    )
 
 
 @router.post(
@@ -684,9 +801,14 @@ async def list_task_runs(
             summary.pass_count / summary.finished_cases * 100, 2
         )
 
+    unfinished_counts = await _unfinished_counts(db, list(rows))
     return TaskRunsPage(
         items=[
-            task_to_out(item, env_name=env_names.get(item.environment_id or 0))
+            task_to_out(
+                item,
+                env_name=env_names.get(item.environment_id or 0),
+                unfinished_cases=unfinished_counts.get(item.id, 0),
+            )
             for item in rows
         ],
         total=int(total),

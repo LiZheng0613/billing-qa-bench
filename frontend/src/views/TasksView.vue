@@ -216,6 +216,16 @@ function canRetry(task: BatchTask): boolean {
   )
 }
 
+/** 可续做：非计划批次已终止/异常结束，且仍有未完成用例。 */
+function canResume(task: BatchTask): boolean {
+  return (
+    !planWaiting(task) &&
+    !isPlanTask(task) &&
+    ['ABORTED', 'FAILED'].includes(task.status) &&
+    (task.unfinished_cases ?? 0) > 0
+  )
+}
+
 // ------------------------------------------------------------------ 行内操作
 async function withAction(
   task: BatchTask,
@@ -274,7 +284,7 @@ async function abortTask(task: BatchTask): Promise<void> {
   const ok = await confirm({
     title: '终止任务',
     message: `确定终止任务「${task.name}」吗？`,
-    detail: '已完成的执行记录会保留，可通过「失败断点重跑」继续。',
+    detail: '已完成的执行记录会保留；未完成用例可通过「继续执行」续做，失败用例可通过「失败重跑」重跑。',
     confirmText: '终止',
     tone: 'warning',
   })
@@ -314,9 +324,23 @@ async function retryFailed(task: BatchTask): Promise<void> {
   })
 }
 
+async function resumeTask(task: BatchTask): Promise<void> {
+  const unfinished = task.unfinished_cases ?? 0
+  const ok = await confirm({
+    title: '继续执行',
+    message: `确定续做任务「${task.name}」中未完成的 ${unfinished} 条用例吗？`,
+    detail: '已完成或已有最终判定的用例不会被重跑，结果保持不变。',
+    confirmText: '继续执行',
+  })
+  if (!ok) return
+  await withAction(task, async () => {
+    const result = await api.tasks.resume(task.id)
+    toast.success(result.message)
+  })
+}
+
 onMounted(() => {
   void load()
-  startPolling()
   if (route.query.create === '1') {
     showCreate.value = true
     const query = { ...route.query }
@@ -576,6 +600,15 @@ onBeforeUnmount(() => {
                     @click="abortTask(item)"
                   >
                     终止
+                  </button>
+                  <button
+                    v-if="canResume(item)"
+                    class="btn-primary btn-xs"
+                    :disabled="busyId === item.id"
+                    title="只补跑未完成的用例，已有结果保持不动"
+                    @click="resumeTask(item)"
+                  >
+                    继续执行
                   </button>
                   <button
                     v-if="canRetry(item)"

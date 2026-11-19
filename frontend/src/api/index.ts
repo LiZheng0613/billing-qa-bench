@@ -375,6 +375,7 @@ export const api = {
     abort: (id: number) => http.post<MessageResponse>(`/tasks/${id}/abort`),
     stopPlan: (id: number) => http.post<BatchTask>(`/tasks/${id}/stop-plan`),
     retryFailed: (id: number) => http.post<MessageResponse>(`/tasks/${id}/retry-failed`),
+    resume: (id: number) => http.post<MessageResponse>(`/tasks/${id}/resume`),
     retryCase: (taskId: number, caseId: number) =>
       http.post<MessageResponse>(`/tasks/${taskId}/cases/${caseId}/retry`),
     metrics: (id: number) => http.get<TaskMetrics>(`/tasks/${id}/metrics`),

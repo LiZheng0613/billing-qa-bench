@@ -38,6 +38,7 @@ const emit = defineEmits<{
   (e: 'start'): void
   (e: 'abort'): void
   (e: 'retry'): void
+  (e: 'resume'): void
   (e: 'run-now'): void
   (e: 'stop-plan'): void
   (e: 'toggle-plan', active: boolean): void
@@ -99,6 +100,18 @@ const canRetry = computed(
     !planWaiting.value &&
     !isPlan.value &&
     Boolean(props.task && ['COMPLETED', 'ABORTED', 'FAILED'].includes(props.task.status)),
+)
+// 续做：非计划批次已终止/异常结束，且仍有未完成用例。
+// 与「失败重跑」不同，只补跑未完成用例，已有最终判定的结果保持不变。
+const canResume = computed(
+  () =>
+    !planWaiting.value &&
+    !isPlan.value &&
+    Boolean(
+      props.task &&
+        ['ABORTED', 'FAILED'].includes(props.task.status) &&
+        (props.task.unfinished_cases ?? 0) > 0,
+    ),
 )
 
 // 单用例重试：仅「用例最新」视图下展示，避免对历史尝试行误操作；
@@ -417,6 +430,15 @@ onBeforeUnmount(clearFilterTimer)
             <span>·</span>
             <span class="text-violet-700">失败追问自检</span>
           </template>
+          <template
+            v-if="
+              (task.unfinished_cases ?? 0) > 0 &&
+              ['ABORTED', 'FAILED'].includes(task.status)
+            "
+          >
+            <span>·</span>
+            <span class="text-amber-700">未完成 {{ task.unfinished_cases }} 条，可继续执行</span>
+          </template>
           <template v-if="isPlan">
             <span>·</span>
             <span class="text-sky-700">{{ taskScheduleLabel(task) }}</span>
@@ -464,6 +486,14 @@ onBeforeUnmount(clearFilterTimer)
         </button>
         <button v-if="canStart" class="btn-primary btn-xs" @click="emit('start')">启动</button>
         <button v-if="canAbort" class="btn-danger btn-xs" @click="emit('abort')">终止</button>
+        <button
+          v-if="canResume"
+          class="btn-primary btn-xs"
+          title="只补跑未完成的用例，已有结果保持不动"
+          @click="emit('resume')"
+        >
+          继续执行
+        </button>
         <button v-if="canRetry" class="btn-ghost btn-xs" @click="emit('retry')">失败重跑</button>
       </div>
     </header>

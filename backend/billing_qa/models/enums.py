@@ -105,6 +105,7 @@ class RevisionChangeType(StrEnum):
 class ExecutionSource(StrEnum):
     BATCH = "BATCH"
     RETRY = "RETRY"
+    RESUME = "RESUME"
     DEBUG = "DEBUG"
     SANDBOX = "SANDBOX"
 

@@ -517,7 +517,7 @@ async function abortTask(): Promise<void> {
   const ok = await confirm({
     title: '终止任务',
     message: '确定终止当前任务吗？',
-    detail: '已完成的执行记录会保留，可通过「失败断点重跑」继续。',
+    detail: '已完成的执行记录会保留；未完成用例可通过「继续执行」续做，失败用例可通过「失败重跑」重跑。',
     confirmText: '终止',
     tone: 'warning',
   })
@@ -536,6 +536,26 @@ async function retryFailed(): Promise<void> {
   if (!task.value) return
   try {
     const result = await api.tasks.retryFailed(task.value.id)
+    toast.success(result.message)
+    await loadTaskDetail(task.value.id)
+    if (isPeriodicPlan.value) void loadRuns()
+  } catch (exc) {
+    reportError(exc)
+  }
+}
+
+async function resumeTask(): Promise<void> {
+  if (!task.value) return
+  const unfinished = task.value.unfinished_cases ?? 0
+  const ok = await confirm({
+    title: '继续执行',
+    message: `确定续做当前批次中未完成的 ${unfinished} 条用例吗？`,
+    detail: '已完成或已有最终判定的用例不会被重跑，结果保持不变。',
+    confirmText: '继续执行',
+  })
+  if (!ok) return
+  try {
+    const result = await api.tasks.resume(task.value.id)
     toast.success(result.message)
     await loadTaskDetail(task.value.id)
     if (isPeriodicPlan.value) void loadRuns()
@@ -982,6 +1002,7 @@ onBeforeUnmount(() => {
           @start="startTask"
           @abort="abortTask"
           @retry="retryFailed"
+          @resume="resumeTask"
           @run-now="runPlanNow"
           @stop-plan="stopPlan"
           @toggle-plan="togglePlan"
@@ -1015,6 +1036,7 @@ onBeforeUnmount(() => {
         @start="startTask"
         @abort="abortTask"
         @retry="retryFailed"
+        @resume="resumeTask"
         @run-now="runPlanNow"
         @stop-plan="stopPlan"
         @toggle-plan="togglePlan"

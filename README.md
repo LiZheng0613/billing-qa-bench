@@ -41,7 +41,7 @@
 | Prompt 资产 | 模板版本管理、`LATEST / PINNED` 引用策略、单用例覆盖、引用影响面分析、在线试跑沙盒 |
 | AI 帮我填 | 用例抽屉中可手动填写的语义字段均可由 AI 起草回填（不落库，人工确认后应用）；无依据的数值 / 日期不编造，进入「待补充」 |
 | 评审与数据集治理 | 答案契约用例「评审 → 冻结」两步进入数据集，Must 事实强制取证；候选池承接生产日志 / 执行轨迹 / 手工录入，分诊转正 |
-| 执行与观测 | 批量任务并发 / QPS 限流、执行异常自动重试、任务终止、失败断点重跑、单批次结果 Excel 导出、全链路 Trace、原始报文留存 |
+| 执行与观测 | 批量任务并发 / QPS 限流、执行异常自动重试、任务终止、终止后续做、失败断点重跑、单批次结果 Excel 导出、全链路 Trace、原始报文留存 |
 | 指标大盘 | 通过率、平均 TTFT、P95 时延、Token 消耗、吞吐与预计剩余时间；WebSocket 推送，断线自动降级轮询 |
 | 趋势与 Run 对比 | 单用例历史趋势（得分 / 时延 / 稳定性）、任意两次执行（Run）对比 |
 | 质量运营 | 业务口径字典、判分器自检（变异样本检出 / 误杀统计）、事实通过率与数据集分布统计 |
@@ -278,6 +278,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 - 执行范围支持两种模式（两个入口均可用）：
   - `SELECTED`：执行当前勾选的用例，支持本页全选与「全选筛选结果（跨页）」。
   - `ALL_ACTIVE`：由后端一次性解析用例库中全部启用用例（跨分页、不受当前筛选影响），前端只传 `case_scope=ALL_ACTIVE`，避免上百条用例逐页勾选或请求体过大。
+- **终止后续做**：任务被终止（含服务重启导致的中断）后，可点「继续执行」从断点补跑未完成用例（未执行 / 执行中 / 被终止），已完成或已有最终判定的用例保持原结果、不重复执行；新尝试记为 `source=RESUME`，`attempt_no` 从该用例已有最大尝试次数继续递增。若需要连失败用例一起重跑，用「失败重跑」（`source=RETRY`）。
 
 ### 6.6 批量任务详情与单笔执行结果
 
@@ -428,7 +429,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | 业务口径 | `GET/POST /calibers`、`GET/PUT/DELETE /calibers/{id}` |
 | 判分器自检 | `GET /grader/mutants`、`POST /grader/evals/run`、`GET /grader/evals` |
 | 统计 | `GET /stats/overview`、`GET /stats/facts`、`GET /stats/datasets` |
-| 任务 | `GET/POST /tasks`、`GET /tasks/{id}`、`POST /tasks/{id}/start`、`POST /tasks/{id}/abort`、`POST /tasks/{id}/stop-plan`（停止指定时间/每天/每周/连续多轮计划）、`POST /tasks/{id}/retry-failed`、`POST /tasks/{id}/run-now`（立即执行一次定时计划）、`PUT /tasks/{id}/schedule`（编辑定时计划）、`GET /tasks/{id}/runs`（计划执行历史）、`GET /tasks/{id}/metrics`、`GET /tasks/{id}/executions`（`latest_per_case=true` 按用例取最新一次并返回尝试次数）、`GET /tasks/{id}/export`（单批次结果 Excel，`latest_per_case` 控制用例最新或全部尝试） |
+| 任务 | `GET/POST /tasks`、`GET /tasks/{id}`、`POST /tasks/{id}/start`、`POST /tasks/{id}/abort`、`POST /tasks/{id}/resume`（终止后从未完成处续做）、`POST /tasks/{id}/stop-plan`（停止指定时间/每天/每周/连续多轮计划）、`POST /tasks/{id}/retry-failed`、`POST /tasks/{id}/run-now`（立即执行一次定时计划）、`PUT /tasks/{id}/schedule`（编辑定时计划）、`GET /tasks/{id}/runs`（计划执行历史）、`GET /tasks/{id}/metrics`、`GET /tasks/{id}/executions`（`latest_per_case=true` 按用例取最新一次并返回尝试次数）、`GET /tasks/{id}/export`（单批次结果 Excel，`latest_per_case` 控制用例最新或全部尝试） |
 | 执行 | `GET /executions`、`GET /executions/{id}`、`GET /executions/{id}/raw` |
 | 实时 | `WS /ws/tasks/{task_id}?token=<jwt>` |
 
@@ -496,7 +497,7 @@ npm run test:e2e    # 「AI 帮我填」主链路回归
 ## 13. 已知限制
 
 - 单管理员模型，无多租户与 RBAC；如需扩展可在 `core/security.py` 与 `api/v1/auth.py` 上叠加。
-- 任务执行器为进程内 asyncio 调度，重启进程会中断进行中的任务（状态保留，可重跑）。
+- 任务执行器为进程内 asyncio 调度，重启进程会中断进行中的任务（状态保留，可通过「继续执行」从断点续做）。
 - 动态多轮的「目标达成」判定依赖模拟器输出与裁判结论，Mock 场景下由注入指令确定。
 - 前端 ECharts 全量包约 1.0 MB（gzip 343 KB），已拆分为独立 vendor chunk；如需进一步瘦身可改为按需引入。
 - 测试与冒烟脚本会在当前连接的数据库中产生临时数据（脚本会自清理创建的用例与模板，但任务与执行记录会留存）；演示库与开发库建议分开，或演示前按 §4.3 重置。
