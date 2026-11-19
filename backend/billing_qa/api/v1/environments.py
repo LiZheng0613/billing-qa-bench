@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from billing_qa.api.v1.serializers import env_to_out, env_variable_to_out
+from billing_qa.core.authz import require_module_access
 from billing_qa.core.crypto import encrypt_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.security import get_current_operator
@@ -30,6 +31,7 @@ from billing_qa.schemas.environment import (
     EnvPreviewResponse,
     EnvVariableOut,
     HealthCheckResult,
+    MtlsAuthIn,
     VariableBatchUpdate,
 )
 from billing_qa.services.adapter.renderer import find_variables, format_history, render_structure
@@ -45,7 +47,14 @@ from billing_qa.services.adapter.target_api import (
 router = APIRouter(
     prefix="/environments",
     tags=["环境配置"],
-    dependencies=[Depends(get_current_operator)],
+    dependencies=[
+        Depends(
+            require_module_access(
+                "environment:read",
+                ("environment:write", "environment:secret_read"),
+            )
+        )
+    ],
 )
 
 
@@ -74,6 +83,41 @@ def _encode_basic_auth(config: BasicAuthIn | None, existing: dict | None) -> dic
         if not encrypted:
             raise ValidationError("Basic 鉴权密码不能为空")
     return {"username": config.username, "password_encrypted": encrypted}
+
+
+def _encode_mtls(config: MtlsAuthIn | None, existing: dict | None) -> dict | None:
+    """把 mTLS 配置转为存储结构。
+
+    证书/私钥留空表示沿用旧值；私钥被替换时，口令以本次输入为准（可为空）。
+    """
+    if config is None:
+        return None
+    old = existing or {}
+    cert = (config.client_cert_pem or "").strip()
+    key = (config.client_key_pem or "").strip()
+    encrypted_cert = encrypt_value(cert) if cert else old.get("client_cert_encrypted")
+    encrypted_key = encrypt_value(key) if key else old.get("client_key_encrypted")
+    if not encrypted_cert or not encrypted_key:
+        raise ValidationError("mTLS 客户端证书与私钥不能为空")
+    password = (config.key_password or "").strip()
+    if password:
+        encrypted_password = encrypt_value(password)
+    elif key:
+        # 替换私钥时清空旧口令，避免与新的私钥不匹配
+        encrypted_password = None
+    else:
+        encrypted_password = old.get("key_password_encrypted")
+    ca = (config.ca_cert_pem or "").strip()
+    encrypted_ca = encrypt_value(ca) if ca else old.get("ca_cert_encrypted")
+    payload: dict[str, Any] = {
+        "client_cert_encrypted": encrypted_cert,
+        "client_key_encrypted": encrypted_key,
+    }
+    if encrypted_password:
+        payload["key_password_encrypted"] = encrypted_password
+    if encrypted_ca:
+        payload["ca_cert_encrypted"] = encrypted_ca
+    return payload
 
 
 @router.get("", response_model=Page[EnvironmentOut], summary="环境列表")
@@ -122,9 +166,10 @@ async def create_environment(
     ).scalar_one_or_none()
     if exists:
         raise ConflictError(f"环境编码 {payload.code} 已存在")
-    data = payload.model_dump(exclude={"variables", "basic_auth"})
+    data = payload.model_dump(exclude={"variables", "basic_auth", "mtls"})
     data["pre_hook"] = payload.pre_hook.model_dump() if payload.pre_hook else None
     data["basic_auth"] = _encode_basic_auth(payload.basic_auth, None)
+    data["mtls"] = _encode_mtls(payload.mtls, None)
     env = Environment(**data)
     for item in payload.variables:
         env.variables.append(
@@ -159,6 +204,8 @@ async def update_environment(
         )
     if "basic_auth" in data:
         data["basic_auth"] = _encode_basic_auth(payload.basic_auth, env.basic_auth)
+    if "mtls" in data:
+        data["mtls"] = _encode_mtls(payload.mtls, env.mtls)
     for key, value in data.items():
         setattr(env, key, value)
     await db.commit()
@@ -226,7 +273,10 @@ async def replace_variables(
 async def health_check(env_id: int, db: AsyncSession = Depends(get_db)) -> HealthCheckResult:
     env = await _get_env(db, env_id)
     adapter = TargetApiAdapter(EnvContext.from_orm(env))
-    ok, status_code, latency, message = await adapter.health_check()
+    try:
+        ok, status_code, latency, message = await adapter.health_check()
+    finally:
+        adapter.close()
     env.last_health_status = "UP" if ok else "DOWN"
     env.last_health_latency_ms = latency
     env.last_health_at = __import__("datetime").datetime.now()
@@ -378,6 +428,8 @@ async def preview_request(
         warnings.append(f"模板占位符缺少变量：{', '.join(unique_missing)}")
     if ctx.basic_username:
         warnings.append("已启用 Basic 鉴权，预览中 Authorization 头已掩码显示")
+    if ctx.mtls_enabled:
+        warnings.append("已启用 mTLS 双向证书认证，预览不展示证书与私钥内容")
 
     return EnvPreviewResponse(
         headers=_sanitize_headers({str(k): str(v) for k, v in (headers or {}).items()}),

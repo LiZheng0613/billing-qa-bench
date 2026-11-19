@@ -45,6 +45,10 @@ class Environment(Base, TimestampMixin):
     basic_auth: Mapped[dict | None] = mapped_column(
         JSON, comment="Basic 鉴权配置（username + password_encrypted）"
     )
+    mtls: Mapped[dict | None] = mapped_column(
+        JSON,
+        comment="mTLS 双向证书配置（client_cert/client_key 加密 PEM + 可选口令与 CA）",
+    )
     session_mode: Mapped[str] = mapped_column(
         String(24),
         default="SERVER_RETURNED",

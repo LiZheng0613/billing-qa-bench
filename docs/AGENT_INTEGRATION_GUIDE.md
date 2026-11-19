@@ -70,7 +70,24 @@
 - 执行时自动生成 `Authorization: Basic base64(账号:密码)`，主对话请求与前置接口请求都会携带；
 - 如果请求头模板里显式写了 `Authorization`，以模板为准（一般不需要）。
 
-### 2.3 前置接口钩子
+### 2.3 mTLS 双向证书认证
+
+当被测接口要求 **mTLS 双向证书**（例如 `client_cert.pem` + `client_key.pem`）时，勾选「启用 mTLS 双向证书」，填写或上传：
+
+- **客户端证书**：`client_cert.pem`（PEM，包含 `-----BEGIN CERTIFICATE-----`）；
+- **客户端私钥**：`client_key.pem`（PEM，支持 `PRIVATE KEY` / `RSA PRIVATE KEY` / `EC PRIVATE KEY` / `ENCRYPTED PRIVATE KEY`）；
+- **私钥口令**（可选）：加密私钥的口令；
+- **自定义 CA**（可选）：用于校验服务端证书的 CA PEM；不填时沿用环境的 `verify_ssl` 配置。
+
+说明：
+
+- 证书与私钥使用应用层 Fernet 加密存储，接口只返回 `cert_set` / `key_set` 等布尔标记，不回显 PEM；
+- 编辑时留空表示不修改已保存的证书、私钥或 CA；
+- 执行、探活与前置接口请求都会携带客户端证书；
+- mTLS 与 Basic 鉴权可以同时启用：mTLS 作用于 TLS 传输层，Basic 作用于 `Authorization` 请求头；
+- 运行时会将 PEM 写入仅当前进程可读的临时文件，供 httpx 加载，适配器生命周期结束后立即清理。
+
+### 2.4 前置接口钩子
 
 勾选「启用前置接口钩子」，填写：
 
@@ -98,7 +115,7 @@
 - 所有 `extract` 字段必须都能取到非空值，否则执行直接报错（不会静默发送空值）；
 - 兼容旧配置：不写 `extract` 时沿用 `token_jsonpath` / `token_var`。
 
-### 2.4 请求体模板
+### 2.5 请求体模板
 
 ```json
 {
@@ -122,7 +139,7 @@
 - 首轮 `sessionid` 会渲染为 `""`，服务端按首轮处理；后续轮次自动填入响应返回值；
 - `timestampe` 的字段名以接口为准（示例沿用对接报文中的拼写）。
 
-### 2.5 响应提取器
+### 2.6 响应提取器
 
 ```json
 {
@@ -136,7 +153,7 @@
 - 自定义提取器为**整体替换**，请至少保留 `final_answer` 与 `session_id`；
 - 其余字段（`intent` / `generated_sql` / `api_params` 等）按需保留。
 
-### 2.6 完整环境 JSON 参考
+### 2.7 完整环境 JSON 参考
 
 ```json
 {
@@ -148,6 +165,12 @@
   "api_path": "/api/v1/agent/chat",
   "session_mode": "SERVER_RETURNED",
   "basic_auth": { "username": "<账号>", "password": "<密码>" },
+  "mtls": {
+    "client_cert_pem": "-----BEGIN CERTIFICATE-----\n...",
+    "client_key_pem": "-----BEGIN PRIVATE KEY-----\n...",
+    "key_password": "<私钥口令，可选>",
+    "ca_cert_pem": "-----BEGIN CERTIFICATE-----\n... 可选"
+  },
   "pre_hook": {
     "enabled": true,
     "method": "POST",
@@ -298,6 +321,7 @@ Mock 环境下：
 ## 6. 安全与运维提示
 
 - Basic 密码使用应用层 Fernet 加密存储，接口只返回 `password_set`；
+- mTLS 客户端证书、私钥与私钥口令同样加密存储，接口只返回布尔标记，临时文件在适配器关闭后清理；
 - Trace 与预览中的 `Authorization` 头均按敏感头掩码为 `***`；
 - 前置接口每次执行调用一次；批量任务并发执行时，每条执行互相独立，`conversationId` 不共享；
-- 其他部署环境升级后需执行一次 `alembic upgrade head`（新增 `environment.basic_auth`）。
+- 其他部署环境升级后需执行一次 `alembic upgrade head`（新增 `environment.basic_auth`、`environment.mtls`）。

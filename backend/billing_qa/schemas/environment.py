@@ -74,6 +74,51 @@ class BasicAuthOut(BaseModel):
     password_set: bool = False
 
 
+_CERT_PEM_MARKER = "-----BEGIN CERTIFICATE-----"
+_KEY_PEM_MARKERS = (
+    "-----BEGIN PRIVATE KEY-----",
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "-----BEGIN EC PRIVATE KEY-----",
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+)
+
+
+class MtlsAuthIn(BaseModel):
+    """环境级 mTLS 双向证书：客户端证书 + 私钥，可选私钥口令与自定义 CA。
+
+    留空表示沿用已保存的内容（编辑场景下不回显敏感 PEM）。
+    """
+
+    client_cert_pem: str | None = Field(default=None, max_length=65536)
+    client_key_pem: str | None = Field(default=None, max_length=65536)
+    key_password: str | None = Field(default=None, max_length=512)
+    ca_cert_pem: str | None = Field(default=None, max_length=65536)
+
+    @field_validator("client_cert_pem", "ca_cert_pem")
+    @classmethod
+    def _check_cert_pem(cls, value: str | None) -> str | None:
+        text = (value or "").strip()
+        if text and _CERT_PEM_MARKER not in text:
+            raise ValueError("证书内容需为 PEM 格式（包含 -----BEGIN CERTIFICATE-----）")
+        return text or None
+
+    @field_validator("client_key_pem")
+    @classmethod
+    def _check_key_pem(cls, value: str | None) -> str | None:
+        text = (value or "").strip()
+        if text and not any(marker in text for marker in _KEY_PEM_MARKERS):
+            raise ValueError("私钥内容需为 PEM 格式（-----BEGIN ... PRIVATE KEY-----）")
+        return text or None
+
+
+class MtlsAuthOut(BaseModel):
+    enabled: bool = False
+    cert_set: bool = False
+    key_set: bool = False
+    key_password_set: bool = False
+    ca_set: bool = False
+
+
 DEFAULT_BODY_TEMPLATE: dict = {
     "query": "{{query}}",
     "session_id": "{{session_id}}",
@@ -104,6 +149,7 @@ class EnvironmentBase(BaseModel):
     extractors: dict | None = Field(default_factory=lambda: dict(DEFAULT_EXTRACTORS))
     pre_hook: PreHookConfig | None = None
     basic_auth: BasicAuthIn | None = None
+    mtls: MtlsAuthIn | None = None
     session_mode: Literal["SERVER_RETURNED", "CLIENT_GENERATED"] = "SERVER_RETURNED"
     timeout_seconds: float = 60.0
     verify_ssl: bool = True
@@ -142,6 +188,7 @@ class EnvironmentUpdate(BaseModel):
     extractors: dict | None = None
     pre_hook: PreHookConfig | None = None
     basic_auth: BasicAuthIn | None = None
+    mtls: MtlsAuthIn | None = None
     session_mode: Literal["SERVER_RETURNED", "CLIENT_GENERATED"] | None = None
     timeout_seconds: float | None = None
     verify_ssl: bool | None = None
@@ -163,6 +210,7 @@ class EnvironmentOut(ORMModel):
     extractors: dict | None
     pre_hook: dict | None
     basic_auth: BasicAuthOut | None = None
+    mtls: MtlsAuthOut | None = None
     session_mode: str
     timeout_seconds: float
     verify_ssl: bool

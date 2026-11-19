@@ -15,7 +15,12 @@ from billing_qa.models.prompt_template import PromptTemplate
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.case import CaseOut
-from billing_qa.schemas.environment import BasicAuthOut, EnvironmentOut, EnvVariableOut
+from billing_qa.schemas.environment import (
+    BasicAuthOut,
+    EnvironmentOut,
+    EnvVariableOut,
+    MtlsAuthOut,
+)
 from billing_qa.schemas.model_config import ModelConfigOut
 from billing_qa.schemas.task import ExecutionDetail, ExecutionListItem, TaskOut
 
@@ -37,7 +42,7 @@ def env_to_out(env: Environment) -> EnvironmentOut:
     fields = {
         name: getattr(env, name)
         for name in EnvironmentOut.model_fields
-        if name not in {"variables", "basic_auth"} and hasattr(env, name)
+        if name not in {"variables", "basic_auth", "mtls"} and hasattr(env, name)
     }
     basic = env.basic_auth or {}
     basic_out = (
@@ -48,9 +53,24 @@ def env_to_out(env: Environment) -> EnvironmentOut:
         if basic.get("username")
         else None
     )
+    mtls = env.mtls or {}
+    cert_set = bool(mtls.get("client_cert_encrypted"))
+    key_set = bool(mtls.get("client_key_encrypted"))
+    mtls_out = (
+        MtlsAuthOut(
+            enabled=bool(cert_set and key_set),
+            cert_set=cert_set,
+            key_set=key_set,
+            key_password_set=bool(mtls.get("key_password_encrypted")),
+            ca_set=bool(mtls.get("ca_cert_encrypted")),
+        )
+        if (cert_set or key_set or mtls.get("ca_cert_encrypted"))
+        else None
+    )
     return EnvironmentOut(
         **fields,
         basic_auth=basic_out,
+        mtls=mtls_out,
         variables=[env_variable_to_out(item) for item in env.variables],
     )
 

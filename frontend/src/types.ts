@@ -209,6 +209,21 @@ export interface BasicAuthInput {
   password?: string | null
 }
 
+export interface MtlsAuthOut {
+  enabled: boolean
+  cert_set: boolean
+  key_set: boolean
+  key_password_set: boolean
+  ca_set: boolean
+}
+
+export interface MtlsAuthInput {
+  client_cert_pem?: string | null
+  client_key_pem?: string | null
+  key_password?: string | null
+  ca_cert_pem?: string | null
+}
+
 export interface Environment {
   id: number
   code: string
@@ -224,6 +239,7 @@ export interface Environment {
   extractors: Record<string, string> | null
   pre_hook: PreHookConfig | null
   basic_auth: BasicAuthOut | null
+  mtls: MtlsAuthOut | null
   session_mode: SessionMode
   timeout_seconds: number
   verify_ssl: boolean
@@ -251,6 +267,7 @@ export interface EnvironmentPayload {
   extractors?: Record<string, string> | null
   pre_hook?: PreHookConfig | null
   basic_auth?: BasicAuthInput | null
+  mtls?: MtlsAuthInput | null
   session_mode?: SessionMode
   timeout_seconds?: number
   verify_ssl?: boolean

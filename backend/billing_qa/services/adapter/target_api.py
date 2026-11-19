@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import base64
+import os
+import shutil
+import ssl
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -70,6 +74,10 @@ class EnvContext:
     session_mode: str = "SERVER_RETURNED"
     basic_username: str | None = None
     basic_password: str | None = None
+    mtls_client_cert: str | None = None
+    mtls_client_key: str | None = None
+    mtls_key_password: str | None = None
+    mtls_ca_cert: str | None = None
 
     @classmethod
     def from_orm(cls, env: Environment) -> EnvContext:
@@ -77,6 +85,7 @@ class EnvContext:
         for item in env.variables:
             variables[item.key] = decrypt_value(item.value_encrypted) or ""
         basic = env.basic_auth or {}
+        mtls = env.mtls or {}
         return cls(
             id=env.id,
             base_url=env.base_url.rstrip("/"),
@@ -94,7 +103,16 @@ class EnvContext:
             session_mode=env.session_mode or "SERVER_RETURNED",
             basic_username=(str(basic.get("username") or "") or None),
             basic_password=(decrypt_value(basic.get("password_encrypted")) or None),
+            mtls_client_cert=(decrypt_value(mtls.get("client_cert_encrypted")) or None),
+            mtls_client_key=(decrypt_value(mtls.get("client_key_encrypted")) or None),
+            mtls_key_password=(decrypt_value(mtls.get("key_password_encrypted")) or None),
+            mtls_ca_cert=(decrypt_value(mtls.get("ca_cert_encrypted")) or None),
         )
+
+    @property
+    def mtls_enabled(self) -> bool:
+        """客户端证书与私钥齐备时才启用双向认证。"""
+        return bool(self.mtls_client_cert and self.mtls_client_key)
 
     @property
     def chat_url(self) -> str:
@@ -112,10 +130,61 @@ class TargetApiAdapter:
     def __init__(self, env: EnvContext):
         self.env = env
         self._token_loaded = False
+        self._mtls_dir: str | None = None
+        self._mtls_files: tuple[str, str, str | None, str | None] | None = None
 
     # ------------------------------------------------------------------ #
     # HTTP 基础
     # ------------------------------------------------------------------ #
+    def _prepare_mtls(self) -> tuple[str, str, str | None, str | None] | None:
+        """把加密存储的 PEM 落为临时文件，供 httpx 建立 TLS 客户端证书链。
+
+        Python 的 SSL 只接受文件路径，因此这里写入仅当前用户可读的临时目录，
+        适配器生命周期结束后统一清理。
+        """
+        if not self.env.mtls_enabled:
+            return None
+        if self._mtls_files is not None:
+            return self._mtls_files
+        if self._mtls_dir is None:
+            self._mtls_dir = tempfile.mkdtemp(prefix="billing_qa_mtls_")
+        cert_path = os.path.join(self._mtls_dir, "client_cert.pem")
+        key_path = os.path.join(self._mtls_dir, "client_key.pem")
+        _write_secret(cert_path, self.env.mtls_client_cert or "")
+        _write_secret(key_path, self.env.mtls_client_key or "")
+        ca_path: str | None = None
+        if self.env.mtls_ca_cert:
+            ca_path = os.path.join(self._mtls_dir, "ca_cert.pem")
+            _write_secret(ca_path, self.env.mtls_ca_cert)
+        self._mtls_files = (cert_path, key_path, self.env.mtls_key_password, ca_path)
+        return self._mtls_files
+
+    def close(self) -> None:
+        """清理 mTLS 临时证书文件。"""
+        self._mtls_files = None
+        if self._mtls_dir:
+            shutil.rmtree(self._mtls_dir, ignore_errors=True)
+            self._mtls_dir = None
+
+    def _build_ssl_context(self, mtls: tuple[str, str, str | None, str | None]):
+        """构建 TLS 上下文：加载客户端证书链，并按需替换服务端信任根。
+
+        注意：httpx 0.28 同时传 ``verify=<字符串路径>`` 与 ``cert=`` 时，
+        ``cert`` 会被静默忽略，因此这里统一用 SSLContext 显式配置。
+        """
+        cert_path, key_path, password, ca_path = mtls
+        if ca_path:
+            context = httpx.create_ssl_context(
+                verify=ssl.create_default_context(cafile=ca_path)
+            )
+        else:
+            context = httpx.create_ssl_context(verify=self.env.verify_ssl)
+        try:
+            context.load_cert_chain(cert_path, key_path, password or None)
+        except (ssl.SSLError, OSError) as exc:
+            raise TargetApiError(f"mTLS 客户端证书加载失败: {exc}") from exc
+        return context
+
     def _client(self) -> httpx.AsyncClient:
         timeout = httpx.Timeout(
             connect=min(15.0, self.env.timeout_seconds),
@@ -123,7 +192,11 @@ class TargetApiAdapter:
             write=self.env.timeout_seconds,
             pool=self.env.timeout_seconds,
         )
-        return httpx.AsyncClient(timeout=timeout, verify=self.env.verify_ssl)
+        verify: Any = self.env.verify_ssl
+        mtls = self._prepare_mtls()
+        if mtls:
+            verify = self._build_ssl_context(mtls)
+        return httpx.AsyncClient(timeout=timeout, verify=verify)
 
     async def health_check(self) -> tuple[bool, int | None, float | None, str]:
         url = f"{self.env.base_url}{self.env.health_path or ''}"
@@ -357,6 +430,14 @@ class TargetApiAdapter:
                 ) from exc
             except httpx.HTTPError as exc:
                 raise TargetApiError(f"被测接口网络异常: {exc}", retryable=True) from exc
+
+
+def _write_secret(path: str, content: str) -> None:
+    """以 0600 权限写入敏感文件（Windows 上等价权限由 ACL 继承，尽力而为）。"""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(content)
 
 
 def is_retryable_status(status_code: int) -> bool:

@@ -122,6 +122,7 @@ class CaseExecutor:
             attempt_no=attempt_no,
         )
         wall_started = time.perf_counter()
+        adapter: TargetApiAdapter | None = None
         try:
             async with SessionLocal() as db:
                 ctx = await load_execution_context(
@@ -182,6 +183,9 @@ class CaseExecutor:
         except Exception as exc:
             logger.exception("用例执行失败 execution=%s", execution_id)
             await self._mark_error(execution_id, exc)
+        finally:
+            if adapter is not None:
+                adapter.close()
         return execution_id
 
     # ------------------------------------------------------------------ #

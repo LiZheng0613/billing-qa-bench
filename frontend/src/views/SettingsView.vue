@@ -16,6 +16,7 @@ import type {
   ModelPayload,
   ModelRole,
   ModelTestResult,
+  MtlsAuthInput,
   OpenCodeCatalogAgent,
   OpenCodeCatalogModel,
   PreHookConfig,
@@ -68,6 +69,11 @@ const envForm = reactive({
   basicAuthEnabled: false,
   basicAuthUsername: '',
   basicAuthPassword: '',
+  mtlsEnabled: false,
+  mtlsCertText: '',
+  mtlsKeyText: '',
+  mtlsKeyPassword: '',
+  mtlsCaText: '',
   session_mode: 'SERVER_RETURNED' as SessionMode,
 })
 
@@ -218,11 +224,35 @@ function resetEnvForm(): void {
   envForm.basicAuthEnabled = Boolean(source?.basic_auth)
   envForm.basicAuthUsername = source?.basic_auth?.username ?? ''
   envForm.basicAuthPassword = ''
+  envForm.mtlsEnabled = Boolean(source?.mtls)
+  envForm.mtlsCertText = ''
+  envForm.mtlsKeyText = ''
+  envForm.mtlsKeyPassword = ''
+  envForm.mtlsCaText = ''
   envForm.session_mode = (source?.session_mode ?? 'SERVER_RETURNED') as SessionMode
   previewCases.value = []
   previewCaseId.value = null
   previewResult.value = null
   previewError.value = ''
+}
+
+async function readPemFile(
+  event: Event,
+  target: 'cert' | 'key' | 'ca',
+): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    const text = await file.text()
+    if (target === 'cert') envForm.mtlsCertText = text
+    else if (target === 'key') envForm.mtlsKeyText = text
+    else envForm.mtlsCaText = text
+  } catch (exc) {
+    toast.error(errorMessage(exc, '读取证书文件失败'))
+  } finally {
+    input.value = ''
+  }
 }
 
 async function loadPreviewCases(envId: number): Promise<void> {
@@ -299,6 +329,37 @@ async function submitEnv(): Promise<void> {
       password: envForm.basicAuthPassword || '',
     }
   }
+
+  let mtls: MtlsAuthInput | null = null
+  if (envForm.mtlsEnabled) {
+    const certText = envForm.mtlsCertText.trim()
+    const keyText = envForm.mtlsKeyText.trim()
+    if (!certText && !editingEnv.value?.mtls?.cert_set) {
+      toast.error('请填写或上传 mTLS 客户端证书')
+      return
+    }
+    if (!keyText && !editingEnv.value?.mtls?.key_set) {
+      toast.error('请填写或上传 mTLS 客户端私钥')
+      return
+    }
+    if (certText && !certText.includes('-----BEGIN CERTIFICATE-----')) {
+      toast.error('客户端证书需为 PEM 格式')
+      return
+    }
+    if (
+      keyText &&
+      !/-----BEGIN (?:ENCRYPTED |RSA |EC )?PRIVATE KEY-----/.test(keyText)
+    ) {
+      toast.error('客户端私钥需为 PEM 格式')
+      return
+    }
+    mtls = {
+      client_cert_pem: certText || null,
+      client_key_pem: keyText || null,
+      key_password: envForm.mtlsKeyPassword || null,
+      ca_cert_pem: envForm.mtlsCaText.trim() || null,
+    }
+  }
   try {
     const parsedHeaders = parseOptionalObject(envForm.headersText, '请求头模板')
     if (parsedHeaders) {
@@ -361,6 +422,7 @@ async function submitEnv(): Promise<void> {
     extractors,
     pre_hook: preHook,
     basic_auth: basicAuth,
+    mtls,
     session_mode: envForm.session_mode,
   }
   if (!editingEnv.value) {
@@ -945,6 +1007,7 @@ onMounted(() => {
                   超时 {{ item.timeout_seconds }}s · SSL {{ item.verify_ssl ? '校验' : '忽略' }}
                   <span v-if="item.pre_hook?.enabled" class="text-amber-700"> · 前置接口</span>
                   <span v-if="item.basic_auth" class="text-emerald-700"> · Basic 鉴权</span>
+                  <span v-if="item.mtls?.enabled" class="text-sky-700"> · mTLS</span>
                 </p>
                 <p class="mt-1">
                   <span
@@ -1383,6 +1446,109 @@ onMounted(() => {
               "
               autocomplete="new-password"
             />
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <label class="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                v-model="envForm.mtlsEnabled"
+                type="checkbox"
+                class="h-4 w-4 rounded border-slate-300 bg-white"
+              />
+              启用 mTLS 双向证书
+            </label>
+            <span class="text-[11px] text-slate-500">
+              使用 client_cert.pem + client_key.pem 建立 TLS 客户端证书认证
+            </span>
+          </div>
+          <div v-if="envForm.mtlsEnabled" class="mt-3 space-y-3">
+            <div class="grid gap-3 lg:grid-cols-2">
+              <div>
+                <div class="mb-1 flex items-center justify-between gap-2">
+                  <span class="text-[11px] font-medium text-slate-500">客户端证书（client_cert.pem）</span>
+                  <label class="cursor-pointer text-[11px] text-indigo-600 hover:text-indigo-700">
+                    选择文件
+                    <input
+                      type="file"
+                      accept=".pem,.crt,.cer,.txt"
+                      class="hidden"
+                      @change="readPemFile($event, 'cert')"
+                    />
+                  </label>
+                </div>
+                <textarea
+                  v-model="envForm.mtlsCertText"
+                  class="input font-mono text-xs"
+                  rows="4"
+                  :placeholder="
+                    editingEnv?.mtls?.cert_set
+                      ? '已配置，留空表示不修改'
+                      : '-----BEGIN CERTIFICATE-----'
+                  "
+                />
+              </div>
+              <div>
+                <div class="mb-1 flex items-center justify-between gap-2">
+                  <span class="text-[11px] font-medium text-slate-500">客户端私钥（client_key.pem）</span>
+                  <label class="cursor-pointer text-[11px] text-indigo-600 hover:text-indigo-700">
+                    选择文件
+                    <input
+                      type="file"
+                      accept=".pem,.key,.txt"
+                      class="hidden"
+                      @change="readPemFile($event, 'key')"
+                    />
+                  </label>
+                </div>
+                <textarea
+                  v-model="envForm.mtlsKeyText"
+                  class="input font-mono text-xs"
+                  rows="4"
+                  :placeholder="
+                    editingEnv?.mtls?.key_set
+                      ? '已配置，留空表示不修改'
+                      : '-----BEGIN PRIVATE KEY-----'
+                  "
+                />
+              </div>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <input
+                v-model="envForm.mtlsKeyPassword"
+                class="input text-sm"
+                type="password"
+                :placeholder="
+                  editingEnv?.mtls?.key_password_set
+                    ? '私钥口令已配置，留空表示不修改'
+                    : '私钥口令（可选）'
+                "
+                autocomplete="new-password"
+              />
+              <div>
+                <div class="mb-1 flex items-center justify-between gap-2">
+                  <span class="text-[11px] font-medium text-slate-500">自定义 CA（可选）</span>
+                  <label class="cursor-pointer text-[11px] text-indigo-600 hover:text-indigo-700">
+                    选择文件
+                    <input
+                      type="file"
+                      accept=".pem,.crt,.cer,.txt"
+                      class="hidden"
+                      @change="readPemFile($event, 'ca')"
+                    />
+                  </label>
+                </div>
+                <textarea
+                  v-model="envForm.mtlsCaText"
+                  class="input font-mono text-xs"
+                  rows="3"
+                  :placeholder="
+                    editingEnv?.mtls?.ca_set ? '已配置，留空表示不修改' : '用于校验服务端证书'
+                  "
+                />
+              </div>
+            </div>
           </div>
         </div>
 
