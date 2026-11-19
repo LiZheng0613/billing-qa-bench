@@ -281,6 +281,8 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     task_id = task.json()["id"]
     assert task.json()["retry_on_env_error"] is True
     assert task.json()["max_env_retries"] == 2
+    assert task.json()["retry_on_error"] is True
+    assert task.json()["max_error_retries"] == 2
     assert task.json()["retry_backoff_seconds"] == 1.5
     finished = await _wait_task(client, task_id)
     assert finished["status"] == "COMPLETED"
@@ -290,6 +292,7 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     assert metrics["total_tokens"] > 0
     assert metrics["progress"] == 100.0
     assert metrics["env_retry_count"] == 0
+    assert metrics["retry_count"] == 0
     assert metrics["avg_score"] > 0
 
     executions = (await client.get(f"/tasks/{task_id}/executions")).json()
@@ -565,6 +568,8 @@ async def test_task_repeat_rounds_create_and_validation(client: httpx.AsyncClien
         assert immediate.status_code == 200, immediate.text
         immediate_id = immediate.json()["id"]
         assert immediate.json()["repeat_rounds"] == 2
+        # 首轮任务名与其他轮次一致，带上「第 1/N 轮」标识
+        assert immediate.json()["name"].endswith("· 第 1/2 轮")
 
         # 每天定时同样支持连续轮次
         daily = await client.post(

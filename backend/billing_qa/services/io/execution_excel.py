@@ -88,7 +88,11 @@ CASE_STATUS_LABELS: dict[str, str] = {
     "DRAFT": "草稿",
 }
 
-ERROR_KIND_LABELS: dict[str, str] = {"ENV": "环境异常", "BUSINESS": "业务异常"}
+ERROR_KIND_LABELS: dict[str, str] = {
+    "ENV": "环境异常",
+    "LLM": "模型异常",
+    "BUSINESS": "业务异常",
+}
 
 SELF_CHECK_STATUS_LABELS: dict[str, str] = {
     "DONE": "已追问",
@@ -376,13 +380,13 @@ def _overview_rows(
         ("模拟器 Tokens", metrics.simulator_tokens),
         ("裁判 Tokens", metrics.judge_tokens),
         ("总 Tokens", metrics.total_tokens),
-        ("环境重试用例数", metrics.env_retry_count),
+        ("自动重试用例数", metrics.retry_count),
         ("已耗时(秒)", metrics.elapsed_seconds),
         ("吞吐(条/分)", metrics.throughput_per_minute),
         ("并发数", task.concurrency),
         ("QPS 限制", task.qps_limit),
-        ("环境失败自动重试", bool_text(task.retry_on_env_error)),
-        ("最大环境重试次数", task.max_env_retries),
+        ("异常失败自动重试", bool_text(task.retry_on_error)),
+        ("最大自动重试次数", task.max_error_retries),
         ("重试退避(秒)", task.retry_backoff_seconds),
         ("失败追问自检", bool_text(task.enable_self_check)),
         ("追问自检已追问数", self_check_counts.get("DONE", 0)),

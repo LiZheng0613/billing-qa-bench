@@ -23,7 +23,11 @@ from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase, TestCaseRevision
 from billing_qa.schemas.case import CaseExecutionItem
 from billing_qa.schemas.task import TaskProgressEvent
-from billing_qa.services.engine.error_policy import ERROR_KIND_ENV, retry_delay
+from billing_qa.services.engine.error_policy import (
+    ERROR_KIND_ENV,
+    RETRYABLE_ERROR_KINDS,
+    retry_delay,
+)
 from billing_qa.services.engine.executor import CaseExecutor
 from billing_qa.services.engine.metrics import (
     apply_metrics_to_task,
@@ -181,29 +185,36 @@ class BatchScheduler:
                 environment_id = task.environment_id
                 concurrency = max(1, min(task.concurrency or 3, 20))
                 qps_limit = max(0.1, float(task.qps_limit or 5))
-                retry_enabled = bool(task.retry_on_env_error)
+                retry_on_error = bool(task.retry_on_error)
+                max_error_retries = max(0, min(int(task.max_error_retries or 0), 10))
+                # 兼容旧任务：迁移前只配置了环境类重试
+                retry_on_env_error = bool(task.retry_on_env_error)
                 max_env_retries = max(0, min(int(task.max_env_retries or 0), 10))
                 backoff_base = max(0.0, min(float(task.retry_backoff_seconds or 0), 60.0))
                 enable_self_check = bool(task.enable_self_check)
                 task_name = task.name
 
+            retry_enabled = retry_on_error or retry_on_env_error
+
             await control_store.set_state(task_id, "RUNNING")
             await self._publish_status_by_id(task_id)
             logger.info(
                 "任务开始 task=%s(%s) cases=%d concurrency=%d qps=%.1f "
-                "retry_on_env=%s max_retries=%d",
+                "retry_on_error=%s max_error_retries=%d "
+                "retry_on_env=%s max_env_retries=%d",
                 task_id,
                 task_name,
                 len(case_ids),
                 concurrency,
                 qps_limit,
-                retry_enabled,
+                retry_on_error,
+                max_error_retries,
+                retry_on_env_error,
                 max_env_retries,
             )
 
             semaphore = asyncio.Semaphore(concurrency)
             limiter = QpsLimiter(qps_limit)
-            retry_enabled = retry_enabled and max_env_retries > 0
 
             async def worker(case_id: int) -> None:
                 async with semaphore:
@@ -236,17 +247,29 @@ class BatchScheduler:
                         await self._publish_progress(
                             task_id, execution_id, case_id, version
                         )
-                        if not retry_enabled or attempt >= max_env_retries:
+                        if not retry_enabled:
                             return
-                        if await self._load_error_kind(execution_id) != ERROR_KIND_ENV:
+                        error_kind = await self._load_error_kind(execution_id)
+                        if error_kind is None:
+                            return
+                        if retry_on_error:
+                            if error_kind not in RETRYABLE_ERROR_KINDS:
+                                return
+                            retry_limit = max_error_retries
+                        elif retry_on_env_error and error_kind == ERROR_KIND_ENV:
+                            retry_limit = max_env_retries
+                        else:
+                            return
+                        if retry_limit <= 0 or attempt >= retry_limit:
                             return
                         attempt += 1
                         delay = retry_delay(attempt, backoff_base)
                         logger.info(
-                            "环境类失败，准备第 %d/%d 次自动重试 case=%s delay=%.1fs",
+                            "执行异常，准备第 %d/%d 次自动重试 case=%s kind=%s delay=%.1fs",
                             attempt,
-                            max_env_retries,
+                            retry_limit,
                             case_id,
+                            error_kind,
                             delay,
                         )
                         if not await self._interruptible_sleep(task_id, delay):

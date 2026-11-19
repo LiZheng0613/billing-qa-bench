@@ -933,6 +933,9 @@ export interface BatchTask {
   retry_on_env_error: boolean
   max_env_retries: number
   retry_backoff_seconds: number
+  /** 执行异常（含非环境异常）自动重试 */
+  retry_on_error: boolean
+  max_error_retries: number
   /** LLM 裁决判失败时，在同一会话内追问被测 Agent 自检原因（追问自检） */
   enable_self_check: boolean
   schedule_type: TaskScheduleType
@@ -1005,6 +1008,7 @@ export interface TaskMetrics {
   judge_tokens: number
   total_tokens: number
   env_retry_count: number
+  retry_count: number
   eta_seconds: number | null
   elapsed_seconds: number
   throughput_per_minute: number

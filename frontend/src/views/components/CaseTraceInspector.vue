@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import EmptyState from '../../components/EmptyState.vue'
 import JsonViewer from '../../components/JsonViewer.vue'
 import StatusPill from '../../components/StatusPill.vue'
@@ -24,6 +25,13 @@ const props = defineProps<{
 }>()
 
 const toast = useToastStore()
+const router = useRouter()
+
+/** 从执行详情直接跳转到该用例详情，复用用例资产的完整上下文。 */
+function openCaseDetail(): void {
+  if (!props.detail?.case_id) return
+  void router.push({ name: 'case-detail', params: { id: String(props.detail.case_id) } })
+}
 
 type TabKey = 'turns' | 'judges' | 'contract' | 'rules' | 'selfcheck' | 'snapshot' | 'raw'
 const TABS: Array<{ key: TabKey; label: string }> = [
@@ -586,7 +594,24 @@ function turnRequestKeys(turn: TurnTrace): string[] {
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <h2 class="truncate text-base font-semibold text-slate-900">
-                {{ detail.case_code || `用例 #${detail.case_id}` }}
+                <button
+                  type="button"
+                  class="inline-flex max-w-full items-center gap-1 truncate rounded-sm text-left underline decoration-dotted underline-offset-2 transition hover:text-indigo-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+                  title="查看用例详情"
+                  @click="openCaseDetail"
+                >
+                  <span class="truncate">{{ detail.case_code || `用例 #${detail.case_id}` }}</span>
+                  <svg
+                    class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    aria-hidden="true"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M7 17 17 7M9 7h8v8" />
+                  </svg>
+                </button>
               </h2>
               <StatusPill :status="detail.status" />
               <span class="tag">v{{ detail.case_version }}</span>
@@ -596,6 +621,9 @@ function turnRequestKeys(turn: TurnTrace): string[] {
               </span>
               <span v-if="detail.error_kind === 'ENV'" class="tag border-amber-200 text-amber-700">
                 环境异常
+              </span>
+              <span v-else-if="detail.error_kind === 'LLM'" class="tag border-sky-200 text-sky-700">
+                模型异常
               </span>
               <span
                 v-if="detail.grading_mode === 'ANSWER_CONTRACT'"

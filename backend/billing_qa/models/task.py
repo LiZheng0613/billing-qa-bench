@@ -65,7 +65,13 @@ class BatchTask(Base, TimestampMixin):
         Integer, default=2, comment="环境类失败最大自动重试次数"
     )
     retry_backoff_seconds: Mapped[float] = mapped_column(
-        Float, default=3.0, comment="环境类失败重试基础退避秒数（指数递增）"
+        Float, default=3.0, comment="失败重试基础退避秒数（指数递增）"
+    )
+    retry_on_error: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", comment="执行异常是否自动重试（含非环境异常）"
+    )
+    max_error_retries: Mapped[int] = mapped_column(
+        Integer, default=2, server_default="2", comment="执行异常最大自动重试次数"
     )
     enable_self_check: Mapped[bool] = mapped_column(
         Boolean, default=False, comment="LLM 裁决失败时在同一会话追问被测 Agent 自检"

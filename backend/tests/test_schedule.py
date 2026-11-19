@@ -22,6 +22,7 @@ from billing_qa.schemas.task import TaskCreate
 from billing_qa.services.engine.schedule import (
     clone_for_run,
     clone_next_round,
+    round_task_name,
     run_due_tasks,
 )
 from billing_qa.services.engine.scheduler import scheduler
@@ -157,6 +158,8 @@ def test_clone_for_run_isolates_history() -> None:
         qps_limit=2.5,
         retry_on_env_error=False,
         max_env_retries=1,
+        retry_on_error=True,
+        max_error_retries=1,
         retry_backoff_seconds=9,
         schedule_type=TaskScheduleType.DAILY,
         schedule_time="09:00",
@@ -173,6 +176,8 @@ def test_clone_for_run_isolates_history() -> None:
     assert run.concurrency == 4
     assert run.qps_limit == 2.5
     assert run.retry_on_env_error is False
+    assert run.retry_on_error is True
+    assert run.max_error_retries == 1
     assert run.status == TaskStatus.PENDING
     assert run.created_by == "admin"
     assert run.next_run_at is None
@@ -201,6 +206,13 @@ def test_clone_for_run_marks_first_round_for_multi_round_plan() -> None:
     assert "第 1/3 轮" in run.name
 
 
+def test_round_task_name_keeps_first_round_and_avoids_stacking() -> None:
+    assert round_task_name("回归任务", 1, 3) == "回归任务 · 第 1/3 轮"
+    assert round_task_name("回归任务 · 第 1/3 轮", 2, 3) == "回归任务 · 第 2/3 轮"
+    # 单轮任务保持原名，不追加轮次标识
+    assert round_task_name("单轮任务", 1, 1) == "单轮任务"
+
+
 def test_clone_next_round_increments_index() -> None:
     previous = BatchTask(
         id=7,
@@ -214,6 +226,8 @@ def test_clone_next_round_increments_index() -> None:
         qps_limit=4,
         retry_on_env_error=True,
         max_env_retries=2,
+        retry_on_error=True,
+        max_error_retries=2,
         retry_backoff_seconds=3,
         schedule_type=TaskScheduleType.IMMEDIATE,
         schedule_active=False,
@@ -230,6 +244,8 @@ def test_clone_next_round_increments_index() -> None:
     assert clone.schedule_active is False
     assert clone.status == TaskStatus.PENDING
     assert clone.case_ids == [1, 2]
+    assert clone.retry_on_error is True
+    assert clone.max_error_retries == 2
     assert "第 2/3 轮" in clone.name
 
     # 名称始终基于原始任务名，不逐轮叠加

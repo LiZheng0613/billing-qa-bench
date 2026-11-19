@@ -34,6 +34,24 @@ export const WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 7, label: '周日' },
 ]
 
+const ROUND_SUFFIX_RE = / · 第 \d+\/\d+ 轮$/
+
+/** 去掉任务名里的「第 k/N 轮」后缀，轮次标识交给独立徽标展示。 */
+export function stripRoundSuffix(name: string): string {
+  return name.replace(ROUND_SUFFIX_RE, '')
+}
+
+/** 轮次任务标识；计划行本身不是某一轮，返回 null。 */
+export function roundLabel(task: BatchTask | null | undefined): string | null {
+  if (!task) return null
+  const total = Math.max(1, task.repeat_rounds ?? 1)
+  if (total <= 1) return null
+  const isRound =
+    task.schedule_source_id != null || task.schedule_type === 'IMMEDIATE'
+  if (!isRound) return null
+  return `第 ${Math.max(1, task.round_index ?? 1)}/${total} 轮`
+}
+
 function pad(value: number): string {
   return String(value).padStart(2, '0')
 }

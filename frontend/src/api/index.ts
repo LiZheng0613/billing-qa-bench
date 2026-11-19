@@ -345,6 +345,8 @@ export const api = {
       qps_limit?: number
       retry_on_env_error?: boolean
       max_env_retries?: number
+      retry_on_error?: boolean
+      max_error_retries?: number
       retry_backoff_seconds?: number
       enable_self_check?: boolean
       schedule_type?: TaskScheduleType

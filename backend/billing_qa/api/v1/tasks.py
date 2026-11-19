@@ -37,6 +37,7 @@ from billing_qa.services.engine.schedule import (
     clone_for_run,
     generate_task_code,
     initial_next_run,
+    round_task_name,
 )
 from billing_qa.services.engine.scheduler import RETRYABLE_STATUSES, scheduler
 from billing_qa.services.io.execution_excel import (
@@ -220,9 +221,31 @@ async def create_task(
         if env is None or not env.is_active:
             raise ValidationError("指定环境不存在或已停用")
 
+    # 新字段未传时沿用旧的环境重试配置，保证旧客户端行为不变；
+    # 旧字段同步写入，便于旧版本接口与历史导出继续读取。
+    retry_on_error = (
+        payload.retry_on_error
+        if payload.retry_on_error is not None
+        else payload.retry_on_env_error
+    )
+    max_error_retries = (
+        payload.max_error_retries
+        if payload.max_error_retries is not None
+        else payload.max_env_retries
+    )
+
+    # 立即执行的连续多轮：任务自身就是第一轮，名称与其他轮次保持一致带上轮次标识；
+    # 定时/周期计划的计划行本身不是某一轮，仍保留原名称。
+    task_name = payload.name
+    if (
+        payload.schedule_type == TaskScheduleType.IMMEDIATE
+        and payload.repeat_rounds > 1
+    ):
+        task_name = round_task_name(payload.name, 1, payload.repeat_rounds)
+
     task = BatchTask(
         code=_generate_code(),
-        name=payload.name,
+        name=task_name,
         description=payload.description,
         status=(
             TaskStatus.PENDING
@@ -235,8 +258,10 @@ async def create_task(
         total_cases=len(case_ids),
         concurrency=payload.concurrency,
         qps_limit=payload.qps_limit,
-        retry_on_env_error=payload.retry_on_env_error,
-        max_env_retries=payload.max_env_retries,
+        retry_on_env_error=retry_on_error,
+        max_env_retries=max_error_retries,
+        retry_on_error=retry_on_error,
+        max_error_retries=max_error_retries,
         retry_backoff_seconds=payload.retry_backoff_seconds,
         enable_self_check=payload.enable_self_check,
         schedule_type=payload.schedule_type.value,

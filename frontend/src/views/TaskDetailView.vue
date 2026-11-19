@@ -18,7 +18,13 @@ import type {
 } from '../types'
 import { errorMessage } from '../utils/errors'
 import { formatDateTime, formatPercent } from '../utils/format'
-import { canStopPlanTask, isPlanStopped, taskScheduleLabel } from '../utils/schedule'
+import {
+  canStopPlanTask,
+  isPlanStopped,
+  roundLabel,
+  stripRoundSuffix,
+  taskScheduleLabel,
+} from '../utils/schedule'
 import { useToastStore } from '../stores/toast'
 
 const route = useRoute()
@@ -652,6 +658,11 @@ function openExecution(executionId: number): void {
   })
 }
 
+function openCaseDetail(caseId: number): void {
+  if (!Number.isFinite(caseId)) return
+  void router.push({ name: 'case-detail', params: { id: String(caseId) } })
+}
+
 function backToList(): void {
   void router.push({ name: 'tasks' })
 }
@@ -816,7 +827,7 @@ onBeforeUnmount(() => {
           <div>
             <p class="text-[10px] uppercase tracking-wider text-slate-500">失败重试</p>
             <p class="mt-0.5 text-sm font-medium text-slate-900">
-              {{ plan.retry_on_env_error ? `最多 ${plan.max_env_retries} 次` : '不重试' }}
+              {{ plan.retry_on_error ?? plan.retry_on_env_error ? `最多 ${plan.max_error_retries ?? plan.max_env_retries} 次` : '不重试' }}
             </p>
           </div>
         </div>
@@ -886,13 +897,13 @@ onBeforeUnmount(() => {
                 <td class="td">
                   <div class="flex flex-wrap items-center gap-1.5">
                     <p class="max-w-[240px] truncate text-sm font-medium text-slate-800">
-                      {{ run.name }}
+                      {{ stripRoundSuffix(run.name) }}
                     </p>
                     <span
-                      v-if="(run.repeat_rounds ?? 1) > 1"
+                      v-if="roundLabel(run)"
                       class="tag border-indigo-200 bg-indigo-50 text-indigo-700"
                     >
-                      第 {{ run.round_index }}/{{ run.repeat_rounds }} 轮
+                      {{ roundLabel(run) }}
                     </span>
                   </div>
                   <p class="mt-0.5 font-mono text-[11px] text-slate-500">{{ run.code }}</p>
@@ -975,6 +986,7 @@ onBeforeUnmount(() => {
           @stop-plan="stopPlan"
           @toggle-plan="togglePlan"
           @select-execution="openExecution"
+          @open-case="openCaseDetail"
           @retry-case="retryCase"
           @page-change="changeExecutionPage"
           @mode-change="changeMode"
@@ -1007,6 +1019,7 @@ onBeforeUnmount(() => {
         @stop-plan="stopPlan"
         @toggle-plan="togglePlan"
         @select-execution="openExecution"
+        @open-case="openCaseDetail"
         @retry-case="retryCase"
         @page-change="changeExecutionPage"
         @mode-change="changeMode"

@@ -43,6 +43,21 @@ def generate_task_code() -> str:
     return f"BATCH{datetime.now():%Y%m%d%H%M%S}{random.randint(100, 999)}"
 
 
+_ROUND_SUFFIX_RE = re.compile(r" · 第 \d+/\d+ 轮$")
+
+
+def round_task_name(name: str, round_index: int, total: int) -> str:
+    """给轮次任务名追加统一的「第 k/N 轮」标识。
+
+    - 总轮数为 1 时保持原名；
+    - 已带轮次后缀的名称先剥离再补充，避免「第 2/3 轮 · 第 3/3 轮」逐轮叠加。
+    """
+    base = _ROUND_SUFFIX_RE.sub("", (name or "").strip()) or (name or "").strip()
+    if total > 1:
+        return f"{base} · 第 {round_index}/{total} 轮"
+    return base
+
+
 def initial_next_run(
     *,
     schedule_type: str,
@@ -68,9 +83,7 @@ def clone_for_run(plan: BatchTask, *, current: datetime | None = None) -> BatchT
     """把周期计划克隆成一次独立执行的任务。"""
     moment = current or now()
     total = max(1, int(plan.repeat_rounds or 1))
-    name = f"{plan.name} · {moment:%m-%d %H:%M}"
-    if total > 1:
-        name = f"{name} · 第 1/{total} 轮"
+    name = round_task_name(f"{plan.name} · {moment:%m-%d %H:%M}", 1, total)
     return BatchTask(
         code=generate_task_code(),
         name=name,
@@ -84,6 +97,8 @@ def clone_for_run(plan: BatchTask, *, current: datetime | None = None) -> BatchT
         qps_limit=plan.qps_limit,
         retry_on_env_error=plan.retry_on_env_error,
         max_env_retries=plan.max_env_retries,
+        retry_on_error=plan.retry_on_error,
+        max_error_retries=plan.max_error_retries,
         retry_backoff_seconds=plan.retry_backoff_seconds,
         enable_self_check=plan.enable_self_check,
         schedule_type=TaskScheduleType.IMMEDIATE.value,
@@ -98,11 +113,9 @@ def clone_for_run(plan: BatchTask, *, current: datetime | None = None) -> BatchT
 def clone_next_round(previous: BatchTask, *, plan_id: int, round_index: int) -> BatchTask:
     """把已完成的轮次克隆为下一轮，紧随其后串行执行。"""
     total = max(1, int(previous.repeat_rounds or 1))
-    # 轮次名称始终基于原始任务名，避免「第 2/3 轮 · 第 3/3 轮」逐轮叠加
-    base_name = re.sub(r" · 第 \d+/\d+ 轮$", "", previous.name)
     return BatchTask(
         code=generate_task_code(),
-        name=f"{base_name} · 第 {round_index}/{total} 轮",
+        name=round_task_name(previous.name, round_index, total),
         description=previous.description,
         status=TaskStatus.PENDING,
         control_state="RUNNING",
@@ -113,6 +126,8 @@ def clone_next_round(previous: BatchTask, *, plan_id: int, round_index: int) -> 
         qps_limit=previous.qps_limit,
         retry_on_env_error=previous.retry_on_env_error,
         max_env_retries=previous.max_env_retries,
+        retry_on_error=previous.retry_on_error,
+        max_error_retries=previous.max_error_retries,
         retry_backoff_seconds=previous.retry_backoff_seconds,
         enable_self_check=previous.enable_self_check,
         schedule_type=TaskScheduleType.IMMEDIATE.value,

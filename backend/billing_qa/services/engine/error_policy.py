@@ -1,27 +1,35 @@
-"""执行错误分类：区分环境类故障与业务失败。
+"""执行错误分类：区分可重试异常与业务失败。
 
-环境类故障（ENV）指与被测服务/网关相关的瞬时问题：
-连接拒绝、超时、HTTP 429/5xx、SSE 空响应、网关 HTML 错误页、鉴权服务不可达等。
-这类错误可以按任务配置自动重试。
+可重试异常（异常重试开启时）包括：
+
+- ``ENV``：被测服务/网关相关的瞬时问题，如连接拒绝、超时、HTTP 429/5xx、
+  SSE 空响应、网关 HTML 错误页、鉴权服务不可达等；
+- ``LLM``：模拟器、裁判或追问自检的模型调用/结构化输出异常。模型客户端内部
+  已经重试过，这里作为任务层兜底再次拉起用例。
 
 业务失败（BUSINESS）指用例内容、规则校验、裁判结论或平台配置问题：
 规则不通过、裁判低分、轮次超限、复读熔断、模板变量缺失、非法用例类型等。
-这类错误不重试，避免掩盖真实缺陷。
+这类问题重跑也不会变好，不自动重试。
 """
 
 from __future__ import annotations
 
 from billing_qa.core.exceptions import TargetApiError
+from billing_qa.services.llm.client import LLMError
 
 ERROR_KIND_ENV = "ENV"
+ERROR_KIND_LLM = "LLM"
 ERROR_KIND_BUSINESS = "BUSINESS"
+RETRYABLE_ERROR_KINDS = frozenset({ERROR_KIND_ENV, ERROR_KIND_LLM})
 RETRY_MAX_DELAY_SECONDS = 60.0
 
 
 def classify_exception(exc: BaseException) -> str:
-    """把执行期异常归类为 ENV 或 BUSINESS。"""
+    """把执行期异常归类为 ENV / LLM / BUSINESS。"""
     if isinstance(exc, TargetApiError) and exc.retryable:
         return ERROR_KIND_ENV
+    if isinstance(exc, LLMError):
+        return ERROR_KIND_LLM
     return ERROR_KIND_BUSINESS
 
 

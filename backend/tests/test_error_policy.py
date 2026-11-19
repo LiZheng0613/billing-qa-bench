@@ -1,4 +1,4 @@
-"""环境类错误分类与重试退避策略单元测试。"""
+"""执行错误分类与重试退避策略单元测试。"""
 
 from __future__ import annotations
 
@@ -9,11 +9,13 @@ from billing_qa.services.adapter.target_api import is_retryable_status
 from billing_qa.services.engine.error_policy import (
     ERROR_KIND_BUSINESS,
     ERROR_KIND_ENV,
+    ERROR_KIND_LLM,
     RETRY_MAX_DELAY_SECONDS,
     classify_exception,
     is_env_error,
     retry_delay,
 )
+from billing_qa.services.llm.client import LLMError
 
 
 @pytest.mark.parametrize(
@@ -45,6 +47,12 @@ def test_business_error_classification() -> None:
     assert classify_exception(ValidationError("用例类型非法")) == ERROR_KIND_BUSINESS
     assert classify_exception(RuntimeError("unexpected")) == ERROR_KIND_BUSINESS
     assert is_env_error(TargetApiError("HTTP 400")) is False
+
+
+def test_llm_error_classification() -> None:
+    assert classify_exception(LLMError("模型调用失败")) == ERROR_KIND_LLM
+    assert classify_exception(LLMError("裁判输出非法 JSON")) == ERROR_KIND_LLM
+    assert is_env_error(LLMError("模型调用失败")) is False
 
 
 @pytest.mark.parametrize(

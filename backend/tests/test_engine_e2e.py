@@ -21,6 +21,7 @@ from billing_qa.services.engine.context import load_execution_context
 from billing_qa.services.engine.executor import CaseExecutor
 from billing_qa.services.engine.metrics import compute_task_metrics
 from billing_qa.services.engine.scheduler import scheduler
+from billing_qa.services.llm.client import LLMError
 from billing_qa.services.revision.snapshot import build_snapshot
 
 pytestmark = pytest.mark.asyncio
@@ -217,14 +218,15 @@ async def _create_bad_environment() -> int:
         return int(env.id)
 
 
-async def _create_bad_case(environment_id: int) -> int:
+async def _create_bad_case(environment_id: int, *, query: str | None = None) -> int:
+    """构造只用于重试链路验证的用例；query 为空可稳定触发业务异常。"""
     async with SessionLocal() as db:
         case = CaseModel(
             code=f"PYTEST-ENV-RETRY-{uuid.uuid4().hex[:8]}",
             name="pytest 环境重试用例",
             case_type="SINGLE",
             status="ACTIVE",
-            query="订单 A2024001 的含税金额是多少？",
+            query=query if query is not None else "订单 A2024001 的含税金额是多少？",
             environment_id=environment_id,
             current_version=1,
         )
@@ -335,6 +337,8 @@ async def test_scheduler_auto_retries_env_errors() -> None:
                 qps_limit=50,
                 retry_on_env_error=True,
                 max_env_retries=1,
+                retry_on_error=False,
+                max_error_retries=0,
                 retry_backoff_seconds=0,
                 created_by="pytest",
             )
@@ -361,7 +365,124 @@ async def test_scheduler_auto_retries_env_errors() -> None:
             assert all(record.error_kind == "ENV" for record in records)
             metrics = await compute_task_metrics(db, task)
             assert metrics.env_retry_count == 1
+            assert metrics.retry_count == 1
             assert metrics.status_distribution.ERROR == 1
+    finally:
+        if task_id is not None:
+            await _cleanup(task_id=task_id, case_id=case_id, env_id=env_id)
+        else:
+            await _cleanup(case_id=case_id, env_id=env_id)
+
+
+async def test_scheduler_auto_retries_llm_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """异常重试开启后，LLM 裁决等模型异常按配置重试。"""
+    if not await _dependencies_ready():
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
+    loaded = await _load_demo_case("DEMO-SINGLE-001")
+    if loaded is None:
+        pytest.skip("演示用例缺失")
+    case_id, version, _ = loaded
+
+    async def fail_complete(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise LLMError("模拟模型裁决异常")
+
+    monkeypatch.setattr(CaseExecutor, "_complete", fail_complete)
+
+    task_id: int | None = None
+    try:
+        async with SessionLocal() as db:
+            task = BatchTask(
+                code=f"PYTEST-LLM-RETRY-{uuid.uuid4().hex[:8]}",
+                name="pytest 模型异常重试任务",
+                status="PENDING",
+                control_state="RUNNING",
+                case_ids=[case_id],
+                total_cases=1,
+                concurrency=1,
+                qps_limit=50,
+                retry_on_env_error=False,
+                max_env_retries=0,
+                retry_on_error=True,
+                max_error_retries=1,
+                retry_backoff_seconds=0,
+                created_by="pytest",
+            )
+            db.add(task)
+            await db.commit()
+            await db.refresh(task)
+            task_id = int(task.id)
+
+        assert await scheduler.start(task_id) is True
+        finished = await _wait_task_finished(task_id)
+        assert finished.status == "COMPLETED"
+
+        async with SessionLocal() as db:
+            records = (
+                await db.execute(
+                    select(ExecutionRecord)
+                    .where(ExecutionRecord.task_id == task_id)
+                    .order_by(ExecutionRecord.attempt_no)
+                )
+            ).scalars().all()
+            assert [record.attempt_no for record in records] == [1, 2]
+            assert all(record.status == "ERROR" for record in records)
+            assert all(record.error_kind == "LLM" for record in records)
+            metrics = await compute_task_metrics(db, task)
+            assert metrics.retry_count == 1
+    finally:
+        if task_id is not None:
+            await _wait_task_finished(task_id)
+            await _cleanup(task_id=task_id)
+
+
+async def test_scheduler_does_not_retry_business_errors() -> None:
+    """配置 / 模板等确定性业务异常不触发自动重试。"""
+    if not await _dependencies_ready():
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
+    env_id = await _create_bad_environment()
+    # 空 query 会触发 ValidationError(BUSINESS)。
+    case_id = await _create_bad_case(env_id, query="")
+    task_id: int | None = None
+    try:
+        async with SessionLocal() as db:
+            task = BatchTask(
+                code=f"PYTEST-BIZ-ERR-{uuid.uuid4().hex[:8]}",
+                name="pytest 业务异常不重试",
+                status="PENDING",
+                control_state="RUNNING",
+                environment_id=env_id,
+                case_ids=[case_id],
+                total_cases=1,
+                concurrency=1,
+                qps_limit=50,
+                retry_on_env_error=False,
+                max_env_retries=0,
+                retry_on_error=True,
+                max_error_retries=2,
+                retry_backoff_seconds=0,
+                created_by="pytest",
+            )
+            db.add(task)
+            await db.commit()
+            await db.refresh(task)
+            task_id = int(task.id)
+
+        assert await scheduler.start(task_id) is True
+        finished = await _wait_task_finished(task_id)
+        assert finished.status == "COMPLETED"
+
+        async with SessionLocal() as db:
+            records = (
+                await db.execute(
+                    select(ExecutionRecord)
+                    .where(ExecutionRecord.task_id == task_id)
+                    .order_by(ExecutionRecord.attempt_no)
+                )
+            ).scalars().all()
+            assert [record.attempt_no for record in records] == [1]
+            assert records[0].error_kind == "BUSINESS"
+            metrics = await compute_task_metrics(db, task)
+            assert metrics.retry_count == 0
     finally:
         if task_id is not None:
             await _cleanup(task_id=task_id, case_id=case_id, env_id=env_id)
@@ -390,6 +511,8 @@ async def test_scheduler_does_not_retry_business_failure() -> None:
                 qps_limit=50,
                 retry_on_env_error=True,
                 max_env_retries=2,
+                retry_on_error=False,
+                max_error_retries=0,
                 retry_backoff_seconds=0,
                 created_by="pytest",
             )

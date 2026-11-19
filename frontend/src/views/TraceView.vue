@@ -11,6 +11,7 @@ import { errorMessage } from '../utils/errors'
 import { useBreadcrumbStore } from '../stores/breadcrumb'
 import type { BreadcrumbItem } from '../stores/breadcrumb'
 import { useToastStore } from '../stores/toast'
+import { useAutoRefresh } from '../composables/useAutoRefresh'
 
 const route = useRoute()
 const router = useRouter()
@@ -26,6 +27,12 @@ const executionId = computed(() => {
   const value = Number(route.query.execution)
   return Number.isFinite(value) && value > 0 ? value : null
 })
+
+const ACTIVE_EXECUTION_STATUSES = new Set(['PENDING', 'RUNNING'])
+/** 执行中的记录才需要持续拉取最新轮次与判分结果。 */
+const executionActive = computed(
+  () => Boolean(detail.value && ACTIVE_EXECUTION_STATUSES.has(detail.value.status)),
+)
 
 // 从用例详情进入时优先展示用例路径，否则按批量任务路径展示。
 const origin = computed<'task' | 'case'>(() =>
@@ -58,26 +65,34 @@ function syncBreadcrumb(data: ExecutionDetail | null): void {
   breadcrumb.set(trail)
 }
 
-async function loadDetail(id: number): Promise<boolean> {
-  loadingDetail.value = true
-  loadError.value = ''
+async function loadDetail(id: number, options: { silent?: boolean } = {}): Promise<boolean> {
+  const { silent = false } = options
+  if (!silent) {
+    loadingDetail.value = true
+    loadError.value = ''
+  }
   try {
     const data = await api.executions.get(id)
     detail.value = data
-    relationTask.value = data.task_id
-      ? await api.tasks.get(data.task_id).catch(() => null)
-      : null
-    syncBreadcrumb(data)
+    if (!silent || !relationTask.value) {
+      relationTask.value = data.task_id
+        ? await api.tasks.get(data.task_id).catch(() => null)
+        : null
+    }
+    if (!silent) syncBreadcrumb(data)
     return true
   } catch (exc) {
-    detail.value = null
-    relationTask.value = null
-    loadError.value = errorMessage(exc)
-    syncBreadcrumb(null)
-    toast.error(loadError.value)
+    // 自动刷新失败时保留上一次成功的数据，避免界面被清空
+    if (!silent) {
+      detail.value = null
+      relationTask.value = null
+      loadError.value = errorMessage(exc)
+      syncBreadcrumb(null)
+      toast.error(loadError.value)
+    }
     return false
   } finally {
-    loadingDetail.value = false
+    if (!silent) loadingDetail.value = false
   }
 }
 
@@ -134,6 +149,17 @@ watch(
   { immediate: true },
 )
 
+// 执行中每 4 秒静默刷新，实时展示新增轮次、判分与自检结果；进入终态后自动停止。
+async function refreshDetailSilently(): Promise<void> {
+  if (!executionId.value) return
+  await loadDetail(executionId.value, { silent: true })
+}
+
+useAutoRefresh(refreshDetailSilently, {
+  interval: 4000,
+  shouldSkip: () => !executionActive.value,
+})
+
 onBeforeUnmount(() => {
   breadcrumb.clear()
 })
@@ -156,9 +182,15 @@ onBeforeUnmount(() => {
         <template #title>
           <h1 class="mt-2 flex flex-wrap items-center gap-2 text-[22px] font-semibold leading-tight tracking-[-0.02em] text-ink">
             执行 #{{ detail?.id ?? executionId }}
-            <span v-if="detail?.case_code" class="font-mono text-sm font-medium text-slate-600">
-              · {{ detail.case_code }}
-            </span>
+            <button
+              v-if="detail?.case_id"
+              type="button"
+              class="font-mono text-sm font-medium text-slate-600 underline decoration-dotted underline-offset-2 transition hover:text-indigo-600"
+              title="查看用例详情"
+              @click="openCase"
+            >
+              · {{ detail.case_code || `用例 #${detail.case_id}` }}
+            </button>
             <StatusPill v-if="detail" :status="detail.status" size="sm" />
           </h1>
         </template>
@@ -176,6 +208,14 @@ onBeforeUnmount(() => {
           </p>
         </template>
         <template #actions>
+          <span
+            v-if="executionActive"
+            class="inline-flex items-center gap-1 text-[11px] text-emerald-600"
+            title="执行中每 4 秒自动刷新"
+          >
+            <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
+            执行中 · 自动刷新
+          </span>
           <button class="btn-ghost" @click="refreshDetail">刷新</button>
         </template>
       </PageHeader>

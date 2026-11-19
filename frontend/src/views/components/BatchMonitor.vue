@@ -42,6 +42,7 @@ const emit = defineEmits<{
   (e: 'stop-plan'): void
   (e: 'toggle-plan', active: boolean): void
   (e: 'select-execution', executionId: number): void
+  (e: 'open-case', caseId: number): void
   (e: 'retry-case', caseId: number): void
   (e: 'page-change', page: number): void
   (e: 'mode-change', latestPerCase: boolean): void
@@ -147,8 +148,8 @@ const stats = computed<Array<{ label: string; value: string; hint?: string }>>((
   {
     label: '进度',
     value: formatPercent(props.metrics?.progress, 1),
-    hint: props.metrics?.env_retry_count
-      ? `已自动重试 ${props.metrics.env_retry_count} 条用例`
+    hint: (props.metrics?.retry_count ?? props.metrics?.env_retry_count)
+      ? `已自动重试 ${props.metrics?.retry_count ?? props.metrics?.env_retry_count} 条用例`
       : '',
   },
   { label: '通过率', value: formatPercent(props.metrics?.pass_rate, 1) },
@@ -410,7 +411,7 @@ onBeforeUnmount(clearFilterTimer)
           <span>并发 {{ task.concurrency }} / QPS {{ task.qps_limit }}</span>
           <span>·</span>
           <span>
-            {{ task.retry_on_env_error ? `环境失败自动重试 ${task.max_env_retries} 次` : '环境失败不重试' }}
+            {{ (task.retry_on_error ?? task.retry_on_env_error) ? `异常失败自动重试 ${task.max_error_retries ?? task.max_env_retries} 次` : '异常失败不重试' }}
           </span>
           <template v-if="task.enable_self_check">
             <span>·</span>
@@ -732,7 +733,18 @@ onBeforeUnmount(clearFilterTimer)
             >
               <td class="td font-mono text-xs text-slate-500">#{{ item.id }}</td>
               <td class="td">
-                <p class="font-mono text-xs text-slate-800">{{ item.case_code || `用例 #${item.case_id ?? '—'}` }}</p>
+                <button
+                  v-if="item.case_id !== null && item.case_id !== undefined"
+                  type="button"
+                  class="max-w-[240px] truncate font-mono text-xs text-slate-800 underline decoration-dotted underline-offset-2 transition hover:text-indigo-600"
+                  :title="`查看用例详情：${item.case_code || `用例 #${item.case_id}`}`"
+                  @click.stop="emit('open-case', item.case_id)"
+                >
+                  {{ item.case_code || `用例 #${item.case_id}` }}
+                </button>
+                <p v-else class="max-w-[240px] truncate font-mono text-xs text-slate-800">
+                  {{ item.case_code || '—' }}
+                </p>
                 <p class="mt-0.5 max-w-[240px] truncate text-[11px] text-slate-500">
                   {{ item.case_name || '—' }} · v{{ item.case_version }}
                   <span v-if="item.attempt_no > 1" class="text-amber-700"> · 第 {{ item.attempt_no }} 次尝试</span>

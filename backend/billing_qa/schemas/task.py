@@ -29,6 +29,10 @@ class TaskCreate(BaseModel):
     retry_on_env_error: bool = True
     max_env_retries: int = Field(default=2, ge=0, le=10)
     retry_backoff_seconds: float = Field(default=3.0, ge=0, le=60)
+    # 执行异常自动重试：覆盖环境故障与平台内部异常；业务失败（FAIL/轮次超限等）不重试。
+    # 未传时回退到旧的 retry_on_env_error / max_env_retries，兼容旧客户端。
+    retry_on_error: bool | None = None
+    max_error_retries: int | None = Field(default=None, ge=0, le=10)
     # LLM 裁决判失败时，在同一会话内追问被测 Agent 自检原因（追问自检）
     enable_self_check: bool = False
     # 执行方式：立即 / 指定时间一次 / 每天 / 每周
@@ -106,6 +110,8 @@ class TaskOut(ORMModel):
     retry_on_env_error: bool
     max_env_retries: int
     retry_backoff_seconds: float
+    retry_on_error: bool = True
+    max_error_retries: int = 2
     enable_self_check: bool = False
     schedule_type: str
     scheduled_at: datetime | None
@@ -180,6 +186,7 @@ class TaskMetrics(BaseModel):
     judge_tokens: int
     total_tokens: int
     env_retry_count: int = 0
+    retry_count: int = 0
     eta_seconds: float | None
     elapsed_seconds: float
     throughput_per_minute: float

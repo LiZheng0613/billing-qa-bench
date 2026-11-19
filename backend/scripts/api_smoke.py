@@ -206,18 +206,18 @@ def main() -> int:
             "case_ids": [case["id"], next(i["id"] for i in cases["items"] if i["code"] == "DEMO-SINGLE-FAIL")],
             "concurrency": 2,
             "qps_limit": 10,
-            "retry_on_env_error": True,
-            "max_env_retries": 2,
+            "retry_on_error": True,
+            "max_error_retries": 2,
             "retry_backoff_seconds": 2,
         },
     )
     check(task_resp.status_code == 200, "创建批量任务", task_resp.text[:300])
     created_task = task_resp.json()
     check(
-        created_task["retry_on_env_error"] is True
-        and created_task["max_env_retries"] == 2
+        created_task["retry_on_error"] is True
+        and created_task["max_error_retries"] == 2
         and created_task["retry_backoff_seconds"] == 2,
-        "任务环境重试配置回显",
+        "任务异常重试配置回显",
         str(created_task)[:300],
     )
     task = wait_task(client, task_resp.json()["id"])
@@ -228,7 +228,7 @@ def main() -> int:
         "任务指标聚合",
         str(metrics)[:300],
     )
-    check(metrics["env_retry_count"] == 0, "正常任务无环境重试", str(metrics)[:300])
+    check(metrics["retry_count"] == 0, "正常任务无自动重试", str(metrics)[:300])
     task_execs = client.get(f"/tasks/{task['id']}/executions").json()
     check(len(task_execs["items"]) == 2, "任务执行明细")
     check(

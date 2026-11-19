@@ -130,8 +130,8 @@ const batchForm = reactive({
   scope: 'SELECTED' as 'SELECTED' | 'ALL_ACTIVE',
   concurrency: 3,
   qps_limit: 5,
-  retry_on_env_error: true,
-  max_env_retries: 2,
+  retry_on_error: true,
+  max_error_retries: 2,
   retry_backoff_seconds: 3,
   enable_self_check: false,
   auto_start: true,
@@ -411,8 +411,8 @@ function openBatch(): void {
   batchForm.scope = selectedIds.value.length > 0 ? 'SELECTED' : 'ALL_ACTIVE'
   batchForm.concurrency = 3
   batchForm.qps_limit = 5
-  batchForm.retry_on_env_error = true
-  batchForm.max_env_retries = 2
+  batchForm.retry_on_error = true
+  batchForm.max_error_retries = 2
   batchForm.retry_backoff_seconds = 3
   batchForm.enable_self_check = false
   batchForm.auto_start = true
@@ -448,8 +448,10 @@ async function submitBatch(): Promise<void> {
       case_ids: batchForm.scope === 'SELECTED' ? [...selectedIds.value] : [],
       concurrency: batchForm.concurrency,
       qps_limit: batchForm.qps_limit,
-      retry_on_env_error: batchForm.retry_on_env_error,
-      max_env_retries: batchForm.max_env_retries,
+      retry_on_env_error: batchForm.retry_on_error,
+      max_env_retries: batchForm.max_error_retries,
+      retry_on_error: batchForm.retry_on_error,
+      max_error_retries: batchForm.max_error_retries,
       retry_backoff_seconds: batchForm.retry_backoff_seconds,
       enable_self_check: batchForm.enable_self_check,
       ...schedulePayload(normalizeSchedule(batchForm.schedule)),
@@ -795,30 +797,30 @@ onMounted(() => {
         <div class="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
           <label class="flex items-start gap-2 text-sm text-slate-700">
             <input
-              v-model="batchForm.retry_on_env_error"
+              v-model="batchForm.retry_on_error"
               type="checkbox"
               class="mt-0.5 h-4 w-4 rounded border-slate-300 bg-white"
             />
             <span>
-              环境类失败自动重试
+              异常失败自动重试
               <span class="block text-[11px] text-slate-500">
-                仅重试连接失败、超时、HTTP 429/5xx、SSE 空响应等环境故障；业务失败不会重试。
+                仅重试环境故障、模型调用/裁决异常等执行异常；规则判定失败、轮次超限、配置或模板错误不会重试。
               </span>
             </span>
           </label>
           <div
             class="grid gap-3 sm:grid-cols-2"
-            :class="batchForm.retry_on_env_error ? '' : 'pointer-events-none opacity-40'"
+            :class="batchForm.retry_on_error ? '' : 'pointer-events-none opacity-40'"
           >
             <div>
               <label class="label">最大重试次数</label>
               <input
-                v-model.number="batchForm.max_env_retries"
+                v-model.number="batchForm.max_error_retries"
                 class="input"
                 type="number"
                 min="0"
                 max="10"
-                :disabled="!batchForm.retry_on_env_error"
+                :disabled="!batchForm.retry_on_error"
               />
             </div>
             <div>
@@ -830,7 +832,7 @@ onMounted(() => {
                 min="0"
                 max="60"
                 step="0.5"
-                :disabled="!batchForm.retry_on_env_error"
+                :disabled="!batchForm.retry_on_error"
               />
             </div>
           </div>

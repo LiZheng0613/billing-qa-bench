@@ -24,6 +24,7 @@ import {
   sourceLabel,
 } from '../utils/format'
 import { useToastStore } from '../stores/toast'
+import { roundLabel, stripRoundSuffix } from '../utils/schedule'
 
 const router = useRouter()
 const toast = useToastStore()
@@ -325,7 +326,17 @@ onBeforeUnmount(() => {
                   @click="openTask(item)"
                 >
                   <td class="td">
-                    <p class="max-w-[240px] truncate text-sm font-medium text-slate-800">{{ item.name }}</p>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <p class="max-w-[240px] truncate text-sm font-medium text-slate-800">
+                        {{ stripRoundSuffix(item.name) }}
+                      </p>
+                      <span
+                        v-if="roundLabel(item)"
+                        class="tag border-indigo-200 bg-indigo-50 text-indigo-700"
+                      >
+                        {{ roundLabel(item) }}
+                      </span>
+                    </div>
                     <p class="mt-0.5 font-mono text-[11px] text-slate-500">{{ item.code }}</p>
                   </td>
                   <td class="td"><StatusPill :status="item.status" size="sm" /></td>

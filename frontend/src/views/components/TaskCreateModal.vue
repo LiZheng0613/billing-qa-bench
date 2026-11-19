@@ -36,8 +36,8 @@ const form = reactive({
   environment_id: null as number | null,
   concurrency: 3,
   qps_limit: 5,
-  retry_on_env_error: true,
-  max_env_retries: 2,
+  retry_on_error: true,
+  max_error_retries: 2,
   retry_backoff_seconds: 3,
   enable_self_check: false,
   case_scope: 'SELECTED' as 'SELECTED' | 'ALL_ACTIVE',
@@ -101,8 +101,8 @@ function resetForm(): void {
   form.environment_id = null
   form.concurrency = 3
   form.qps_limit = 5
-  form.retry_on_env_error = true
-  form.max_env_retries = 2
+  form.retry_on_error = true
+  form.max_error_retries = 2
   form.retry_backoff_seconds = 3
   form.enable_self_check = false
   form.case_scope = 'SELECTED'
@@ -163,8 +163,10 @@ async function submitCreate(): Promise<void> {
       case_ids: form.case_scope === 'SELECTED' ? [...form.case_ids] : [],
       concurrency: form.concurrency,
       qps_limit: form.qps_limit,
-      retry_on_env_error: form.retry_on_env_error,
-      max_env_retries: form.max_env_retries,
+      retry_on_env_error: form.retry_on_error,
+      max_env_retries: form.max_error_retries,
+      retry_on_error: form.retry_on_error,
+      max_error_retries: form.max_error_retries,
       retry_backoff_seconds: form.retry_backoff_seconds,
       enable_self_check: form.enable_self_check,
       ...schedulePayload(schedule),
@@ -241,30 +243,30 @@ watch(
         <div class="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
           <label class="flex items-start gap-2 text-sm text-slate-700">
             <input
-              v-model="form.retry_on_env_error"
+              v-model="form.retry_on_error"
               type="checkbox"
               class="mt-0.5 h-4 w-4 rounded border-slate-300 bg-white"
             />
             <span>
-              环境类失败自动重试
+              异常失败自动重试
               <span class="block text-[11px] text-slate-500">
-                仅重试连接失败、超时、HTTP 429/5xx、SSE 空响应等环境故障；规则不通过、裁判低分等业务失败不会重试。
+                仅重试环境故障、模型调用/裁决异常等执行异常；规则判定失败、轮次超限、配置或模板错误不会重试。
               </span>
             </span>
           </label>
           <div
             class="grid gap-3 sm:grid-cols-2"
-            :class="form.retry_on_env_error ? '' : 'pointer-events-none opacity-40'"
+            :class="form.retry_on_error ? '' : 'pointer-events-none opacity-40'"
           >
             <div>
               <label class="label">最大重试次数</label>
               <input
-                v-model.number="form.max_env_retries"
+                v-model.number="form.max_error_retries"
                 class="input"
                 type="number"
                 min="0"
                 max="10"
-                :disabled="!form.retry_on_env_error"
+                :disabled="!form.retry_on_error"
               />
             </div>
             <div>
@@ -276,7 +278,7 @@ watch(
                 min="0"
                 max="60"
                 step="0.5"
-                :disabled="!form.retry_on_env_error"
+                :disabled="!form.retry_on_error"
               />
             </div>
           </div>
