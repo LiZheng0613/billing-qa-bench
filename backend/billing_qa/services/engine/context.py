@@ -42,6 +42,7 @@ class ExecutionContext:
     self_check_prompt: str | None = None
     self_check_prompt_version: int | None = None
     self_check_template_code: str | None = None
+    self_check_template_name: str | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -199,9 +200,11 @@ async def load_execution_context(
     self_check_prompt: str | None = None
     self_check_version: int | None = None
     self_check_code: str | None = None
+    self_check_name: str | None = None
     if self_check_override:
         self_check_prompt = self_check_override
         self_check_code = "PROMPT_OVERRIDE"
+        self_check_name = "用例自定义覆写"
     else:
         try:
             # 未在用例快照中指定模板时，按 SELF_CHECK 类型自动选择启用的资产。
@@ -219,6 +222,7 @@ async def load_execution_context(
             self_check_prompt = self_check_row.content
             self_check_version = self_check_row.version
             self_check_code = self_check_tpl.code
+            self_check_name = self_check_tpl.name
         except ValidationError as exc:
             logger.warning("追问自检模板不可用，自检将被跳过: %s", exc)
             warnings.append(f"追问自检模板不可用: {exc}")
@@ -236,5 +240,6 @@ async def load_execution_context(
         self_check_prompt=self_check_prompt,
         self_check_prompt_version=self_check_version,
         self_check_template_code=self_check_code,
+        self_check_template_name=self_check_name,
         warnings=warnings,
     )

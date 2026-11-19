@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.core.crypto import decrypt_value, mask_value
 from billing_qa.models.environment import Environment
 from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.model_config import ModelConfig
+from billing_qa.models.prompt_template import PromptTemplate
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.case import CaseOut
@@ -115,6 +117,29 @@ def execution_to_item(
     )
 
 
+async def _self_check_with_template_name(
+    db: AsyncSession, payload: dict | None
+) -> dict | None:
+    """给历史自检结果补齐模板名称，界面不再直接展示模板编码。"""
+    if not isinstance(payload, dict):
+        return payload
+    data = dict(payload)
+    code = data.get("template_code")
+    if not code or data.get("template_name"):
+        return data
+    if str(code) == "PROMPT_OVERRIDE":
+        data["template_name"] = "用例自定义覆写"
+        return data
+    name = (
+        await db.execute(
+            select(PromptTemplate.name).where(PromptTemplate.code == str(code))
+        )
+    ).scalar_one_or_none()
+    if name:
+        data["template_name"] = name
+    return data
+
+
 async def build_execution_detail(
     db: AsyncSession,
     record: ExecutionRecord,
@@ -152,7 +177,7 @@ async def build_execution_detail(
         diagnostics=record.diagnostics,
         grader_version=record.grader_version,
         as_of=record.as_of,
-        self_check=record.self_check,
+        self_check=await _self_check_with_template_name(db, record.self_check),
         raw_request_response=raw_payloads,
     )
 

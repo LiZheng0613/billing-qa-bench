@@ -150,6 +150,7 @@ class CaseExecutor:
                         adapter=adapter,
                         prompt=ctx.self_check_prompt,
                         template_code=ctx.self_check_template_code,
+                        template_name=ctx.self_check_template_name,
                         template_version=ctx.self_check_prompt_version,
                         snapshot=snapshot,
                         turn_records=conversation.records,
@@ -170,6 +171,7 @@ class CaseExecutor:
                         f"{type(exc).__name__}: {exc}",
                         trigger="自检追问调用异常",
                         template_code=ctx.self_check_template_code,
+                        template_name=ctx.self_check_template_name,
                         template_version=ctx.self_check_prompt_version,
                     )
             await self._finalize(execution_id, outcome, ctx)

@@ -1015,6 +1015,7 @@ export interface SelfCheckResult {
   skip_reason?: string | null
   session_id?: string | null
   template_code?: string | null
+  template_name?: string | null
   template_version?: number | null
   prompt?: string | null
   conclusion?: string | null

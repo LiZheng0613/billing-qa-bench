@@ -47,6 +47,7 @@ class SelfCheckResult:
     skip_reason: str | None = None
     session_id: str | None = None
     template_code: str | None = None
+    template_name: str | None = None
     template_version: int | None = None
     prompt: str | None = None
     conclusion: str | None = None
@@ -287,6 +288,7 @@ async def run_self_check(
     prompt: str | None,
     template_code: str | None,
     template_version: int | None,
+    template_name: str | None = None,
     snapshot: dict[str, Any],
     turn_records: list[dict[str, Any]],
     judge_result: dict[str, Any] | None,
@@ -304,6 +306,7 @@ async def run_self_check(
     """
     base = {
         "template_code": template_code,
+        "template_name": template_name,
         "template_version": template_version,
     }
     trigger = self_check_trigger_reason(

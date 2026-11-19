@@ -1252,8 +1252,11 @@ function turnRequestKeys(turn: TurnTrace): string[] {
                 </span>
                 <span v-if="selfCheck.trigger">触发原因：{{ selfCheck.trigger }}</span>
                 <span v-if="selfCheck.session_id">会话：{{ selfCheck.session_id }}</span>
-                <span v-if="selfCheck.template_code">
-                  模板：{{ selfCheck.template_code }}@v{{ selfCheck.template_version ?? '—' }}
+                <span v-if="selfCheck.template_name || selfCheck.template_code">
+                  模板：{{ selfCheck.template_name || selfCheck.template_code }}
+                  <template v-if="selfCheck.template_version">
+                    · v{{ selfCheck.template_version }}
+                  </template>
                 </span>
                 <span v-if="selfCheck.latency_ms != null">
                   追问时延：{{ formatMs(selfCheck.latency_ms) }}

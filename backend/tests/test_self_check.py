@@ -358,6 +358,7 @@ def test_run_self_check_same_session_and_history() -> None:
                 "裁判理由：{{judge_reasons}}，请自检。"
             ),
             template_code="SELF_CHECK_DEFAULT",
+            template_name="默认失败追问自检模板",
             template_version=2,
             snapshot=snapshot,
             turn_records=turns,
@@ -373,7 +374,9 @@ def test_run_self_check_same_session_and_history() -> None:
     assert result.trigger == "LLM 裁决不通过"
     assert result.session_id == "sess-abc-123"
     assert result.template_code == "SELF_CHECK_DEFAULT"
+    assert result.template_name == "默认失败追问自检模板"
     assert result.template_version == 2
+    assert result.to_dict()["template_name"] == "默认失败追问自检模板"
     assert result.conclusion == "我复查后发现总额取错了口径，正确应为 ¥100.00。"
     assert result.latency_ms is not None and result.latency_ms >= 0
     assert result.performed_at

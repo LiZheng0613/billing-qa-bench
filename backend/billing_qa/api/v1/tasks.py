@@ -18,6 +18,7 @@ from billing_qa.db.session import get_db
 from billing_qa.models.enums import TaskScheduleType, TaskStatus
 from billing_qa.models.environment import Environment
 from billing_qa.models.execution import ExecutionRecord
+from billing_qa.models.prompt_template import PromptTemplate
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.case import CaseExecutionItem
@@ -935,6 +936,25 @@ async def _collect_task_results(
             ).all()
         }
 
+    template_codes = {
+        str(record.self_check["template_code"])
+        for record in records
+        if isinstance(record.self_check, dict)
+        and record.self_check.get("template_code")
+    }
+    template_names: dict[str, str] = {}
+    if template_codes:
+        template_names = {
+            str(code): str(name)
+            for code, name in (
+                await db.execute(
+                    select(PromptTemplate.code, PromptTemplate.name).where(
+                        PromptTemplate.code.in_(template_codes)
+                    )
+                )
+            ).all()
+        }
+
     rows: list[dict[str, Any]] = []
     for record in records:
         snapshot = record.case_snapshot or {}
@@ -956,12 +976,17 @@ async def _collect_task_results(
         )
         template_code = sc.get("template_code")
         template_version = sc.get("template_version")
+        template_name = (
+            sc.get("template_name")
+            or template_names.get(str(template_code))
+            or ("用例自定义覆写" if template_code == "PROMPT_OVERRIDE" else template_code)
+        )
         self_check_template = None
-        if template_code:
+        if template_name:
             self_check_template = (
-                f"{template_code}@v{template_version}"
+                f"{template_name}@v{template_version}"
                 if template_version
-                else str(template_code)
+                else str(template_name)
             )
         self_check_notes = (
             "；".join(str(note) for note in (sc.get("notes") or []) if str(note).strip())
