@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from billing_qa.core.config import Settings
+
+
+def test_env_file_falls_back_to_backend_directory() -> None:
+    """从任意工作目录启动都应能读到 backend/.env。"""
+    env_files = Settings.model_config["env_file"]
+    assert isinstance(env_files, tuple)
+    backend_env = Path(env_files[0])
+    assert backend_env.name == ".env"
+    assert backend_env.parent.name == "backend"
 
 
 def test_default_urls_use_postgresql_drivers() -> None:

@@ -333,6 +333,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | `FAIL` / `MAX_TURNS_EXCEEDED` / `REPETITION_ABORT` | 规则不通过、裁判低分、轮次超限、复读熔断等业务判定 | 否 |
 
 - 重试同样占用并发信号量与 QPS 配额，不会突破任务限制；终止任务会立即中断重试等待。
+- 模型返回 200 但内容不是约定 JSON 时，先由 `LLM_JSON_RETRY_ATTEMPTS`（默认 2，即总调用 3 次）带纠错提示修复；耗尽后按 `LLM` 异常进入任务级重试。配置见 `backend/.env`。
 - 每次尝试生成独立执行记录（`source=RETRY`、`attempt_no` 递增），`error_kind` 记录分类，Trace 可逐次回看。
 - 任务指标中的 `retry_count` 表示触发过自动重试的用例数；`env_retry_count` 作为兼容字段保留相同取值。
 
@@ -366,6 +367,8 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | `HTTP_TIMEOUT_SECONDS` | `60` | 被测接口默认超时 |
 | `MAX_TURNS_HARD_LIMIT` | `20` | 轮次硬上限（超过即熔断） |
 | `REPETITION_SIMILARITY_THRESHOLD` | `0.9` | 复读检测相似度阈值 |
+| `LLM_JSON_RETRY_ATTEMPTS` | `2` | 模型输出非 JSON 时的额外纠错重试次数（总调用 = 1 + 该值） |
+| `LLM_JSON_RETRY_BACKOFF_SECONDS` | `1.0` | JSON 修复重试的基准退避秒数（指数递增，单次上限 8s） |
 | `TASK_RETENTION_DAYS` | `30` | 任务数据保留天数 |
 | `MOCK_LLM_BASE_URL` / `MOCK_TARGET_BASE_URL` | `http://127.0.0.1:8001/v1` / `http://127.0.0.1:8002` | 内置 Mock 地址 |
 

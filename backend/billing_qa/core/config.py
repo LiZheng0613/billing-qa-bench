@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 后端根目录（billing_qa/core/config.py 向上两级），用于定位 .env，
+# 避免从仓库根目录或其它工作目录启动时读不到 backend/.env。
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+# 先读 backend/.env，再用当前工作目录的 .env 覆盖；真实环境变量始终优先。
+_ENV_FILES = (str(_BACKEND_DIR / ".env"), ".env")
 
 
 def _with_driver(url: str, driver: str) -> str:
@@ -26,7 +33,7 @@ class Settings(BaseSettings):
     """应用配置。所有字段均可通过同名（大小写不敏感）环境变量覆盖。"""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILES,
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
