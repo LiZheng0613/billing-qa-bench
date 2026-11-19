@@ -147,6 +147,8 @@ class DataSourceOut(ORMModel):
     endpoint_url: str | None
     description: str | None
     has_auth: bool = False
+    # 鉴权配置仅在调用方拥有 capability:write 权限时返回明文。
+    auth_config: dict[str, Any] | None = None
     timeout_seconds: float
     max_rows: int
     tool_version: str | None

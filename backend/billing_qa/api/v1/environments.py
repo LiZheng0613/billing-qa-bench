@@ -12,9 +12,11 @@ from sqlalchemy.orm import selectinload
 
 from billing_qa.api.v1.serializers import env_to_out, env_variable_to_out
 from billing_qa.core.authz import require_module_access
-from billing_qa.core.crypto import encrypt_value
+from billing_qa.core.context import CurrentUser
+from billing_qa.core.crypto import decrypt_value, encrypt_value, mask_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
-from billing_qa.core.security import get_current_operator
+from billing_qa.core.permissions import PermissionCode
+from billing_qa.core.security import get_current_operator, get_current_user
 from billing_qa.db.session import get_db
 from billing_qa.models.environment import Environment, EnvironmentVariable
 from billing_qa.models.task import BatchTask
@@ -56,6 +58,11 @@ router = APIRouter(
         )
     ],
 )
+
+
+def _can_read_secret(user: CurrentUser) -> bool:
+    """拥有环境密钥读取权限时才回显明文。"""
+    return PermissionCode.ENVIRONMENT_SECRET_READ.value in user.permissions
 
 
 async def _get_env(db: AsyncSession, env_id: int) -> Environment:
@@ -127,6 +134,7 @@ async def list_environments(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> Page[EnvironmentOut]:
     conditions = []
     if keyword:
@@ -148,7 +156,7 @@ async def list_environments(
         )
     ).scalars().all()
     return Page[EnvironmentOut](
-        items=[env_to_out(item) for item in rows],
+        items=[env_to_out(item, reveal=_can_read_secret(user)) for item in rows],
         total=int(total),
         page=page,
         page_size=page_size,
@@ -160,6 +168,7 @@ async def create_environment(
     payload: EnvironmentCreate,
     db: AsyncSession = Depends(get_db),
     operator: str = Depends(get_current_operator),
+    user: CurrentUser = Depends(get_current_user),
 ) -> EnvironmentOut:
     exists = (
         await db.execute(select(Environment.id).where(Environment.code == payload.code))
@@ -182,12 +191,16 @@ async def create_environment(
         )
     db.add(env)
     await db.commit()
-    return env_to_out(await _get_env(db, env.id))
+    return env_to_out(await _get_env(db, env.id), reveal=_can_read_secret(user))
 
 
 @router.get("/{env_id}", response_model=EnvironmentOut, summary="环境详情")
-async def get_environment(env_id: int, db: AsyncSession = Depends(get_db)) -> EnvironmentOut:
-    return env_to_out(await _get_env(db, env_id))
+async def get_environment(
+    env_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> EnvironmentOut:
+    return env_to_out(await _get_env(db, env_id), reveal=_can_read_secret(user))
 
 
 @router.put("/{env_id}", response_model=EnvironmentOut, summary="更新环境")
@@ -195,6 +208,7 @@ async def update_environment(
     env_id: int,
     payload: EnvironmentUpdate,
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> EnvironmentOut:
     env = await _get_env(db, env_id)
     data = payload.model_dump(exclude_unset=True)
@@ -209,7 +223,7 @@ async def update_environment(
     for key, value in data.items():
         setattr(env, key, value)
     await db.commit()
-    return env_to_out(await _get_env(db, env_id))
+    return env_to_out(await _get_env(db, env_id), reveal=_can_read_secret(user))
 
 
 @router.delete("/{env_id}", response_model=MessageResponse, summary="删除环境")
@@ -224,10 +238,13 @@ async def delete_environment(env_id: int, db: AsyncSession = Depends(get_db)) ->
     "/{env_id}/variables", response_model=list[EnvVariableOut], summary="环境变量池"
 )
 async def list_variables(
-    env_id: int, db: AsyncSession = Depends(get_db)
+    env_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> list[EnvVariableOut]:
     env = await _get_env(db, env_id)
-    return [env_variable_to_out(item) for item in env.variables]
+    reveal = _can_read_secret(user)
+    return [env_variable_to_out(item, reveal=reveal) for item in env.variables]
 
 
 @router.put(
@@ -239,6 +256,7 @@ async def replace_variables(
     env_id: int,
     payload: VariableBatchUpdate,
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> list[EnvVariableOut]:
     env = await _get_env(db, env_id)
     existing = {item.key: item for item in env.variables}
@@ -258,13 +276,23 @@ async def replace_variables(
                 )
             )
         else:
-            # 掩码值（含 *）视为未修改，避免前端回写掩码覆盖真实密钥
-            if item.value is not None and "*" not in item.value:
-                current.value_encrypted = encrypt_value(item.value)
+            # 掩码值视为未修改，避免前端回写掩码覆盖真实密钥；
+            # 已回显明文时按明文比较，允许保存包含 * 的真实值。
+            if item.value is not None:
+                current_plain = decrypt_value(current.value_encrypted) or ""
+                if not (
+                    item.value == mask_value(current_plain)
+                    and item.value != current_plain
+                ):
+                    current.value_encrypted = encrypt_value(item.value)
             current.is_secret = item.is_secret
             current.description = item.description
     await db.commit()
-    return [env_variable_to_out(item) for item in (await _get_env(db, env_id)).variables]
+    reveal = _can_read_secret(user)
+    return [
+        env_variable_to_out(item, reveal=reveal)
+        for item in (await _get_env(db, env_id)).variables
+    ]
 
 
 @router.post(

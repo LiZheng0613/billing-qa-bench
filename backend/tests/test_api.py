@@ -96,15 +96,26 @@ async def test_environment_list_and_variables(client: httpx.AsyncClient) -> None
     variables = (await client.get(f"/environments/{env['id']}/variables")).json()
     secret = next(item for item in variables if item["is_secret"])
     assert "*" in secret["value_masked"]
+    # 管理员拥有 environment:secret_read，编辑表单可拿到明文原值
+    assert secret["value_plain"]
 
     # 演示用例默认绑定按真实 Agent 报文配置的非流式环境
     agent_env = next(item for item in payload["items"] if item["code"] == "QA-MOCK-JSON")
     assert agent_env["api_path"] == "/api/v1/agent/chat"
     assert agent_env["basic_auth"]["password_set"] is True
+    assert agent_env["basic_auth"]["password"] == "s3cret"
     assert agent_env["pre_hook"]["enabled"] is True
     usage = (await client.get(f"/environments/{agent_env['id']}/usage")).json()
     assert usage["case_count"] >= 1
     assert usage["task_count"] >= 0
+
+
+async def test_model_list_reveals_secret_for_admin(client: httpx.AsyncClient) -> None:
+    payload = (await client.get("/models", params={"page_size": 200})).json()
+    model = next(item for item in payload["items"] if item["api_key_masked"])
+    # 管理员拥有 model:secret_read，编辑表单可拿到明文原值
+    assert model["api_key"]
+    assert "*" in model["api_key_masked"]
 
 
 async def test_environment_health_check(client: httpx.AsyncClient) -> None:

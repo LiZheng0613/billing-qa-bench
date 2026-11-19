@@ -9,8 +9,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.core.authz import require_module_access
-from billing_qa.core.crypto import encrypt_value
+from billing_qa.core.context import CurrentUser
+from billing_qa.core.crypto import decrypt_value, encrypt_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
+from billing_qa.core.permissions import PermissionCode
+from billing_qa.core.security import get_current_user
 from billing_qa.db.base import now
 from billing_qa.db.session import get_db
 from billing_qa.models.capability import Capability, DataSource
@@ -55,10 +58,25 @@ async def _get_source(db: AsyncSession, source_id: int) -> DataSource:
     return source
 
 
-def _source_out(source: DataSource) -> DataSourceOut:
-    data = DataSourceOut.model_validate(source)
-    data.has_auth = bool(source.auth_config)
+def _source_out(source: DataSource, *, reveal: bool = False) -> DataSourceOut:
+    # ORM 上的 auth_config 是密文字符串，不能直接交给 dict 字段校验。
+    fields = {
+        name: getattr(source, name)
+        for name in DataSourceOut.model_fields
+        if name not in {"has_auth", "auth_config"} and hasattr(source, name)
+    }
+    data = DataSourceOut(**fields, has_auth=bool(source.auth_config))
+    if reveal and source.auth_config:
+        try:
+            data.auth_config = json.loads(decrypt_value(source.auth_config) or "{}")
+        except (json.JSONDecodeError, TypeError):
+            data.auth_config = None
     return data
+
+
+def _can_read_auth(user: CurrentUser) -> bool:
+    """数据源鉴权配置属于敏感值，仅对拥有编辑权限的账号回显明文。"""
+    return PermissionCode.CAPABILITY_WRITE.value in user.permissions
 
 
 def _encode_auth(auth: dict | None) -> str | None:
@@ -74,6 +92,7 @@ async def list_data_sources(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> Page[DataSourceOut]:
     conditions = []
     if kind:
@@ -93,7 +112,7 @@ async def list_data_sources(
         )
     ).scalars().all()
     return Page[DataSourceOut](
-        items=[_source_out(row) for row in rows],
+        items=[_source_out(row, reveal=_can_read_auth(user)) for row in rows],
         total=int(total),
         page=page,
         page_size=page_size,
@@ -102,7 +121,9 @@ async def list_data_sources(
 
 @router.post("/data-sources", response_model=DataSourceOut, summary="新增数据源")
 async def create_data_source(
-    payload: DataSourceCreate, db: AsyncSession = Depends(get_db)
+    payload: DataSourceCreate,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> DataSourceOut:
     exists = (
         await db.execute(select(DataSource.id).where(DataSource.code == payload.code))
@@ -115,19 +136,24 @@ async def create_data_source(
     db.add(source)
     await db.commit()
     await db.refresh(source)
-    return _source_out(source)
+    return _source_out(source, reveal=_can_read_auth(user))
 
 
 @router.get("/data-sources/{source_id}", response_model=DataSourceOut, summary="数据源详情")
 async def get_data_source(
-    source_id: int, db: AsyncSession = Depends(get_db)
+    source_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> DataSourceOut:
-    return _source_out(await _get_source(db, source_id))
+    return _source_out(await _get_source(db, source_id), reveal=_can_read_auth(user))
 
 
 @router.put("/data-sources/{source_id}", response_model=DataSourceOut, summary="编辑数据源")
 async def update_data_source(
-    source_id: int, payload: DataSourceUpdate, db: AsyncSession = Depends(get_db)
+    source_id: int,
+    payload: DataSourceUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> DataSourceOut:
     source = await _get_source(db, source_id)
     updates = payload.model_dump(exclude_unset=True)
@@ -137,7 +163,7 @@ async def update_data_source(
         setattr(source, key, value)
     await db.commit()
     await db.refresh(source)
-    return _source_out(source)
+    return _source_out(source, reveal=_can_read_auth(user))
 
 
 @router.delete(

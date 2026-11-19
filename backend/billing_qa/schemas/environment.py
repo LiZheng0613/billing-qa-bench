@@ -29,6 +29,8 @@ class EnvVariableOut(BaseModel):
     id: int
     key: str
     value_masked: str
+    # 明文值仅在调用方拥有 environment:secret_read 权限时返回，否则为 None。
+    value_plain: str | None = None
     is_secret: bool
     description: str | None = None
     updated_at: datetime | None = None
@@ -72,6 +74,8 @@ class BasicAuthIn(BaseModel):
 class BasicAuthOut(BaseModel):
     username: str
     password_set: bool = False
+    # 明文密码仅在调用方拥有 environment:secret_read 权限时返回。
+    password: str | None = None
 
 
 _CERT_PEM_MARKER = "-----BEGIN CERTIFICATE-----"
@@ -86,7 +90,8 @@ _KEY_PEM_MARKERS = (
 class MtlsAuthIn(BaseModel):
     """环境级 mTLS 双向证书：客户端证书 + 私钥，可选私钥口令与自定义 CA。
 
-    留空表示沿用已保存的内容（编辑场景下不回显敏感 PEM）。
+    留空表示沿用已保存的内容；无 environment:secret_read 权限时接口不回显敏感 PEM，
+    有权限的账号编辑时可见明文原值。
     """
 
     client_cert_pem: str | None = Field(default=None, max_length=65536)
@@ -117,6 +122,11 @@ class MtlsAuthOut(BaseModel):
     key_set: bool = False
     key_password_set: bool = False
     ca_set: bool = False
+    # 明文 PEM / 口令仅在调用方拥有 environment:secret_read 权限时返回。
+    client_cert_pem: str | None = None
+    client_key_pem: str | None = None
+    key_password: str | None = None
+    ca_cert_pem: str | None = None
 
 
 DEFAULT_BODY_TEMPLATE: dict = {

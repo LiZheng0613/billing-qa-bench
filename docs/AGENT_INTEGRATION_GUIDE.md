@@ -65,7 +65,8 @@
 
 勾选「启用 Basic 鉴权」，填写账号与密码：
 
-- 密码加密存储，接口返回只显示 `password_set: true`；
+- 密码加密存储；无 `environment:secret_read` 权限时接口只返回 `password_set: true`，
+  有权限的账号在编辑表单中会回显明文原值；
 - 编辑时留空表示不修改密码；
 - 执行时自动生成 `Authorization: Basic base64(账号:密码)`，主对话请求与前置接口请求都会携带；
 - 如果请求头模板里显式写了 `Authorization`，以模板为准（一般不需要）。
@@ -81,7 +82,8 @@
 
 说明：
 
-- 证书与私钥使用应用层 Fernet 加密存储，接口只返回 `cert_set` / `key_set` 等布尔标记，不回显 PEM；
+- 证书与私钥使用应用层 Fernet 加密存储；无 `environment:secret_read` 权限时接口只返回
+  `cert_set` / `key_set` 等布尔标记，有权限的账号在编辑表单中会回显明文 PEM；
 - 编辑时留空表示不修改已保存的证书、私钥或 CA；
 - 执行、探活与前置接口请求都会携带客户端证书；
 - mTLS 与 Basic 鉴权可以同时启用：mTLS 作用于 TLS 传输层，Basic 作用于 `Authorization` 请求头；

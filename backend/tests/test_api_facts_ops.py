@@ -344,6 +344,7 @@ async def test_data_source_probe_without_endpoint(
     source_id = created.json()["id"]
     try:
         assert created.json()["has_auth"] is True
+        assert created.json()["auth_config"] == {"headers": {"X-Token": "secret"}}
         probe = await client.post(f"/data-sources/{source_id}/probe")
         assert probe.status_code == 200, probe.text
         assert probe.json()["ok"] is False

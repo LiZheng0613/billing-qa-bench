@@ -11,8 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import model_to_out
 from billing_qa.core.authz import require_module_access
-from billing_qa.core.crypto import decrypt_value, encrypt_value
+from billing_qa.core.context import CurrentUser
+from billing_qa.core.crypto import decrypt_value, encrypt_value, mask_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
+from billing_qa.core.permissions import PermissionCode
+from billing_qa.core.security import get_current_user
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import ModelConnectionType, ModelRole
 from billing_qa.models.model_config import ModelConfig
@@ -42,6 +45,11 @@ router = APIRouter(
         )
     ],
 )
+
+
+def _can_read_secret(user: CurrentUser) -> bool:
+    """拥有模型密钥读取权限时才回显明文。"""
+    return PermissionCode.MODEL_SECRET_READ.value in user.permissions
 
 
 async def _get_model(db: AsyncSession, model_id: int) -> ModelConfig:
@@ -120,6 +128,7 @@ async def list_models(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> Page[ModelConfigOut]:
     conditions = []
     if role:
@@ -144,7 +153,7 @@ async def list_models(
         )
     ).scalars().all()
     return Page[ModelConfigOut](
-        items=[model_to_out(item) for item in rows],
+        items=[model_to_out(item, reveal=_can_read_secret(user)) for item in rows],
         total=int(total),
         page=page,
         page_size=page_size,
@@ -153,7 +162,9 @@ async def list_models(
 
 @router.post("", response_model=ModelConfigOut, summary="注册模型")
 async def create_model(
-    payload: ModelConfigCreate, db: AsyncSession = Depends(get_db)
+    payload: ModelConfigCreate,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> ModelConfigOut:
     exists = (
         await db.execute(select(ModelConfig.id).where(ModelConfig.code == payload.code))
@@ -171,7 +182,7 @@ async def create_model(
     db.add(model)
     await db.commit()
     await db.refresh(model)
-    return model_to_out(model)
+    return model_to_out(model, reveal=_can_read_secret(user))
 
 
 @router.post(
@@ -238,13 +249,20 @@ async def opencode_catalog(
 
 
 @router.get("/{model_id}", response_model=ModelConfigOut, summary="模型详情")
-async def get_model(model_id: int, db: AsyncSession = Depends(get_db)) -> ModelConfigOut:
-    return model_to_out(await _get_model(db, model_id))
+async def get_model(
+    model_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> ModelConfigOut:
+    return model_to_out(await _get_model(db, model_id), reveal=_can_read_secret(user))
 
 
 @router.put("/{model_id}", response_model=ModelConfigOut, summary="更新模型")
 async def update_model(
-    model_id: int, payload: ModelConfigUpdate, db: AsyncSession = Depends(get_db)
+    model_id: int,
+    payload: ModelConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ) -> ModelConfigOut:
     model = await _get_model(db, model_id)
     data = payload.model_dump(exclude_unset=True, exclude={"api_key", "serve_password"})
@@ -261,13 +279,20 @@ async def update_model(
     for key, value in data.items():
         setattr(model, key, value)
     _apply_connection_defaults(model)
-    if payload.api_key is not None and "*" not in payload.api_key:
-        model.api_key_encrypted = encrypt_value(payload.api_key)
-    if payload.serve_password is not None and "*" not in payload.serve_password:
-        model.serve_password_encrypted = encrypt_value(payload.serve_password)
+    if payload.api_key is not None:
+        current_key = decrypt_value(model.api_key_encrypted) or ""
+        if not (payload.api_key == mask_value(current_key) and payload.api_key != current_key):
+            model.api_key_encrypted = encrypt_value(payload.api_key)
+    if payload.serve_password is not None:
+        current_password = decrypt_value(model.serve_password_encrypted) or ""
+        if not (
+            payload.serve_password == mask_value(current_password)
+            and payload.serve_password != current_password
+        ):
+            model.serve_password_encrypted = encrypt_value(payload.serve_password)
     await db.commit()
     await db.refresh(model)
-    return model_to_out(model)
+    return model_to_out(model, reveal=_can_read_secret(user))
 
 
 @router.delete("/{model_id}", response_model=MessageResponse, summary="删除模型")

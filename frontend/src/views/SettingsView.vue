@@ -48,6 +48,8 @@ const envCreating = ref(false)
 const envModalOpen = ref(false)
 const editingEnv = ref<Environment | null>(null)
 const checkingId = ref<number | null>(null)
+// 敏感字段默认以密码框展示，勾选后在表单中明文显示明文。
+const showSecrets = ref(false)
 
 const envForm = reactive({
   code: '',
@@ -223,12 +225,14 @@ function resetEnvForm(): void {
   envForm.preHookText = source?.pre_hook ? prettyJson(source.pre_hook) : ''
   envForm.basicAuthEnabled = Boolean(source?.basic_auth)
   envForm.basicAuthUsername = source?.basic_auth?.username ?? ''
-  envForm.basicAuthPassword = ''
+  envForm.basicAuthPassword = source?.basic_auth?.password ?? ''
   envForm.mtlsEnabled = Boolean(source?.mtls)
-  envForm.mtlsCertText = ''
-  envForm.mtlsKeyText = ''
-  envForm.mtlsKeyPassword = ''
-  envForm.mtlsCaText = ''
+  envForm.mtlsCertText = source?.mtls?.client_cert_pem ?? ''
+  envForm.mtlsKeyText = source?.mtls?.client_key_pem ?? ''
+  envForm.mtlsKeyPassword = source?.mtls?.key_password ?? ''
+  envForm.mtlsCaText = source?.mtls?.ca_cert_pem ?? ''
+  // 编辑已有配置时默认明文展示原值；新建时保持密码框。
+  showSecrets.value = Boolean(source)
   envForm.session_mode = (source?.session_mode ?? 'SERVER_RETURNED') as SessionMode
   previewCases.value = []
   previewCaseId.value = null
@@ -491,10 +495,11 @@ function openVariables(item: Environment): void {
   variablesEnv.value = item
   variableRows.value = item.variables.map((variable) => ({
     key: variable.key,
-    value: '',
+    value: variable.value_plain ?? '',
     is_secret: variable.is_secret,
     description: variable.description ?? '',
   }))
+  showSecrets.value = true
   variablesOpen.value = true
 }
 
@@ -713,12 +718,12 @@ function resetModelForm(): void {
   modelForm.serve_url = source?.serve_url ?? 'http://127.0.0.1'
   modelForm.serve_port = source?.serve_port ?? 4096
   modelForm.serve_username = source?.serve_username ?? ''
-  modelForm.serve_password = ''
+  modelForm.serve_password = source?.serve_password ?? ''
   modelForm.opencode_agent = source?.opencode_agent ?? ''
   modelForm.opencode_model = source?.opencode_model ?? ''
   modelForm.opencode_directory = source?.opencode_directory ?? ''
   modelForm.model_name = source?.model_name ?? ''
-  modelForm.api_key = ''
+  modelForm.api_key = source?.api_key ?? ''
   modelForm.temperatureText =
     source?.temperature === null || source?.temperature === undefined ? '' : String(source.temperature)
   modelForm.topPText = source?.top_p === null || source?.top_p === undefined ? '' : String(source.top_p)
@@ -729,6 +734,7 @@ function resetModelForm(): void {
   modelForm.response_format_json = source?.response_format_json ?? true
   modelForm.is_active = source?.is_active ?? true
   modelForm.extraText = prettyJson(source?.extra_params)
+  showSecrets.value = Boolean(source)
 }
 
 function openCreateModel(): void {
@@ -1426,8 +1432,16 @@ onMounted(() => {
               />
               启用 Basic 鉴权
             </label>
-            <span class="text-[11px] text-slate-500">
+            <span class="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
               执行时自动生成 Authorization: Basic base64(账号:密码)
+              <label class="flex items-center gap-1 text-slate-600">
+                <input
+                  v-model="showSecrets"
+                  type="checkbox"
+                  class="h-3.5 w-3.5 rounded border-slate-300 bg-white"
+                />
+                显示明文
+              </label>
             </span>
           </div>
           <div v-if="envForm.basicAuthEnabled" class="mt-2 grid gap-2 sm:grid-cols-2">
@@ -1440,9 +1454,13 @@ onMounted(() => {
             <input
               v-model="envForm.basicAuthPassword"
               class="input text-sm"
-              type="password"
+              :type="showSecrets ? 'text' : 'password'"
               :placeholder="
-                editingEnv?.basic_auth?.password_set ? '已配置，留空表示不修改' : '密码'
+                envForm.basicAuthPassword
+                  ? '已回显原值，可直接修改'
+                  : editingEnv?.basic_auth?.password_set
+                    ? '已配置，留空表示不修改'
+                    : '密码'
               "
               autocomplete="new-password"
             />
@@ -1483,9 +1501,11 @@ onMounted(() => {
                   class="input font-mono text-xs"
                   rows="4"
                   :placeholder="
-                    editingEnv?.mtls?.cert_set
-                      ? '已配置，留空表示不修改'
-                      : '-----BEGIN CERTIFICATE-----'
+                    envForm.mtlsCertText
+                      ? '已回显原值，可直接修改'
+                      : editingEnv?.mtls?.cert_set
+                        ? '已配置，留空表示不修改'
+                        : '-----BEGIN CERTIFICATE-----'
                   "
                 />
               </div>
@@ -1507,9 +1527,11 @@ onMounted(() => {
                   class="input font-mono text-xs"
                   rows="4"
                   :placeholder="
-                    editingEnv?.mtls?.key_set
-                      ? '已配置，留空表示不修改'
-                      : '-----BEGIN PRIVATE KEY-----'
+                    envForm.mtlsKeyText
+                      ? '已回显原值，可直接修改'
+                      : editingEnv?.mtls?.key_set
+                        ? '已配置，留空表示不修改'
+                        : '-----BEGIN PRIVATE KEY-----'
                   "
                 />
               </div>
@@ -1518,11 +1540,13 @@ onMounted(() => {
               <input
                 v-model="envForm.mtlsKeyPassword"
                 class="input text-sm"
-                type="password"
+                :type="showSecrets ? 'text' : 'password'"
                 :placeholder="
-                  editingEnv?.mtls?.key_password_set
-                    ? '私钥口令已配置，留空表示不修改'
-                    : '私钥口令（可选）'
+                  envForm.mtlsKeyPassword
+                    ? '已回显原值，可直接修改'
+                    : editingEnv?.mtls?.key_password_set
+                      ? '私钥口令已配置，留空表示不修改'
+                      : '私钥口令（可选）'
                 "
                 autocomplete="new-password"
               />
@@ -1544,7 +1568,11 @@ onMounted(() => {
                   class="input font-mono text-xs"
                   rows="3"
                   :placeholder="
-                    editingEnv?.mtls?.ca_set ? '已配置，留空表示不修改' : '用于校验服务端证书'
+                    envForm.mtlsCaText
+                      ? '已回显原值，可直接修改'
+                      : editingEnv?.mtls?.ca_set
+                        ? '已配置，留空表示不修改'
+                        : '用于校验服务端证书'
                   "
                 />
               </div>
@@ -1595,9 +1623,19 @@ onMounted(() => {
       v-model="variablesOpen"
       :title="variablesEnv ? `环境变量 · ${variablesEnv.code}` : '环境变量'"
       width="lg"
-      subtitle="保存为全量覆盖；已有变量留空值表示保持原值，Key 移除即删除"
+      subtitle="保存为全量覆盖；已有变量值已回填，可直接修改，Key 移除即删除"
     >
       <div class="space-y-2">
+        <div class="flex items-center justify-end">
+          <label class="flex items-center gap-1 text-[11px] text-slate-600">
+            <input
+              v-model="showSecrets"
+              type="checkbox"
+              class="h-3.5 w-3.5 rounded border-slate-300 bg-white"
+            />
+            显示明文
+          </label>
+        </div>
         <div
           v-for="(row, index) in variableRows"
           :key="index"
@@ -1607,8 +1645,8 @@ onMounted(() => {
           <input
             v-model="row.value"
             class="input font-mono text-xs"
-            :type="row.is_secret ? 'password' : 'text'"
-            placeholder="值（留空不修改）"
+            :type="row.is_secret && !showSecrets ? 'password' : 'text'"
+            placeholder="值"
           />
           <label class="flex items-center justify-center gap-1 text-[11px] text-slate-600">
             <input v-model="row.is_secret" type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300 bg-white" />
@@ -1702,8 +1740,23 @@ onMounted(() => {
               <input v-model="modelForm.model_name" class="input font-mono" placeholder="gpt-4o-mini / mock-judge" />
             </div>
             <div>
-              <label class="label">API Key{{ editingModel ? '（留空不修改）' : '' }}</label>
-              <input v-model="modelForm.api_key" class="input font-mono" type="password" placeholder="sk-..." />
+              <label class="label flex items-center justify-between gap-2">
+                <span>API Key{{ editingModel ? (modelForm.api_key ? '（已回显原值）' : '（留空不修改）') : '' }}</span>
+                <span class="flex items-center gap-1 text-[11px] font-normal text-slate-500">
+                  <input
+                    v-model="showSecrets"
+                    type="checkbox"
+                    class="h-3.5 w-3.5 rounded border-slate-300 bg-white"
+                  />
+                  显示明文
+                </span>
+              </label>
+              <input
+                v-model="modelForm.api_key"
+                class="input font-mono"
+                :type="showSecrets ? 'text' : 'password'"
+                placeholder="sk-..."
+              />
             </div>
           </div>
         </template>
@@ -1848,11 +1901,11 @@ onMounted(() => {
                 />
               </div>
               <div>
-                <label class="label">Basic Auth 密码{{ editingModel ? '（留空不修改）' : '' }}</label>
+                <label class="label">Basic Auth 密码{{ editingModel ? (modelForm.serve_password ? '（已回显原值）' : '（留空不修改）') : '' }}</label>
                 <input
                   v-model="modelForm.serve_password"
                   class="input font-mono"
-                  type="password"
+                  :type="showSecrets ? 'text' : 'password'"
                   placeholder="可选"
                   @input="invalidateCatalog()"
                 />

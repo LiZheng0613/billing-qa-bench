@@ -548,7 +548,9 @@ function startEditSource(item: DataSource): void {
   sourceForm.kind = item.kind as DataSourceKind
   sourceForm.endpoint_url = item.endpoint_url ?? ''
   sourceForm.description = item.description ?? ''
-  sourceForm.authText = ''
+  sourceForm.authText = item.auth_config
+    ? JSON.stringify(item.auth_config, null, 2)
+    : ''
   sourceForm.timeout_seconds = item.timeout_seconds
   sourceForm.max_rows = item.max_rows
 }
@@ -1390,7 +1392,9 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
           class="input min-h-16 font-mono text-xs"
           :placeholder="
             editingSourceId !== null
-              ? '鉴权配置 JSON（留空则保持不变；已有鉴权不会回显）'
+              ? sourceForm.authText
+                ? '鉴权配置 JSON（已回显原值，可直接修改）'
+                : '鉴权配置 JSON（留空则保持不变）'
               : '鉴权配置 JSON（可选），支持 header / value 字段'
           "
         />

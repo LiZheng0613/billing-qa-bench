@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from billing_qa.api.v1.environments import _encode_mtls
+from billing_qa.api.v1.serializers import env_to_out
 from billing_qa.core.crypto import decrypt_value, encrypt_value
 from billing_qa.core.exceptions import ValidationError as ConfigValidationError
 from billing_qa.models.environment import Environment
@@ -92,6 +93,57 @@ def test_encode_mtls_encrypts_and_reuses_existing_values() -> None:
 def test_encode_mtls_requires_cert_and_key() -> None:
     with pytest.raises(ConfigValidationError):
         _encode_mtls(MtlsAuthIn(client_cert_pem=CERT_PEM), None)
+
+
+def test_env_to_out_hides_secrets_without_permission() -> None:
+    from datetime import datetime
+
+    stamp = datetime.now()
+    env = Environment(
+        id=999,
+        code="ENV-REVEAL",
+        name="密钥回显",
+        base_url="https://target.example.com",
+        health_path="/health",
+        api_method="POST",
+        api_path="/api/chat",
+        is_stream=False,
+        session_mode="SERVER_RETURNED",
+        timeout_seconds=30,
+        verify_ssl=True,
+        is_active=True,
+        created_at=stamp,
+        updated_at=stamp,
+        basic_auth={
+            "username": "demo",
+            "password_encrypted": encrypt_value("s3cret"),
+        },
+        mtls={
+            "client_cert_encrypted": encrypt_value(CERT_PEM),
+            "client_key_encrypted": encrypt_value(KEY_PEM),
+            "key_password_encrypted": encrypt_value("s3cret"),
+            "ca_cert_encrypted": encrypt_value(CA_PEM),
+        },
+    )
+    masked = env_to_out(env)
+    assert masked.basic_auth is not None
+    assert masked.basic_auth.password_set is True
+    assert masked.basic_auth.password is None
+    assert masked.mtls is not None
+    assert masked.mtls.cert_set is True
+    assert masked.mtls.client_cert_pem is None
+    assert masked.mtls.client_key_pem is None
+    assert masked.mtls.key_password is None
+    assert masked.mtls.ca_cert_pem is None
+
+    revealed = env_to_out(env, reveal=True)
+    assert revealed.basic_auth is not None
+    assert revealed.basic_auth.password == "s3cret"
+    assert revealed.mtls is not None
+    assert revealed.mtls.client_cert_pem == CERT_PEM
+    assert revealed.mtls.client_key_pem == KEY_PEM
+    assert revealed.mtls.key_password == "s3cret"
+    assert revealed.mtls.ca_cert_pem == CA_PEM
 
 
 def test_env_context_decrypts_mtls_material() -> None:

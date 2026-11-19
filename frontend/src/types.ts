@@ -155,6 +155,8 @@ export interface EnvVariable {
   id: number
   key: string
   value_masked: string
+  /** 明文值：仅在拥有 environment:secret_read 权限时返回 */
+  value_plain: string | null
   is_secret: boolean
   description: string | null
   updated_at: string | null
@@ -202,6 +204,8 @@ export interface PreHookConfig {
 export interface BasicAuthOut {
   username: string
   password_set: boolean
+  /** 明文密码：仅在拥有 environment:secret_read 权限时返回 */
+  password: string | null
 }
 
 export interface BasicAuthInput {
@@ -215,6 +219,11 @@ export interface MtlsAuthOut {
   key_set: boolean
   key_password_set: boolean
   ca_set: boolean
+  /** 明文 PEM / 口令：仅在拥有 environment:secret_read 权限时返回 */
+  client_cert_pem: string | null
+  client_key_pem: string | null
+  key_password: string | null
+  ca_cert_pem: string | null
 }
 
 export interface MtlsAuthInput {
@@ -305,10 +314,14 @@ export interface ModelConfig {
   serve_port: number | null
   serve_username: string | null
   serve_password_masked: string
+  /** 明文凭据：仅在拥有 model:secret_read 权限时返回 */
+  serve_password: string | null
   opencode_agent: string | null
   opencode_model: string | null
   opencode_directory: string | null
   api_key_masked: string
+  /** 明文凭据：仅在拥有 model:secret_read 权限时返回 */
+  api_key: string | null
   temperature: number | null
   effective_temperature: number
   top_p: number | null
@@ -1220,6 +1233,8 @@ export interface DataSource {
   endpoint_url: string | null
   description: string | null
   has_auth: boolean
+  /** 鉴权配置明文：仅在拥有 capability:write 权限时返回 */
+  auth_config: Record<string, unknown> | null
   timeout_seconds: number
   max_rows: number
   tool_version: string | null

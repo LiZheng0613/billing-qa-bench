@@ -119,6 +119,9 @@ class ModelConfigOut(ORMModel):
     opencode_model: str | None = None
     opencode_directory: str | None = None
     api_key_masked: str = ""
+    # 明文凭据仅在调用方拥有 model:secret_read 权限时返回。
+    api_key: str | None = None
+    serve_password: str | None = None
     temperature: float | None
     effective_temperature: float
     top_p: float | None

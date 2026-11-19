@@ -25,19 +25,20 @@ from billing_qa.schemas.model_config import ModelConfigOut
 from billing_qa.schemas.task import ExecutionDetail, ExecutionListItem, TaskOut
 
 
-def env_variable_to_out(variable: Any) -> EnvVariableOut:
+def env_variable_to_out(variable: Any, *, reveal: bool = False) -> EnvVariableOut:
     raw = decrypt_value(variable.value_encrypted) or ""
     return EnvVariableOut(
         id=variable.id,
         key=variable.key,
         value_masked=mask_value(raw) if variable.is_secret else raw,
+        value_plain=raw if (reveal or not variable.is_secret) else None,
         is_secret=variable.is_secret,
         description=variable.description,
         updated_at=variable.updated_at,
     )
 
 
-def env_to_out(env: Environment) -> EnvironmentOut:
+def env_to_out(env: Environment, *, reveal: bool = False) -> EnvironmentOut:
     # 显式组装：variables 需要按掩码规则转换，basic_auth 需要屏蔽密码
     fields = {
         name: getattr(env, name)
@@ -49,6 +50,9 @@ def env_to_out(env: Environment) -> EnvironmentOut:
         BasicAuthOut(
             username=str(basic.get("username") or ""),
             password_set=bool(basic.get("password_encrypted")),
+            password=(
+                decrypt_value(basic.get("password_encrypted")) if reveal else None
+            ),
         )
         if basic.get("username")
         else None
@@ -63,6 +67,18 @@ def env_to_out(env: Environment) -> EnvironmentOut:
             key_set=key_set,
             key_password_set=bool(mtls.get("key_password_encrypted")),
             ca_set=bool(mtls.get("ca_cert_encrypted")),
+            client_cert_pem=(
+                decrypt_value(mtls.get("client_cert_encrypted")) if reveal else None
+            ),
+            client_key_pem=(
+                decrypt_value(mtls.get("client_key_encrypted")) if reveal else None
+            ),
+            key_password=(
+                decrypt_value(mtls.get("key_password_encrypted")) if reveal else None
+            ),
+            ca_cert_pem=(
+                decrypt_value(mtls.get("ca_cert_encrypted")) if reveal else None
+            ),
         )
         if (cert_set or key_set or mtls.get("ca_cert_encrypted"))
         else None
@@ -71,16 +87,21 @@ def env_to_out(env: Environment) -> EnvironmentOut:
         **fields,
         basic_auth=basic_out,
         mtls=mtls_out,
-        variables=[env_variable_to_out(item) for item in env.variables],
+        variables=[
+            env_variable_to_out(item, reveal=reveal) for item in env.variables
+        ],
     )
 
 
-def model_to_out(model: ModelConfig) -> ModelConfigOut:
+def model_to_out(model: ModelConfig, *, reveal: bool = False) -> ModelConfigOut:
     data = ModelConfigOut.model_validate(model)
     raw_key = decrypt_value(model.api_key_encrypted)
     data.api_key_masked = mask_value(raw_key) if raw_key else ""
     raw_serve_password = decrypt_value(model.serve_password_encrypted)
     data.serve_password_masked = mask_value(raw_serve_password) if raw_serve_password else ""
+    if reveal:
+        data.api_key = raw_key or None
+        data.serve_password = raw_serve_password or None
     return data
 
 

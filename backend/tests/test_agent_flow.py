@@ -157,7 +157,11 @@ async def test_preview_basic_auth_and_prehook_origin(client: httpx.AsyncClient) 
     assert env.status_code == 200, env.text
     env_body = env.json()
     env_id = env_body["id"]
-    assert env_body["basic_auth"] == {"username": "demo", "password_set": True}
+    assert env_body["basic_auth"] == {
+        "username": "demo",
+        "password_set": True,
+        "password": "s3cret",
+    }
 
     case = await client.post(
         "/cases",
@@ -212,6 +216,7 @@ async def test_preview_basic_auth_and_prehook_origin(client: httpx.AsyncClient) 
         assert updated.json()["basic_auth"] == {
             "username": "demo",
             "password_set": True,
+            "password": "s3cret",
         }
     finally:
         await client.delete(f"/cases/{case_id}")

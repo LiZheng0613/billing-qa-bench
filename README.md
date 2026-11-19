@@ -45,7 +45,7 @@
 | 指标大盘 | 通过率、平均 TTFT、P95 时延、Token 消耗、吞吐与预计剩余时间；WebSocket 推送，断线自动降级轮询 |
 | 趋势与 Run 对比 | 单用例历史趋势（得分 / 时延 / 稳定性）、任意两次执行（Run）对比 |
 | 质量运营 | 业务口径字典、判分器自检（变异样本检出 / 误杀统计）、事实通过率与数据集分布统计 |
-| 安全 | JWT 单管理员登录、环境变量与模型 Key 使用 Fernet 加密落库、敏感值掩码展示 |
+| 安全 | JWT 单管理员登录、环境变量与模型 Key 使用 Fernet 加密落库；默认接口返回掩码，拥有 `environment:secret_read` / `model:secret_read` 的账号在配置页可查看明文原值 |
 
 ---
 
@@ -371,7 +371,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | 表 | 作用 |
 | --- | --- |
 | `environment` | 被测系统环境（Base URL、方法、路径、流式开关、超时、SSL、请求头/体模板、提取器、Basic 鉴权、前置接口钩子、多轮会话绑定方式） |
-| `environment_variable` | 环境变量池，敏感值 Fernet 加密、接口返回掩码 |
+| `environment_variable` | 环境变量池，敏感值 Fernet 加密、接口默认返回掩码；有 `environment:secret_read` 时额外返回明文供编辑回显 |
 | `model_config` | 模型注册（模拟器 / 裁判、OpenAI 兼容参数、限流与重试、加密 Key） |
 | `prompt_template` | Prompt 模板主表（类型、当前版本、引用计数、是否内置） |
 | `prompt_template_version` | 模板版本快照（内容、变量列表、变更说明） |
