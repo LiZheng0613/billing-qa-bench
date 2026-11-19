@@ -551,7 +551,7 @@ async function retryCase(caseId: number): Promise<void> {
   }
 }
 
-async function exportResults(): Promise<void> {
+async function exportResults(format: 'xlsx' | 'jsonl' = 'xlsx'): Promise<void> {
   if (!task.value || exporting.value) return
   exporting.value = true
   try {
@@ -559,9 +559,10 @@ async function exportResults(): Promise<void> {
     await api.tasks.exportResults(
       task.value.id,
       latestPerCase.value,
-      `${task.value.code}_results_${stamp}.xlsx`,
+      `${task.value.code}_results_${stamp}.${format}`,
+      format,
     )
-    toast.success('已导出本次批量执行结果')
+    toast.success(format === 'jsonl' ? '已导出完整结果（JSONL，无长度截断）' : '已导出本次批量执行结果')
   } catch (exc) {
     reportError(exc)
   } finally {

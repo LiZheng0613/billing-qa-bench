@@ -1,7 +1,8 @@
-"""批量任务结果 Excel 导出单元测试（不依赖数据库）。"""
+"""批量任务结果 Excel / JSONL 导出单元测试（不依赖数据库）。"""
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from io import BytesIO
 
@@ -11,7 +12,13 @@ from billing_qa.models.task import BatchTask
 from billing_qa.schemas.task import StatusDistribution, TaskMetrics
 from billing_qa.services.io.execution_excel import (
     MAX_CELL_LENGTH,
+    TASK_RESULT_COLUMNS,
     build_task_results_xlsx,
+)
+from billing_qa.services.io.execution_jsonl import (
+    JSONL_SCHEMA_NAME,
+    JSONL_SCHEMA_VERSION,
+    build_task_results_jsonl,
 )
 
 
@@ -273,3 +280,119 @@ def test_formula_like_text_is_stored_as_string() -> None:
     case_name = results.cell(row=2, column=headers.index("用例名称") + 1).value
     assert answer == "'=1+1"
     assert case_name == "'@SUM(A1)"
+
+
+def _parse_jsonl(content: bytes) -> list[dict[str, object]]:
+    text = content.decode("utf-8")
+    assert text.endswith("\n")
+    return [json.loads(line) for line in text.splitlines()]
+
+
+def test_build_task_results_jsonl_meta_and_rows() -> None:
+    content = build_task_results_jsonl(
+        _task(),
+        _metrics(),
+        [_row(), _row(execution_id=1002, case_id=2, case_code="DEMO-002")],
+        environment_name="QA 环境",
+        scope_label="用例最新（每用例只保留最新一次尝试）",
+        exported_by="admin",
+        exported_at=datetime(2026, 1, 2, 11, 0, 0),
+    )
+    records = _parse_jsonl(content)
+
+    meta = records[0]
+    assert meta["kind"] == "meta"
+    assert meta["schema"] == JSONL_SCHEMA_NAME
+    assert meta["schema_version"] == JSONL_SCHEMA_VERSION
+    assert meta["task_code"] == "TASK-TEST-001"
+    assert meta["environment_name"] == "QA 环境"
+    assert meta["row_count"] == 2
+    assert meta["exported_by"] == "admin"
+
+    rows = records[1:]
+    assert [row["seq"] for row in rows] == [1, 2]
+    assert rows[0]["execution_id"] == 1001
+    assert rows[1]["execution_id"] == 1002
+    # 行字段与 Excel 列完全对齐，方便逐列对照。
+    column_keys = {key for key, _label, _width in TASK_RESULT_COLUMNS}
+    assert column_keys <= set(rows[0].keys())
+    # dict/list 保持原生嵌套结构，不序列化成字符串。
+    assert rows[0]["turns"] == [{"turn": 1, "query": "我这个月账单多少"}]
+    assert rows[0]["judge_result"]["pass"] is True
+    assert rows[0]["case_snapshot"]["code"] == "DEMO-001"
+
+
+def test_build_task_results_jsonl_keeps_extra_row_fields() -> None:
+    row = _row(self_check_status_code="DONE")
+    content = build_task_results_jsonl(_task(), _metrics(), [row])
+    records = _parse_jsonl(content)
+    # 不在 Excel 列清单内的字段也完整保留。
+    assert records[1]["self_check_status_code"] == "DONE"
+
+
+def test_build_task_results_jsonl_not_truncated() -> None:
+    # 同样的超长输入：Excel 会截断到 32000，JSONL 必须一字不差地保留。
+    long_answer = "长" * 40000
+    long_payload = {"payload": "大" * 40000}
+    excel_content = build_task_results_xlsx(
+        _task(),
+        _metrics(),
+        [_row(final_answer=long_answer, case_snapshot=long_payload)],
+        exported_by="admin",
+    )
+    jsonl_content = build_task_results_jsonl(
+        _task(),
+        _metrics(),
+        [_row(final_answer=long_answer, case_snapshot=long_payload)],
+        exported_by="admin",
+    )
+
+    workbook = load_workbook(BytesIO(excel_content))
+    results = workbook["用例结果"]
+    headers = [cell.value for cell in results[1]]
+    excel_answer = results.cell(row=2, column=headers.index("最终答案") + 1).value
+    assert len(str(excel_answer)) <= MAX_CELL_LENGTH
+
+    row = _parse_jsonl(jsonl_content)[1]
+    assert row["final_answer"] == long_answer
+    assert row["case_snapshot"] == long_payload
+
+
+def test_build_task_results_jsonl_without_rows() -> None:
+    content = build_task_results_jsonl(
+        _task(),
+        _metrics(),
+        [],
+        exported_by="admin",
+        exported_at=datetime(2026, 1, 2, 11, 0, 0),
+    )
+    records = _parse_jsonl(content)
+    assert len(records) == 1
+    assert records[0]["kind"] == "meta"
+    assert records[0]["row_count"] == 0
+
+
+def test_build_task_results_jsonl_no_mojibake() -> None:
+    """导出的 JSONL 必须是明文 UTF-8 中文，无转义、无 BOM、可无损往返。"""
+    content = build_task_results_jsonl(
+        _task(),
+        _metrics(),
+        [_row(final_answer="您本月合计 100 元。", case_name="账单查询-中文用例")],
+        exported_by="管理员",
+    )
+
+    # 1) 原始字节里就是真 UTF-8 中文，而不是 \uXXXX 转义（防止编辑器里看到一堆转义）。
+    assert "您本月合计 100 元。".encode("utf-8") in content
+    assert "账单查询-中文用例".encode("utf-8") in content
+    assert "\\u" not in content.decode("utf-8")
+
+    # 2) 无 BOM：jq / pandas 等按行解析的工具不会被首行字节顺序标记破坏。
+    assert not content.startswith(b"\xef\xbb\xbf")
+
+    # 3) 整体可无损 UTF-8 解码，且逐行往返后内容一致（防止半截字符/坏字节）。
+    text = content.decode("utf-8")
+    records = [json.loads(line) for line in text.splitlines()]
+    row = records[1]
+    assert row["final_answer"] == "您本月合计 100 元。"
+    assert row["case_name"] == "账单查询-中文用例"
+    assert records[0]["exported_by"] == "管理员"

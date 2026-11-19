@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import task_to_out
+from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.schedule_time import normalize_local, normalize_weekdays, parse_time_text
 from billing_qa.core.security import get_current_operator
@@ -54,9 +55,25 @@ from billing_qa.services.io.execution_excel import (
     source_label,
     status_label,
 )
+from billing_qa.services.io.execution_jsonl import build_task_results_jsonl
 
 router = APIRouter(
-    prefix="/tasks", tags=["批量任务"], dependencies=[Depends(get_current_operator)]
+    prefix="/tasks",
+    tags=["批量任务"],
+    dependencies=[
+        Depends(
+            require_module_access(
+                "task:read",
+                (
+                    "task:create",
+                    "task:stop",
+                    "task:delete",
+                    "execution:retry",
+                    "execution:export",
+                ),
+            )
+        )
+    ],
 )
 
 
@@ -1102,11 +1119,18 @@ def _safe_filename_part(value: str | None) -> str:
     return safe or "task"
 
 
-@router.get("/{task_id}/export", summary="导出本次批量执行结果（Excel）")
+@router.get("/{task_id}/export", summary="导出本次批量执行结果（Excel / JSONL）")
 async def export_task_results(
     task_id: int,
     latest_per_case: bool = Query(
         default=True, description="是否按用例只导出最新一次尝试（false 导出全部尝试）"
+    ),
+    format: Literal["xlsx", "jsonl"] = Query(
+        default="xlsx",
+        description=(
+            "导出格式：xlsx 受 Excel 单元格 32767 字符上限约束会截断超长字段；"
+            "jsonl 不截断，完整保留轮次轨迹等大字段"
+        ),
     ),
     db: AsyncSession = Depends(get_db),
     operator: str = Depends(get_current_operator),
@@ -1115,26 +1139,44 @@ async def export_task_results(
     metrics = await compute_task_metrics(db, task)
     rows = await _collect_task_results(db, task, latest_per_case=latest_per_case)
     exported_at = now()
-    content = build_task_results_xlsx(
-        task,
-        metrics,
-        rows,
-        environment_name=await _env_name(db, task.environment_id),
-        scope_label=(
-            "用例最新（每用例只保留最新一次尝试）"
-            if latest_per_case
-            else "全部尝试（含失败重跑）"
-        ),
-        exported_by=operator,
-        exported_at=exported_at,
+    scope_label = (
+        "用例最新（每用例只保留最新一次尝试）"
+        if latest_per_case
+        else "全部尝试（含失败重跑）"
     )
-    filename = (
-        f"task_{_safe_filename_part(task.code)}_results_"
-        f"{exported_at:%Y%m%d_%H%M%S}.xlsx"
-    )
+    if format == "jsonl":
+        content = build_task_results_jsonl(
+            task,
+            metrics,
+            rows,
+            environment_name=await _env_name(db, task.environment_id),
+            scope_label=scope_label,
+            exported_by=operator,
+            exported_at=exported_at,
+        )
+        filename = (
+            f"task_{_safe_filename_part(task.code)}_results_"
+            f"{exported_at:%Y%m%d_%H%M%S}.jsonl"
+        )
+        media_type = "application/x-ndjson; charset=utf-8"
+    else:
+        content = build_task_results_xlsx(
+            task,
+            metrics,
+            rows,
+            environment_name=await _env_name(db, task.environment_id),
+            scope_label=scope_label,
+            exported_by=operator,
+            exported_at=exported_at,
+        )
+        filename = (
+            f"task_{_safe_filename_part(task.code)}_results_"
+            f"{exported_at:%Y%m%d_%H%M%S}.xlsx"
+        )
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return Response(
         content=content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        media_type=media_type,
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Access-Control-Expose-Headers": "Content-Disposition",

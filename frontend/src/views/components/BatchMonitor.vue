@@ -55,7 +55,7 @@ const emit = defineEmits<{
       sort: '' | 'score_desc' | 'score_asc'
     },
   ): void
-  (e: 'export'): void
+  (e: 'export', format: 'xlsx' | 'jsonl'): void
 }>()
 
 const segmented = computed(() => {
@@ -435,9 +435,18 @@ onBeforeUnmount(clearFilterTimer)
         <button
           class="btn-ghost btn-xs"
           :disabled="!task || exporting"
-          @click="emit('export')"
+          title="人读视图，超长字段按 Excel 上限截断"
+          @click="emit('export', 'xlsx')"
         >
           {{ exporting ? '导出中…' : '导出 Excel' }}
+        </button>
+        <button
+          class="btn-ghost btn-xs"
+          :disabled="!task || exporting"
+          title="完整数据（JSONL），超长字段不截断，适合程序消费"
+          @click="emit('export', 'jsonl')"
+        >
+          {{ exporting ? '导出中…' : '导出 JSONL' }}
         </button>
         <button v-if="canRunNow" class="btn-primary btn-xs" @click="emit('run-now')">
           立即执行

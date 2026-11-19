@@ -387,9 +387,10 @@ export const api = {
         page_size?: number
       },
     ) => http.get<Page<CaseExecutionItem>>(`/tasks/${id}/executions`, query),
-    exportResults: (id: number, latestPerCase: boolean, filename: string) =>
+    exportResults: (id: number, latestPerCase: boolean, filename: string, format: 'xlsx' | 'jsonl' = 'xlsx') =>
       downloadFile(`/tasks/${id}/export`, filename, {
         latest_per_case: latestPerCase,
+        format,
       }),
   },
 
