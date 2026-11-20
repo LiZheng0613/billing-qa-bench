@@ -17,6 +17,7 @@ from billing_qa.core.context import CurrentUser
 from billing_qa.core.crypto import decrypt_value, encrypt_value, mask_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, TargetApiError, ValidationError
 from billing_qa.core.permissions import PermissionCode
+from billing_qa.core.search import keyword_condition
 from billing_qa.core.security import get_current_operator, get_current_user
 from billing_qa.db.session import get_db
 from billing_qa.models.environment import Environment, EnvironmentVariable
@@ -144,9 +145,9 @@ async def list_environments(
     user: CurrentUser = Depends(get_current_user),
 ) -> Page[EnvironmentOut]:
     conditions = []
-    if keyword:
-        like = f"%{keyword}%"
-        conditions.append(Environment.name.ilike(like) | Environment.code.ilike(like))
+    keyword_filter = keyword_condition((Environment.name, Environment.code), keyword)
+    if keyword_filter is not None:
+        conditions.append(keyword_filter)
     if is_active is not None:
         conditions.append(Environment.is_active.is_(is_active))
     total = (

@@ -13,6 +13,7 @@ import {
   statusLabel,
 } from '../../utils/format'
 import { canStopPlanTask, isPlanRootTask, isPlanStopped, taskScheduleLabel } from '../../utils/schedule'
+import { hasKeyword } from '../../utils/search'
 
 const props = withDefaults(
   defineProps<{
@@ -225,22 +226,28 @@ function presetFromRange(min: number | null, max: number | null): ScorePreset {
   return 'custom'
 }
 
-const filterMinScore = ref(
+const filterMinScore = ref<string | number>(
   props.executionMinScore === null ? '' : String(props.executionMinScore),
 )
-const filterMaxScore = ref(
+const filterMaxScore = ref<string | number>(
   props.executionMaxScore === null ? '' : String(props.executionMaxScore),
 )
 const filterScorePreset = ref<ScorePreset>(
   presetFromRange(props.executionMinScore, props.executionMaxScore),
 )
 const filterSort = ref<'' | 'score_desc' | 'score_asc'>(props.executionSort)
+
+/** 数字输入框配合 v-model 时可能返回 number，统一转成字符串后再判断。 */
+function hasScoreInput(value: string | number): boolean {
+  return String(value).trim() !== ''
+}
+
 const hasFilter = computed(
   () =>
     Boolean(filterStatus.value) ||
-    Boolean(filterKeyword.value.trim()) ||
-    Boolean(filterMinScore.value.trim()) ||
-    Boolean(filterMaxScore.value.trim()) ||
+    hasKeyword(filterKeyword.value) ||
+    hasScoreInput(filterMinScore.value) ||
+    hasScoreInput(filterMaxScore.value) ||
     Boolean(filterSort.value),
 )
 
@@ -287,8 +294,8 @@ function clearFilterTimer(): void {
   }
 }
 
-function parseScore(text: string): number | null {
-  const trimmed = text.trim()
+function parseScore(text: string | number): number | null {
+  const trimmed = String(text).trim()
   if (!trimmed) return null
   const value = Number(trimmed)
   if (!Number.isFinite(value)) return null
@@ -338,7 +345,7 @@ function applyScorePreset(preset: ScorePreset): void {
       filterMaxScore.value = '59.99'
       break
     case 'custom':
-      if (!filterMinScore.value.trim() && !filterMaxScore.value.trim()) {
+      if (!hasScoreInput(filterMinScore.value) && !hasScoreInput(filterMaxScore.value)) {
         filterMinScore.value = '0'
         filterMaxScore.value = '100'
       }
@@ -667,7 +674,7 @@ onBeforeUnmount(clearFilterTimer)
                 v-model="filterKeyword"
                 class="input !py-1.5 !pl-9 text-xs"
                 type="search"
-                placeholder="搜索用例编号 / 名称，输入即筛"
+                placeholder="搜索用例编号 / 名称，输入即筛（分号分隔多词）"
                 @input="scheduleFilters"
                 @keyup.enter="emitFilters"
               />

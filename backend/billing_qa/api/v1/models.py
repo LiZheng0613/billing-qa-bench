@@ -15,6 +15,7 @@ from billing_qa.core.context import CurrentUser
 from billing_qa.core.crypto import decrypt_value, encrypt_value, mask_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.permissions import PermissionCode
+from billing_qa.core.search import keyword_condition
 from billing_qa.core.security import get_current_user
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import ModelConnectionType, ModelRole
@@ -137,9 +138,9 @@ async def list_models(
         conditions.append(ModelConfig.connection_type == connection_type)
     if is_active is not None:
         conditions.append(ModelConfig.is_active.is_(is_active))
-    if keyword:
-        like = f"%{keyword}%"
-        conditions.append(ModelConfig.name.ilike(like) | ModelConfig.code.ilike(like))
+    keyword_filter = keyword_condition((ModelConfig.name, ModelConfig.code), keyword)
+    if keyword_filter is not None:
+        conditions.append(keyword_filter)
     total = (
         await db.execute(select(func.count()).select_from(ModelConfig).where(*conditions))
     ).scalar_one()

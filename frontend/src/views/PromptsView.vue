@@ -19,6 +19,7 @@ import type {
 import { useConfirm } from '../composables/useConfirm'
 import { errorMessage } from '../utils/errors'
 import { parseJsonObject, templateTypeLabel } from '../utils/format'
+import { matchesAnyKeyword } from '../utils/search'
 import { useToastStore } from '../stores/toast'
 
 const toast = useToastStore()
@@ -80,13 +81,9 @@ const sandboxForm = reactive({
   temperature: null as number | null,
 })
 
-const filteredTemplates = computed(() => {
-  const value = keyword.value.trim().toLowerCase()
-  return templates.value.filter((item) => {
-    if (!value) return true
-    return item.code.toLowerCase().includes(value) || item.name.toLowerCase().includes(value)
-  })
-})
+const filteredTemplates = computed(() =>
+  templates.value.filter((item) => matchesAnyKeyword(keyword.value, [item.code, item.name])),
+)
 
 // 沙盒模型与执行链路同一套注册数据：按当前模式过滤角色，避免选到跨角色模型；
 // 按 id 升序排列，使缺省项与后端「id 最小的启用模型」规则一致。
@@ -451,7 +448,7 @@ onMounted(() => {
     <div class="grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
       <section class="card flex max-h-[720px] flex-col overflow-hidden">
         <div class="space-y-2 border-b border-slate-200 p-3">
-          <input v-model="keyword" class="input !py-1.5 text-xs" placeholder="搜索编码 / 名称" @keyup.enter="loadTemplates" />
+          <input v-model="keyword" class="input !py-1.5 text-xs" placeholder="搜索编码 / 名称（分号分隔多词）" @keyup.enter="loadTemplates" />
           <div class="flex gap-2">
             <select v-model="typeFilter" class="input !py-1.5 text-xs" @change="loadTemplates">
               <button><selectedcontent></selectedcontent></button>

@@ -137,7 +137,7 @@ onMounted(() => {
     <input v-model="dateFrom" type="date" class="h-[30px] rounded-lg border border-line bg-white px-2 text-[10.5px] text-ink-soft outline-none" />
     <span class="text-[9px] text-slate-400">至</span>
     <input v-model="dateTo" type="date" class="h-[30px] rounded-lg border border-line bg-white px-2 text-[10.5px] text-ink-soft outline-none" />
-    <input v-model="action" class="h-[30px] w-36 rounded-lg border border-line bg-white px-2 text-[10.5px] text-ink outline-none" placeholder="动作，如 user.create" />
+    <input v-model="action" class="h-[30px] w-36 rounded-lg border border-line bg-white px-2 text-[10.5px] text-ink outline-none" placeholder="动作，如 user.create" title="支持分号分隔多个动作" />
     <select v-model="resource" class="h-[30px] rounded-lg border border-line bg-white px-2 text-[10.5px] text-ink-soft outline-none">
       <option value="all">全部资源</option>
       <option value="user">用户</option>

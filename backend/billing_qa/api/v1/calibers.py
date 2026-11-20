@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import ConflictError, NotFoundError
+from billing_qa.core.search import keyword_condition
 from billing_qa.db.session import get_db
 from billing_qa.models.candidate import Caliber
 from billing_qa.schemas.common import MessageResponse, Page
@@ -35,9 +36,9 @@ async def list_calibers(
     db: AsyncSession = Depends(get_db),
 ) -> Page[CaliberOut]:
     conditions = []
-    if keyword:
-        like = f"%{keyword}%"
-        conditions.append(Caliber.key.ilike(like) | Caliber.name.ilike(like))
+    keyword_filter = keyword_condition((Caliber.key, Caliber.name), keyword)
+    if keyword_filter is not None:
+        conditions.append(keyword_filter)
     total = (
         await db.execute(select(func.count()).select_from(Caliber).where(*conditions))
     ).scalar_one()

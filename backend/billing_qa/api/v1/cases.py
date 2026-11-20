@@ -16,6 +16,7 @@ from billing_qa.api.v1.serializers import build_execution_detail, case_to_out
 from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.logging import get_logger
+from billing_qa.core.search import keyword_condition
 from billing_qa.core.security import get_current_operator
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import (
@@ -264,13 +265,11 @@ def _case_conditions(
         conditions.append(TestCase.grading_mode == grading_mode)
     if review_status:
         conditions.append(TestCase.review_status == review_status)
-    if keyword:
-        like = f"%{keyword}%"
-        conditions.append(
-            TestCase.name.ilike(like)
-            | TestCase.code.ilike(like)
-            | TestCase.description.ilike(like)
-        )
+    keyword_filter = keyword_condition(
+        (TestCase.name, TestCase.code, TestCase.description), keyword
+    )
+    if keyword_filter is not None:
+        conditions.append(keyword_filter)
     if tag:
         # tags 为 JSON 数组：PostgreSQL 下用 JSONB 包含判断，
         # 避免依赖 json::text 的转义形式（中文在库里存为 \uXXXX，文本 LIKE 匹配不到）

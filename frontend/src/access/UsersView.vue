@@ -405,7 +405,7 @@ onBeforeUnmount(() => {
         <input
           v-model="keyword"
           class="w-40 border-0 bg-transparent text-[11px] text-ink outline-none"
-          placeholder="搜索姓名或用户名"
+          placeholder="搜索姓名或用户名（分号分隔多词）"
         />
       </label>
       <select v-model="roleFilter" class="h-[30px] rounded-lg border border-line bg-white px-2 text-[11px] text-ink-soft outline-none">

@@ -521,7 +521,7 @@ onMounted(() => {
         <input
           v-model="keyword"
           class="input"
-          placeholder="搜索编号 / 名称 / 描述"
+          placeholder="搜索编号 / 名称 / 描述（分号分隔多词）"
           @keyup.enter="applyFilters"
         />
       </div>

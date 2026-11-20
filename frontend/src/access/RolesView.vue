@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
 import { ApiError } from '../api/client'
 import { useToastStore } from '../stores/toast'
+import { matchesAnyKeyword } from '../utils/search'
 import AccessTabs from './AccessTabs.vue'
 import type { Permission, Role, RoleDetail } from '../types'
 
@@ -54,9 +55,7 @@ const groups = computed(() =>
     const items = permissions.value.filter(
       (item) =>
         group.modules.includes(item.module) &&
-        (!search.value ||
-          item.name.includes(search.value) ||
-          item.code.toLowerCase().includes(search.value.toLowerCase())),
+        matchesAnyKeyword(search.value, [item.name, item.code]),
     )
     const selected = items.filter((item) => selectedCodes.value.includes(item.code)).length
     return { ...group, items, selected, total: items.length }
@@ -236,7 +235,7 @@ onMounted(async () => {
   <div class="mb-2.5 flex flex-wrap items-center gap-2">
     <label class="flex h-[30px] items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-slate-400 focus-within:border-indigo-200">
       <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7" /><path stroke-linecap="round" d="m20 20-3.5-3.5" /></svg>
-      <input v-model="search" class="w-40 border-0 bg-transparent text-[11px] text-ink outline-none" placeholder="搜索权限名称或权限码" />
+      <input v-model="search" class="w-40 border-0 bg-transparent text-[11px] text-ink outline-none" placeholder="搜索权限名称或权限码（分号分隔多词）" />
     </label>
     <span class="text-[9px] text-slate-400">{{ permissions.length }} 项权限 · {{ groups.length }} 个模块组</span>
     <span v-if="isAdminRole" class="ml-auto rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[8.5px] text-amber-800">系统管理员权限固定为全量</span>

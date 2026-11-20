@@ -13,6 +13,7 @@ from billing_qa.core.context import CurrentUser
 from billing_qa.core.crypto import decrypt_value, encrypt_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.permissions import PermissionCode
+from billing_qa.core.search import keyword_condition
 from billing_qa.core.security import get_current_user
 from billing_qa.db.base import now
 from billing_qa.db.session import get_db
@@ -218,9 +219,9 @@ async def list_capabilities(
         conditions.append(Capability.status == status)
     if is_active is not None:
         conditions.append(Capability.is_active.is_(is_active))
-    if keyword:
-        like = f"%{keyword}%"
-        conditions.append(Capability.name.ilike(like) | Capability.key.ilike(like))
+    keyword_filter = keyword_condition((Capability.name, Capability.key), keyword)
+    if keyword_filter is not None:
+        conditions.append(keyword_filter)
     total = (
         await db.execute(select(func.count()).select_from(Capability).where(*conditions))
     ).scalar_one()

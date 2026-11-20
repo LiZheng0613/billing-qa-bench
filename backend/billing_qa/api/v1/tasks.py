@@ -13,6 +13,7 @@ from billing_qa.api.v1.serializers import task_to_out
 from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.schedule_time import normalize_local, normalize_weekdays, parse_time_text
+from billing_qa.core.search import keyword_condition
 from billing_qa.core.security import get_current_operator
 from billing_qa.db.base import now
 from billing_qa.db.session import get_db
@@ -190,9 +191,9 @@ async def list_tasks(
         conditions.append(BatchTask.status == status)
     if schedule_type:
         conditions.append(BatchTask.schedule_type == schedule_type.value)
-    if keyword:
-        like = f"%{keyword}%"
-        conditions.append(BatchTask.name.ilike(like) | BatchTask.code.ilike(like))
+    keyword_filter = keyword_condition((BatchTask.name, BatchTask.code), keyword)
+    if keyword_filter is not None:
+        conditions.append(keyword_filter)
     if not include_runs:
         # 周期计划每次触发派生的子任务不再平铺在列表里，统一到计划详情的“历次执行”。
         conditions.append(BatchTask.schedule_source_id.is_(None))
@@ -867,12 +868,10 @@ async def task_executions(
         conditions = [ExecutionRecord.task_id == task_id]
     if status:
         conditions.append(ExecutionRecord.status == status)
-    if keyword:
-        like = f"%{keyword}%"
+    keyword_filter = keyword_condition((TestCase.code, TestCase.name), keyword)
+    if keyword_filter is not None:
         conditions.append(
-            ExecutionRecord.case_id.in_(
-                select(TestCase.id).where(TestCase.code.ilike(like) | TestCase.name.ilike(like))
-            )
+            ExecutionRecord.case_id.in_(select(TestCase.id).where(keyword_filter))
         )
     if min_score is not None:
         conditions.append(ExecutionRecord.total_score >= min_score)

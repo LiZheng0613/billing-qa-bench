@@ -7,6 +7,7 @@ import ScheduleField from '../../components/ScheduleField.vue'
 import type { BatchTask, Environment, TestCase } from '../../types'
 import { errorMessage } from '../../utils/errors'
 import { caseTypeLabel } from '../../utils/format'
+import { matchesAnyKeyword } from '../../utils/search'
 import {
   defaultSchedule,
   normalizeSchedule,
@@ -54,17 +55,11 @@ const scopeCount = computed(() =>
   form.case_scope === 'ALL_ACTIVE' ? activeCaseCount.value : form.case_ids.length,
 )
 
-const filteredCases = computed(() => {
-  const keyword = caseKeyword.value.trim().toLowerCase()
-  return cases.value.filter((item) => {
-    if (!keyword) return true
-    return (
-      item.code.toLowerCase().includes(keyword) ||
-      item.name.toLowerCase().includes(keyword) ||
-      (item.tags ?? []).some((tag) => tag.toLowerCase().includes(keyword))
-    )
-  })
-})
+const filteredCases = computed(() =>
+  cases.value.filter((item) =>
+    matchesAnyKeyword(caseKeyword.value, [item.code, item.name, ...(item.tags ?? [])]),
+  ),
+)
 
 async function loadAllCases(): Promise<TestCase[]> {
   const pageSize = 200
@@ -358,7 +353,7 @@ watch(
             </span>
           </label>
           <template v-if="form.case_scope === 'SELECTED'">
-            <input v-model="caseKeyword" class="input !py-1.5 text-xs" placeholder="搜索编号 / 名称 / 标签" />
+            <input v-model="caseKeyword" class="input !py-1.5 text-xs" placeholder="搜索编号 / 名称 / 标签（分号分隔多词）" />
             <div class="flex gap-2">
               <button class="btn-ghost btn-xs" @click="selectAllFiltered">
                 全选筛选结果（{{ filteredCases.length }}）

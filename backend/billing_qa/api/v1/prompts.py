@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from billing_qa.core.authz import require_module_access
 from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
+from billing_qa.core.search import keyword_condition
 from billing_qa.core.security import get_current_operator
 from billing_qa.db.seed import extract_variables
 from billing_qa.db.session import get_db
@@ -119,11 +120,9 @@ async def list_templates(
     conditions = []
     if template_type:
         conditions.append(PromptTemplate.template_type == template_type)
-    if keyword:
-        like = f"%{keyword}%"
-        conditions.append(
-            PromptTemplate.name.ilike(like) | PromptTemplate.code.ilike(like)
-        )
+    keyword_filter = keyword_condition((PromptTemplate.name, PromptTemplate.code), keyword)
+    if keyword_filter is not None:
+        conditions.append(keyword_filter)
     if is_active is not None:
         conditions.append(PromptTemplate.is_active.is_(is_active))
     total = (

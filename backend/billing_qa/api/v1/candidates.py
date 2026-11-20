@@ -16,6 +16,7 @@ from billing_qa.api.v1.cases import (
 )
 from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
+from billing_qa.core.search import keyword_condition
 from billing_qa.core.security import get_current_operator
 from billing_qa.db.session import get_db
 from billing_qa.models.candidate import CaseCandidate
@@ -73,11 +74,11 @@ async def list_candidates(
         conditions.append(CaseCandidate.status == status)
     if source:
         conditions.append(CaseCandidate.source == source)
-    if keyword:
-        like = f"%{keyword}%"
-        conditions.append(
-            CaseCandidate.raw_question.ilike(like) | CaseCandidate.note.ilike(like)
-        )
+    keyword_filter = keyword_condition(
+        (CaseCandidate.raw_question, CaseCandidate.note), keyword
+    )
+    if keyword_filter is not None:
+        conditions.append(keyword_filter)
     total = (
         await db.execute(select(func.count()).select_from(CaseCandidate).where(*conditions))
     ).scalar_one()

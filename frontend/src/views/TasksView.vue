@@ -11,6 +11,7 @@ import TaskCreateModal from './components/TaskCreateModal.vue'
 import type { BatchTask, TaskProgressEvent, TaskScheduleType } from '../types'
 import { errorMessage } from '../utils/errors'
 import { formatDateTime, formatPercent, statusLabel } from '../utils/format'
+import { hasKeyword } from '../utils/search'
 import {
   canStopPlanTask,
   isContinuousPlanTask,
@@ -68,7 +69,7 @@ const showCreate = ref(false)
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 const hasFilter = computed(() =>
-  Boolean(keyword.value.trim() || statusFilter.value || scheduleFilter.value),
+  Boolean(hasKeyword(keyword.value) || statusFilter.value || scheduleFilter.value),
 )
 
 // 只有 RUNNING 任务的进度会持续变化；PENDING 任务需要用户手动启动或由计划派发，
@@ -422,7 +423,7 @@ onBeforeUnmount(() => {
             v-model="keyword"
             class="input !pl-9"
             type="search"
-            placeholder="搜索任务名称 / 编号，输入即搜"
+            placeholder="搜索任务名称 / 编号，输入即搜（分号分隔多词）"
             @input="onKeywordInput"
             @keyup.enter="applyFilters"
           />

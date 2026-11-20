@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,7 @@ from billing_qa.core.permissions import (
     PERMISSION_BY_CODE,
     SYSTEM_ADMIN_CODE,
 )
+from billing_qa.core.search import keyword_condition
 from billing_qa.core.security import hash_password, load_user_auth, verify_password
 from billing_qa.models.enums import UserStatus
 from billing_qa.models.user import (
@@ -302,15 +303,11 @@ async def list_users(
     role_id: int | None = None,
 ) -> tuple[list[tuple[SysUser, list[SysRole]]], int]:
     filters = []
-    if keyword:
-        like = f"%{keyword.strip()}%"
-        filters.append(
-            or_(
-                SysUser.username.ilike(like),
-                SysUser.display_name.ilike(like),
-                SysUser.email.ilike(like),
-            )
-        )
+    keyword_filter = keyword_condition(
+        (SysUser.username, SysUser.display_name, SysUser.email), keyword
+    )
+    if keyword_filter is not None:
+        filters.append(keyword_filter)
     if status:
         filters.append(SysUser.status == status)
 
@@ -935,8 +932,9 @@ async def list_audit_logs(
     filters = []
     if actor_id is not None:
         filters.append(SysAuditLog.actor_id == actor_id)
-    if action:
-        filters.append(SysAuditLog.action.ilike(f"%{action}%"))
+    action_filter = keyword_condition((SysAuditLog.action,), action)
+    if action_filter is not None:
+        filters.append(action_filter)
     if resource:
         filters.append(SysAuditLog.resource == resource)
     if success is not None:
