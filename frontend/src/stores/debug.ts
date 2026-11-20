@@ -22,7 +22,7 @@ export interface DebugTask {
   /** 发起页面路由（name + params.id）：胶囊展示与完成跳转都以它为基准 */
   originName: string
   originParamsId: string
-  /** 是否来自调试工作台的草稿试运行：胶囊点击后进入用例详情页而非 trace */
+  /** 是否来自调试工作台的草稿试运行：胶囊点击后进入该次执行详情（trace） */
   fromWorkbench: boolean
   /** 用户已收起「调试中」胶囊：仅隐藏运行提示，完成后仍弹出结果胶囊 */
   runningDismissed: boolean
@@ -90,6 +90,11 @@ export const useDebugStore = defineStore('debug', () => {
     )
   }
 
+  /** 运行中任务查询到执行记录后回填 ID，用于避免在对应执行详情页重复展示气泡 */
+  function bindExecution(id: number, executionId: number): void {
+    patch(id, { executionId })
+  }
+
   /**
    * 发起单条调试。请求生命周期归全局 store 管：
    * - 运行中：状态跨页面保持，同用例不可重复发起；
@@ -100,7 +105,7 @@ export const useDebugStore = defineStore('debug', () => {
    *
    * 调试工作台（`draft` + `snapshotOverride`）复用同一套生命周期：
    * 只是完成时回到工作台内联展示结果，不自动跳转 trace；
-   * 离开工作台后同样由底部胶囊提示，胶囊点击进入用例详情页。
+   * 离开工作台后同样由底部胶囊提示，胶囊点击进入该次执行详情。
    */
   async function run(input: {
     id: number
@@ -209,5 +214,5 @@ export const useDebugStore = defineStore('debug', () => {
     }
   }
 
-  return { tasks, isRunning, isOnOrigin, dismissRunning, remove, run }
+  return { tasks, isRunning, isOnOrigin, dismissRunning, bindExecution, remove, run }
 })

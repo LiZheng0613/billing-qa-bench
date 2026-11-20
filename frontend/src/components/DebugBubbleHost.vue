@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AnimatedNumber from './AnimatedNumber.vue'
+import { api } from '../api'
 import { router } from '../router'
 import { useDebugStore } from '../stores/debug'
 import type { DebugTask } from '../stores/debug'
@@ -37,13 +38,20 @@ onBeforeUnmount(() => {
  * 展示顺序：已完成在上（越新越靠下），运行中钉在最底部。
  * 运行中的任务只在用户已离开发起页时才展示 —— 留在发起页时由
  * 按钮态 + 完成后 toast/跳转负责提示，回到发起页时胶囊自动隐藏。
+ * 已在对应执行详情页时也不再重复展示该次执行的气泡。
  */
 const ordered = computed<DebugTask[]>(() => {
-  const finished = debug.tasks
+  const traceExecution = router.currentRoute.value.query.execution
+  const currentExecutionId =
+    typeof traceExecution === 'string' && traceExecution ? traceExecution : null
+  const tasks = debug.tasks.filter(
+    (task) => currentExecutionId === null || String(task.executionId ?? '') !== currentExecutionId,
+  )
+  const finished = tasks
     .filter((task) => task.status !== 'running')
     .slice()
     .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0))
-  const running = debug.tasks
+  const running = tasks
     .filter(
       (task) =>
         task.status === 'running' &&
@@ -162,19 +170,58 @@ function actionVerb(task: DebugTask): string {
   return task.fromWorkbench ? '试运行' : '调试'
 }
 
-/** 工作台跑出的任务：气泡点击直接进入该用例详情页 */
+/** 用例列表单条调试：气泡点击进入该用例详情页 */
 function openCaseDetail(task: DebugTask): void {
   void router.push({ name: 'case-detail', params: { id: String(task.caseId) } })
 }
 
-/** 运行中胶囊的「查看结果」：结果尚未产生，先进入该用例详情页 */
+/** 兜底：请求异常等没有执行记录的场景，回到工作台查看内联错误 */
+function openWorkbench(task: DebugTask): void {
+  void router.push({ name: 'case-debug', params: { id: String(task.caseId) } })
+}
+
+/**
+ * 工作台草稿试运行：进入该次执行的详情页。
+ * 运行中接口尚未返回执行 ID，先查询该用例最新的运行中草稿执行；
+ * 查不到（如请求异常）时回退到工作台查看内联错误。
+ */
+async function openExecutionDetail(task: DebugTask): Promise<void> {
+  let executionId = task.executionId
+  if (executionId === null) {
+    try {
+      const page = await api.cases.executions(task.caseId, {
+        status: 'RUNNING',
+        page: 1,
+        page_size: 10,
+      })
+      executionId = page.items.find((item) => item.source === 'SANDBOX')?.id ?? null
+    } catch {
+      executionId = null
+    }
+  }
+  if (executionId === null) {
+    openWorkbench(task)
+    return
+  }
+  if (task.executionId !== executionId) debug.bindExecution(task.id, executionId)
+  void router.push({
+    name: 'trace',
+    query: { execution: String(executionId), from: 'workbench' },
+  })
+}
+
+/** 运行中胶囊的「查看结果」：结果尚未产生，先进入对应的详情页 */
 function openCase(task: DebugTask): void {
+  if (task.fromWorkbench) {
+    void openExecutionDetail(task)
+    return
+  }
   openCaseDetail(task)
 }
 
 function viewResult(task: DebugTask): void {
   if (task.fromWorkbench) {
-    openCaseDetail(task)
+    void openExecutionDetail(task)
     closeTask(task)
     return
   }
