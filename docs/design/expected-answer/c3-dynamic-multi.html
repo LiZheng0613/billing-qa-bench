@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>C3 · 方案 C3 · 动态多轮对照</title>
+<link rel="stylesheet" href="mockup.css" />
+</head>
+<body>
+<div class="stage">
+  <div class="variant-bar">
+    <div class="variant-no">C3</div>
+    <div class="variant-copy"><h1>方案 C3 · 动态多轮对照</h1><p>左右对比「测试设计」与「执行轨迹」：目标、隐藏信息释放、终止原因与最终答案差异一屏看清。</p></div>
+    <span class="variant-badge">方案 C · 动态多轮</span>
+  </div>
+  <div class="shell">
+    <aside class="sidebar">
+  <div class="brand">
+    <div class="brand-mark">问</div>
+    <div><div class="brand-name">问账 QA</div><div class="brand-sub">Billing QA</div></div>
+  </div>
+  <div class="nav-label">工作台</div>
+  <nav class="nav">
+    <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span>测试大盘</span></div><div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>批量任务</span></div><div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg><span>用例资产</span></div><div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="m8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14"/></svg><span>Prompt 资产</span></div><div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 19V9m5 10V5m5 14v-7m5 7V8M3 21h18"/></svg><span>运营后台</span></div><div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm13 14v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>用户与权限</span></div>
+  </nav>
+  <div class="side-foot"><div class="avatar">管</div><div><div class="side-foot-name">管理员</div><div class="side-foot-role">系统管理员</div></div></div>
+</aside>
+    <main class="main"><div class="crumbs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6"/></svg>返回批量任务详情</div>
+<div class="eyebrow">SINGLE RUN · 单笔执行结果</div>
+<h1 class="page-title">执行 #10233 <span class="case-link">· DEMO-DYNAMIC-001</span><span class="pill fail"><span class="dot"></span>未通过</span></h1>
+<p class="page-sub">动态多轮 · 隐藏手机号与账期挤牙膏式释放 · 4 维评分 · 动态模拟器　·　实际执行环境 <span class="env-badge">QA-MOCK-JSON</span>　·　所属批量任务 <span class="link">BATCH-20261118-003</span> · 全量回归</p>
+<div class="card metrics"><div><div class="metric-k">总分</div><div class="metric-v bad">34.0</div></div><div><div class="metric-k">轮次</div><div class="metric-v ">3</div></div><div><div class="metric-k">总时延</div><div class="metric-v sm">7.32 s</div></div><div><div class="metric-k">首字时延</div><div class="metric-v sm">913 ms</div></div><div><div class="metric-k">Tokens</div><div class="metric-v sm">8,940</div></div><div><div class="metric-k">终止状态</div><div class="metric-v sm">模拟器放弃</div></div><div><div class="metric-k">开始时间</div><div class="metric-v sm">11-18 14:38:40</div></div></div>
+<section class="card inspector"><header class="ins-head">
+  <div class="ins-title-row">
+    <span class="ins-title">DEMO-DYNAMIC-001 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M7 17 17 7M9 7h8v8"/></svg></span>
+    <span class="pill fail"><span class="dot"></span>未通过</span>
+    <span class="tag">v6</span><span class="tag">批量任务</span><span class="tag indigo">执行环境 QA-MOCK-JSON</span><span class="tag indigo">动态多轮</span><span class="tag rose">根因：交互行为不当</span><span class="tag">4 维评分</span>
+  </div>
+  <p class="ins-sub">动态多轮 · 隐藏手机号与账期挤牙膏式释放</p>
+  <p class="trace">trace: 7f3a91c4e2b7…c92e ⧉</p>
+</header><div class="tabs"><button class="tab active">对话轮次<span class="count">3</span></button><button class="tab">裁判明细<span class="count">2</span></button><button class="tab">规则校验<span class="count">5</span></button><button class="tab">追问自检</button><button class="tab">用例快照</button><button class="tab">原始报文</button></div><div class="tab-body"><div class="scope-line"><span class="scope-chip">动态多轮</span>无固定逐轮答案 · 按「目标 + 隐藏信息 + 事实」对照</div>
+<div class="session-bar">
+  会话绑定 <b>跟随环境</b>
+  <span class="chip-mini indigo mono">5f8c…9d21</span>
+  <span class="chip-mini ok">各轮会话一致</span>
+  <span style="color:#94a3b8">用例变量</span>
+  <span class="chip-mini mono">userid=13800138000</span>
+</div>
+<div class="diff-toolbar">
+  <div class="seg"><button>对话流</button><button class="on">会话对照</button></div>
+  <span class="switch"><span class="switch-box ">✓</span>只看关键节点</span>
+  <span class="switch"><span class="switch-box ">✓</span>同步滚动</span>
+  <span class="tool-note">动态多轮不比逐字文本，重点看目标是否达成、隐藏信息是否按需释放</span>
+</div>
+<div class="diff-summary" style="border-color:#fecdd3;background:#fff7f8">
+  <span class="pill fail"><span class="dot"></span>未通过</span>
+  <span><b>模拟器放弃</b></span><span class="sep">·</span>
+  <span class="bad-text">隐藏信息 1/2 已释放</span><span class="sep">·</span>
+  <span class="bad-text">账期未释放</span><span class="sep">·</span>
+  <span>轮次 3/5 · 未超限</span>
+  <span class="spacer"></span>
+  <span class="fact-count">Must 事实 0/3 命中</span>
+</div>
+
+<div class="dynamic-grid">
+  <section class="plan-card">
+    <div class="panel-strip">测试设计（期望）<span class="sub">用例快照 v6 · 执行时冻结</span></div>
+    <div class="plan-body">
+      <div class="plan-block">
+        <p class="panel-label">用户目标</p>
+        <p class="goal-text">在不主动提供手机号的前提下，通过多轮追问拿到手机号 13800138000 在 2026-10 的账单总额与费用项数。</p>
+        <p class="goal-meta">人设：杭州互联网公司财务，说话口语化，关注账单总额与费用项数，习惯先描述诉求再补充号码。</p>
+      </div>
+      <div class="plan-block">
+        <p class="panel-label">初始提问</p>
+        <p class="plan-quote">我想核对一下这个月的账单金额和明细，但手机号一时想不起来了。</p>
+      </div>
+      <div class="plan-block">
+        <p class="panel-label">隐藏信息释放计划</p>
+        <table class="hidden-table">
+          <thead><tr><th>信息</th><th>值</th><th>释放时机</th><th>实际</th></tr></thead>
+          <tbody>
+            <tr><td class="key">phone</td><td>13800138000</td><td>客服反问手机号</td><td><span class="release ok">✓ T2 已释放</span></td></tr>
+            <tr><td class="key">period</td><td>2026-10</td><td>客服反问账期</td><td><span class="release no">✕ 未释放</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="plan-block">
+        <p class="panel-label">终止与熔断</p>
+        <div class="plan-meta">
+          <span class="chip-mini">关键词 ¥268.50</span>
+          <span class="chip-mini">最大轮次 5</span>
+          <span class="chip-mini">实际 3/5</span>
+          <span class="release no" style="margin-left:auto">GIVE_UP</span>
+        </div>
+      </div>
+      <div class="plan-block">
+        <p class="panel-label">期望最终答案</p>
+        <p class="plan-quote">最终应给出手机号 13800138000 在 2026-10 的账单总额 ¥268.50，共 4 项费用。</p>
+        <div class="plan-meta">
+          <span class="tag">账单总额 268.50</span>
+          <span class="tag">费用项数 4</span>
+          <span class="tag">手机号 13800138000</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="timeline-card">
+    <div class="panel-strip">执行轨迹（实际）<span class="sub">3 轮 · 模拟器放弃 · 目标未达成</span></div>
+    <div class="timeline">
+      <div class="tl-item ok">
+        <span class="tl-dot"></span>
+        <div class="tl-head"><span class="tl-id">T1</span><span class="tl-event gray">CONTINUE</span><span class="tl-event info">客服反问手机号</span></div>
+        <div class="tl-q"><span class="tl-label">用户</span>　我想核对一下这个月的账单金额和明细，但手机号一时想不起来了。</div>
+        <div class="tl-a"><span class="tl-label">客服</span>　好的，请提供一下您的手机号，我帮您查询。</div>
+      </div>
+      <div class="tl-item fail">
+        <span class="tl-dot"></span>
+        <div class="tl-head"><span class="tl-id">T2</span><span class="tl-event gray">CONTINUE</span><span class="tl-event ok">释放 phone</span><span class="tl-event warn">未追问账期即作答</span></div>
+        <div class="tl-q"><span class="tl-label">用户</span>　13800138000</div>
+        <div class="tl-a bad"><span class="tl-label">客服</span>　您本月的账单总额为 <span class="tok-bad">¥298.00</span>，共 5 项费用。</div>
+        <div class="tl-hint">未澄清账期，默认按当前月（2026-11）查询，金额与项数均偏离期望。</div>
+      </div>
+      <div class="tl-item fail">
+        <span class="tl-dot"></span>
+        <div class="tl-head"><span class="tl-id">T3</span><span class="tl-event no">GIVE_UP</span><span class="tl-event no">账期未释放</span><span class="tl-event warn">目标未达成</span></div>
+        <div class="tl-q"><span class="tl-label">用户</span>　就是账单上的那个月，你直接帮我查一下总额就行。</div>
+        <div class="tl-a bad"><span class="tl-label">客服</span>　您本月（2026-11）的账单总额为 <span class="tok-bad">¥298.00</span>，共 5 项费用。</div>
+        <div class="tl-hint">模拟器放弃原因：连续两轮未澄清账期，无法确认查询月份。</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="diff-wrap final-diff">
+  <div class="diff-head">
+    <div class="gutter"></div>
+    <div>最终答案 · 期望 <span class="exp-src">· 用例快照 v6</span></div>
+    <div>最终答案 · 实际 <span class="exp-src">· T3 · 执行 #10233</span></div>
+  </div>
+  <div class="diff-line change"><div class="gutter">≠</div><div class="diff-cell">账期 <span class="tok-expect">2026-10</span></div><div class="diff-cell">账期 <span class="tok-bad">本月（2026-11）</span></div></div>
+  <div class="diff-line same"><div class="gutter">=</div><div class="diff-cell">账单总额</div><div class="diff-cell">账单总额</div></div>
+  <div class="diff-line change"><div class="gutter">≠</div><div class="diff-cell"><span class="tok-expect">¥268.50</span></div><div class="diff-cell"><span class="tok-bad">¥298.00</span></div></div>
+  <div class="diff-line change"><div class="gutter">≠</div><div class="diff-cell">共 <span class="tok-expect">4</span> 项费用</div><div class="diff-cell">共 <span class="tok-bad">5</span> 项费用</div></div>
+  <div class="diff-line extra"><div class="gutter">+</div><div class="diff-cell" style="color:#94a3b8">—</div><div class="diff-cell"><span class="tok-extra">如需明细，我可以继续为您查询。</span></div></div>
+  <div class="diff-foot">
+    <span class="legend"><i style="background:#dcfce7"></i>命中</span>
+    <span class="legend"><i style="background:#ffe4e6"></i>不一致</span>
+    <span class="legend"><i style="background:#fef3c7"></i>期望之外的扩展</span>
+    <span class="spacer"></span>
+    <span>动态多轮以最后一轮结论为准</span>
+  </div>
+</div>
+
+<div class="facts-inline">
+  <h4>判分事实对照（Must）</h4>
+  <table class="fact-table">
+    <thead><tr><th>事实</th><th>期望</th><th>实际</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>账单总额</td><td>268.50</td><td style="color:#be123c;font-weight:600">298.00</td><td><span class="status-dot no">● 未命中</span></td></tr>
+      <tr><td>费用项数</td><td>4</td><td style="color:#be123c;font-weight:600">5</td><td><span class="status-dot no">● 未命中</span></td></tr>
+      <tr><td>手机号</td><td>13800138000</td><td>未在最终答案中出现</td><td><span class="status-dot no">● 未命中</span></td></tr>
+    </tbody>
+  </table>
+</div></div></section></main>
+  </div>
+</div>
+</body>
+</html>

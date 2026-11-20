@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import EmptyState from '../../components/EmptyState.vue'
 import JsonViewer from '../../components/JsonViewer.vue'
 import StatusPill from '../../components/StatusPill.vue'
+import ExpectedDiffView from '../../components/expected/ExpectedDiffView.vue'
 import type { ExecutionDetail, JudgeResult, SelfCheckResult, TurnTrace } from '../../types'
 import {
   formatDateTime,
@@ -44,6 +45,25 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'raw', label: '原始报文' },
 ]
 const activeTab = ref<TabKey>('turns')
+
+type TurnsView = 'flow' | 'diff'
+/** 进入对话轮次时默认看对话流；需要比对期望答案时再手动切到对照模式。 */
+const turnsView = ref<TurnsView>('flow')
+const diffOnly = ref(false)
+const syncScroll = ref(true)
+const keyOnly = ref(true)
+
+// 切换到另一条执行记录时回到默认的对话流。
+watch(() => props.detail?.id, () => {
+  turnsView.value = 'flow'
+})
+
+const turnsCaseType = computed(() =>
+  String(props.detail?.case_snapshot?.case_type ?? 'SINGLE'),
+)
+const compareOnlyLabel = computed(() =>
+  turnsCaseType.value === 'DYNAMIC_MULTI' ? '只看关键节点' : '只看差异',
+)
 
 // 支持从路由参数指定初始页签（如调试完成带 tab=selfcheck）
 watch(
@@ -720,6 +740,73 @@ function turnRequestKeys(turn: TurnTrace): string[] {
 
       <div class="flex-1 overflow-y-auto px-4 py-4">
         <template v-if="activeTab === 'turns'">
+          <div class="mb-3 flex flex-wrap items-center gap-3">
+            <div class="inline-flex rounded-lg border border-line bg-slate-50 p-0.5">
+              <button
+                type="button"
+                class="rounded-md px-3 py-1 text-xs font-medium transition"
+                :class="turnsView === 'flow' ? 'bg-white text-ink shadow-sm' : 'text-slate-500 hover:text-ink'"
+                :aria-pressed="turnsView === 'flow'"
+                @click="turnsView = 'flow'"
+              >
+                对话流
+              </button>
+              <button
+                type="button"
+                class="rounded-md px-3 py-1 text-xs font-medium transition"
+                :class="turnsView === 'diff' ? 'bg-brand-soft text-brand shadow-sm' : 'text-slate-500 hover:text-ink'"
+                :aria-pressed="turnsView === 'diff'"
+                @click="turnsView = 'diff'"
+              >
+                对照模式
+              </button>
+            </div>
+            <template v-if="turnsView === 'diff'">
+              <label class="inline-flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
+                <input
+                  v-if="turnsCaseType === 'DYNAMIC_MULTI'"
+                  v-model="keyOnly"
+                  type="checkbox"
+                  class="h-3.5 w-3.5 rounded border-line text-brand focus:ring-brand/30"
+                />
+                <input
+                  v-else
+                  v-model="diffOnly"
+                  type="checkbox"
+                  class="h-3.5 w-3.5 rounded border-line text-brand focus:ring-brand/30"
+                />
+                {{ compareOnlyLabel }}
+              </label>
+              <label
+                v-if="turnsCaseType !== 'DYNAMIC_MULTI'"
+                class="inline-flex cursor-pointer items-center gap-1.5 text-xs text-slate-600"
+              >
+                <input
+                  v-model="syncScroll"
+                  type="checkbox"
+                  class="h-3.5 w-3.5 rounded border-line text-brand focus:ring-brand/30"
+                />
+                同步滚动
+              </label>
+              <span class="text-[10px] text-slate-400">
+                {{
+                  turnsCaseType === 'DYNAMIC_MULTI'
+                    ? '按会话对比目标达成与隐藏信息释放'
+                    : '长文本按句对齐，金额 / 日期 / 手机号按 token 高亮'
+                }}
+              </span>
+            </template>
+          </div>
+
+          <ExpectedDiffView
+            v-if="turnsView === 'diff'"
+            :detail="detail"
+            :only-diff="diffOnly"
+            :sync-scroll="syncScroll"
+            :key-only="keyOnly"
+          />
+
+          <template v-else>
           <div v-if="detail.turns.length === 0">
             <EmptyState compact title="没有对话轮次" description="该执行未产生有效对话。" />
           </div>
@@ -895,6 +982,7 @@ function turnRequestKeys(turn: TurnTrace): string[] {
               </div>
             </article>
           </div>
+          </template>
         </template>
 
         <template v-else-if="activeTab === 'judges'">

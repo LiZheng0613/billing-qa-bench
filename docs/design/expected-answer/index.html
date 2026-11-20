@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>方案 C · 对照模式（单轮 / 静态多轮 / 动态多轮）</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #eef0f4; color: #111827; font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  .wrap { max-width: 1260px; margin: 0 auto; padding: 40px 24px 64px; }
+  .eyebrow { font-size: 11px; letter-spacing: .16em; color: #64748b; text-transform: uppercase; font-weight: 600; }
+  h1 { margin: 8px 0 6px; font-size: 30px; letter-spacing: -.02em; }
+  .sub { margin: 0 0 26px; color: #475569; font-size: 13px; line-height: 1.8; max-width: 980px; }
+  .item { background: #fff; border: 1px solid #e8e8ed; border-radius: 20px; overflow: hidden; box-shadow: 0 22px 50px -38px rgba(17,24,39,.55); margin-bottom: 22px; }
+  .item img { display: block; width: 100%; height: auto; border-bottom: 1px solid #e8e8ed; }
+  .meta { padding: 18px 20px 20px; }
+  .meta h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+  .meta p { margin: 7px 0 0; font-size: 12.5px; color: #64748b; line-height: 1.8; }
+  .meta a { display: inline-block; margin-top: 10px; font-size: 12px; color: #4f46e5; text-decoration: none; }
+  .tag { display: inline-block; margin-left: 7px; border-radius: 999px; padding: 2px 9px; font-size: 10px; vertical-align: 2px; }
+  .tag.rec { background: #eef2ff; border: 1px solid #c7d2fe; color: #4338ca; }
+  .tag.gray { background: #f8fafc; border: 1px solid #e2e8f0; color: #64748b; }
+  .tag.teal { background: #f0fdfa; border: 1px solid #99f6e4; color: #0f766e; }
+  .bullets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .bullets span { background: #f8fafc; border: 1px solid #e8e8ed; color: #475569; border-radius: 6px; padding: 2px 7px; font-size: 10.5px; }
+  .foot { margin-top: 26px; padding: 18px 20px; background: #fff; border: 1px solid #e8e8ed; border-radius: 14px; font-size: 12px; color: #475569; line-height: 1.9; }
+  .foot b { color: #111827; }
+  .table { width: 100%; border-collapse: collapse; margin-top: 16px; background: #fff; border: 1px solid #e8e8ed; border-radius: 14px; overflow: hidden; }
+  .table th { text-align: left; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #64748b; background: #f8fafc; padding: 8px 10px; border-bottom: 1px solid #e8e8ed; }
+  .table td { font-size: 12px; color: #334155; padding: 9px 10px; border-top: 1px solid #f1f5f9; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">Selected direction · 方案 C</p>
+  <h1>对照模式：单轮 / 静态多轮 / 动态多轮</h1>
+  <p class="sub">统一框架：<b>范围切换 + 差异摘要 + 期望/实际双栏 + 判分事实</b>。单轮直接逐句 diff；静态多轮加轮次导航与折叠；动态多轮不比逐字文本，改为「测试设计 vs 执行轨迹」，重点看目标、隐藏信息释放与终止原因。</p>
+
+  <div class="item">
+    <img src="c1-single-turn.png" alt="C1 单轮对照" />
+    <div class="meta">
+      <h2>C1 · 单轮用例 <span class="tag rec">基础形态</span></h2>
+      <p>期望答案与客服最终回复逐句对齐；行首 <code>= / ≠ / + / -</code> 标记，差异摘要给数值差异与事实命中数。适用于 SINGLE 及答案契约用例。</p>
+      <div class="bullets"><span>逐句对齐</span><span>金额 token 高亮</span><span>Must 事实对照</span><span>扩展内容标黄</span></div>
+      <a href="c1-single-turn.html">查看交互原型 →</a>
+    </div>
+  </div>
+
+  <div class="item">
+    <img src="c2-static-multi.png" alt="C2 静态多轮对照" />
+    <div class="meta">
+      <h2>C2 · 静态多轮 <span class="tag rec">轮次导航</span></h2>
+      <p>顶部 T1 / T2 轮次导航带通过状态；当前轮做左右对照，已通过轮次折叠成摘要，底部汇总会话级期望 <code>session_expected</code>。缺少自然语言期望时，按轮次 <code>expected_rules</code> 生成对照并标注来源。</p>
+      <div class="bullets"><span>轮次切换</span><span>通过轮次折叠</span><span>规则生成期望</span><span>会话级期望汇总</span></div>
+      <a href="c2-static-multi.html">查看交互原型 →</a>
+    </div>
+  </div>
+
+  <div class="item">
+    <img src="c3-dynamic-multi.png" alt="C3 动态多轮对照" />
+    <div class="meta">
+      <h2>C3 · 动态多轮 <span class="tag teal">过程对照</span></h2>
+      <p>左侧「测试设计（期望）」展示用户目标、人设、隐藏信息释放计划、终止条件与期望最终答案；右侧「执行轨迹」逐轮展示真实对话与释放事件。最后用「最终答案对照」补数值/日期差异，避免把动态多轮当静态文本 diff。</p>
+      <div class="bullets"><span>目标达成</span><span>隐藏信息释放进度</span><span>模拟器状态 / GIVE_UP</span><span>最终答案差异</span></div>
+      <a href="c3-dynamic-multi.html">查看交互原型 →</a>
+    </div>
+  </div>
+
+  <table class="table">
+    <thead><tr><th>用例类型</th><th>对照对象</th><th>主视图</th><th>关键差异</th></tr></thead>
+    <tbody>
+      <tr><td>SINGLE</td><td>期望答案 ↔ 最终回复</td><td>逐句双栏</td><td>数值 / 日期 / 关键词</td></tr>
+      <tr><td>STATIC_MULTI</td><td>逐轮期望 ↔ 逐轮回复</td><td>轮次导航 + 双栏</td><td>轮次规则、会话级期望</td></tr>
+      <tr><td>DYNAMIC_MULTI</td><td>测试设计 ↔ 执行轨迹</td><td>设计/轨迹双栏 + 最终答案</td><td>目标、隐藏信息、终止原因、事实</td></tr>
+    </tbody>
+  </table>
+
+  <div class="foot">
+    <b>实现状态：</b>C1 / C2 / C3 已落地前端，进入「对话轮次」时默认展示「对话流」，需要比对时手动切到「对照模式」。实现效果截图见 <code>impl-c1-single-turn.png</code>、<code>impl-c2-static-multi.png</code>、<code>impl-c3-dynamic-multi.png</code>。<br/>
+    <b>其他备选：</b>A（轮次内嵌）、B（顶部吸顶）、D（右侧侧栏）仍保留在同目录，作为后续增强参考。<br/>
+    <b>完整数据映射、diff 规则与实施计划：</b>docs/EXECUTION_EXPECTED_ANSWER_DESIGN.md
+  </div>
+</div>
+</body>
+</html>

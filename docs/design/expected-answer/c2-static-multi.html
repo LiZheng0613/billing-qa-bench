@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>C2 · 方案 C2 · 静态多轮对照</title>
+<link rel="stylesheet" href="mockup.css" />
+</head>
+<body>
+<div class="stage">
+  <div class="variant-bar">
+    <div class="variant-no">C2</div>
+    <div class="variant-copy"><h1>方案 C2 · 静态多轮对照</h1><p>用轮次导航切换 T1 / T2；当前轮做左右对照，已通过轮次折叠为摘要，底部汇总会话级期望。</p></div>
+    <span class="variant-badge">方案 C · 静态多轮</span>
+  </div>
+  <div class="shell">
+    <aside class="sidebar">
+  <div class="brand">
+    <div class="brand-mark">问</div>
+    <div><div class="brand-name">问账 QA</div><div class="brand-sub">Billing QA</div></div>
+  </div>
+  <div class="nav-label">工作台</div>
+  <nav class="nav">
+    <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span>测试大盘</span></div><div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>批量任务</span></div><div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg><span>用例资产</span></div><div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="m8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14"/></svg><span>Prompt 资产</span></div><div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 19V9m5 10V5m5 14v-7m5 7V8M3 21h18"/></svg><span>运营后台</span></div><div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm13 14v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>用户与权限</span></div>
+  </nav>
+  <div class="side-foot"><div class="avatar">管</div><div><div class="side-foot-name">管理员</div><div class="side-foot-role">系统管理员</div></div></div>
+</aside>
+    <main class="main"><div class="crumbs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6"/></svg>返回批量任务详情</div>
+<div class="eyebrow">SINGLE RUN · 单笔执行结果</div>
+<h1 class="page-title">执行 #10232 <span class="case-link">· DEMO-STATIC-001</span><span class="pill fail"><span class="dot"></span>未通过</span></h1>
+<p class="page-sub">静态多轮 · 指代继承与超套费追问 · 4 维评分 · LEGACY　·　实际执行环境 <span class="env-badge">QA-MOCK-JSON</span>　·　所属批量任务 <span class="link">BATCH-20261118-003</span> · 全量回归</p>
+<div class="card metrics"><div><div class="metric-k">总分</div><div class="metric-v bad">58.0</div></div><div><div class="metric-k">轮次</div><div class="metric-v ">2</div></div><div><div class="metric-k">总时延</div><div class="metric-v sm">4.87 s</div></div><div><div class="metric-k">首字时延</div><div class="metric-v sm">790 ms</div></div><div><div class="metric-k">Tokens</div><div class="metric-v sm">6,120</div></div><div><div class="metric-k">终止状态</div><div class="metric-v sm">正常结束</div></div><div><div class="metric-k">开始时间</div><div class="metric-v sm">11-18 14:35:12</div></div></div>
+<section class="card inspector"><header class="ins-head">
+  <div class="ins-title-row">
+    <span class="ins-title">DEMO-STATIC-001 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M7 17 17 7M9 7h8v8"/></svg></span>
+    <span class="pill fail"><span class="dot"></span>未通过</span>
+    <span class="tag">v8</span><span class="tag">批量任务</span><span class="tag indigo">执行环境 QA-MOCK-JSON</span><span class="tag indigo">静态多轮</span><span class="tag rose">根因：汇总错误</span><span class="tag">4 维评分</span>
+  </div>
+  <p class="ins-sub">静态多轮 · 指代继承与超套费追问</p>
+  <p class="trace">trace: 7f3a91c4e2b7…c92e ⧉</p>
+</header><div class="tabs"><button class="tab active">对话轮次<span class="count">2</span></button><button class="tab">裁判明细<span class="count">1</span></button><button class="tab">规则校验<span class="count">4</span></button><button class="tab">追问自检</button><button class="tab">用例快照</button><button class="tab">原始报文</button></div><div class="tab-body"><div class="scope-line"><span class="scope-chip">静态多轮</span>2 轮 · 按轮次对照；未填写自然语言期望时由轮次规则生成</div>
+<div class="session-bar">
+  会话绑定 <b>跟随环境</b>
+  <span class="chip-mini indigo mono">5f8c…9d21</span>
+  <span class="chip-mini ok">各轮会话一致</span>
+  <span style="color:#94a3b8">用例变量</span>
+  <span class="chip-mini mono">userid=13800138000</span>
+</div>
+<div class="diff-toolbar">
+  <div class="seg"><button>对话流</button><button class="on">对照模式</button></div>
+  <span class="switch"><span class="switch-box off">✓</span>只看差异</span>
+  <span class="switch"><span class="switch-box ">✓</span>同步滚动</span>
+  <span class="tool-note">按轮次对齐；T1 / T2 可切换，会话级期望单独汇总</span>
+</div>
+<div class="turn-rail">
+  <button class="turn-pill"><span class="st ok"></span>T1 通过 <span class="mini-count">2/2</span></button>
+  <button class="turn-pill active"><span class="st bad"></span>T2 未通过 <span class="mini-count">1/2</span></button>
+  <span class="rail-hint">2 轮 · 1 通过 / 1 未通过 · 会话级期望 1/2 命中</span>
+</div>
+<div class="turn-collapsed">
+  <span class="tag">T1</span>
+  <span class="q">帮我查下 13800138000 在 2026-10 的账单总额和费用明细</span>
+  <span class="sep">·</span>
+  <b>账单总额 ¥268.50 · 费用项数 4</b>
+  <span class="tag">规则 2/2</span>
+  <span class="link">展开对照 ↓</span>
+</div>
+<div class="diff-summary">
+  <span class="pill fail"><span class="dot"></span>T2 未通过</span>
+  <span><b>1 处数值差异</b></span><span class="sep">·</span>
+  <span class="bad-text">超套费不一致</span><span class="sep">·</span>
+  <span class="good-text">关键词命中</span><span class="sep">·</span>
+  <span>上下文手机号一致</span>
+  <span class="spacer"></span>
+  <span class="fact-count">轮次规则 1/2 通过</span>
+</div>
+<div class="notice">
+  <span>ⓘ</span>
+  <span>该用例第 2 轮未填写自然语言期望答案，以下按轮次 <b>expected_rules</b> 生成对照。</span>
+  <span class="gen-badge" style="margin-left:auto">规则生成</span>
+</div>
+<div class="diff-wrap">
+  <div class="diff-head">
+    <div class="gutter"></div>
+    <div>期望 · T2 <span class="exp-src">· 用例快照 v8 · 规则生成</span></div>
+    <div>实际 · T2 <span class="exp-src">· 执行 #10232</span></div>
+  </div>
+  <div class="diff-line same"><div class="gutter">=</div><div class="diff-cell">上下文手机号 13800138000 <span class="gen-badge">上下文</span></div><div class="diff-cell">沿用手机号 13800138000</div></div>
+  <div class="diff-line change"><div class="gutter">≠</div><div class="diff-cell">超套费 = <span class="tok-expect">¥27.00</span></div><div class="diff-cell">超套费 = <span class="tok-bad">¥72.00</span></div></div>
+  <div class="diff-line same"><div class="gutter">=</div><div class="diff-cell">必须包含 「超套」</div><div class="diff-cell">已包含 「超套」</div></div>
+  <div class="diff-foot">
+    <span class="legend"><i style="background:#dcfce7"></i>命中</span>
+    <span class="legend"><i style="background:#ffe4e6"></i>不一致</span>
+    <span class="spacer"></span>
+    <span>判分依据：轮次级 expected_rules</span>
+  </div>
+</div>
+<div class="facts-inline">
+  <h4>轮次规则校验 · T2</h4>
+  <table class="fact-table">
+    <thead><tr><th>规则</th><th>期望</th><th>实际</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>超套费（金额）</td><td>27.00</td><td style="color:#be123c;font-weight:600">72.00</td><td><span class="status-dot no">● 未通过</span></td></tr>
+      <tr><td>必须包含</td><td>超套</td><td>超套</td><td><span class="status-dot ok">● 通过</span></td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="session-expect">
+  <div class="session-expect-head">
+    <span class="exp-tag" style="background:#0f766e">会话级期望</span>
+    <span class="exp-src">session_expected · 两轮汇总</span>
+  </div>
+  <p class="session-expect-text">两轮均围绕手机号 13800138000：账单总额 ¥268.50，超套费 ¥27.00。</p>
+  <div class="session-expect-chips">
+    <span class="fact-mini ok">账单总额 268.50 · T1 命中</span>
+    <span class="fact-mini no">超套费 27.00 · T2 未命中</span>
+    <span class="fact-mini ok">手机号 · 上下文一致</span>
+  </div>
+</div></div></section></main>
+  </div>
+</div>
+</body>
+</html>

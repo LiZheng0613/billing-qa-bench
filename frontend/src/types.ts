@@ -644,6 +644,33 @@ export interface HiddenContextItem {
   release_hint?: string | null
 }
 
+/** 执行时冻结的用例快照（前端只声明用到的字段，其余保持透传）。 */
+export interface CaseSnapshot {
+  id?: number | null
+  name?: string | null
+  case_type?: string | null
+  status?: string | null
+  priority?: string | null
+  tags?: string[] | null
+  query?: string | null
+  expected_answer?: string | null
+  expected_rules?: RuleConfig | null
+  turns?: TurnItem[] | null
+  session_expected?: Record<string, unknown> | null
+  user_goal?: string | null
+  initial_query?: string | null
+  persona_description?: string | null
+  hidden_context?: HiddenContextItem[] | null
+  max_turns?: number | null
+  terminate_conditions?: Record<string, unknown> | null
+  answer_envelope?: AnswerEnvelope | null
+  response_contract?: ResponseContract | null
+  plan_spec?: PlanSpec | null
+  grading_mode?: string | null
+  as_of?: string | null
+  [key: string]: unknown
+}
+
 export interface TestCase {
   id: number
   code: string
@@ -1146,7 +1173,7 @@ export interface ExecutionDetail extends ExecutionListItem {
   rule_result: Record<string, unknown> | null
   judge_result: Record<string, unknown> | null
   error_message: string | null
-  case_snapshot: Record<string, unknown>
+  case_snapshot: CaseSnapshot
   trace_uid: string
   turns: TurnTrace[]
   judges: JudgeResult[]
