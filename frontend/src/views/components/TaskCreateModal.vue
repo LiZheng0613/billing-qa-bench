@@ -94,6 +94,19 @@ async function loadOptions(): Promise<void> {
     ])
     cases.value = allCases
     environments.value = envPage.items
+    // 复制模式：源任务带入的用例可能已被停用或删除，
+    // 选项加载完成后立即清理，避免提交时整单失败。
+    if (props.copyFrom && form.case_scope === 'SELECTED') {
+      const activeIds = new Set(
+        cases.value.filter((item) => item.status === 'ACTIVE').map((item) => item.id),
+      )
+      const before = form.case_ids.length
+      form.case_ids = form.case_ids.filter((id) => activeIds.has(id))
+      const removed = before - form.case_ids.length
+      if (removed > 0) {
+        toast.info(`已自动移除 ${removed} 条停用或已删除的用例`)
+      }
+    }
   } catch (exc) {
     toast.error(errorMessage(exc))
   } finally {
