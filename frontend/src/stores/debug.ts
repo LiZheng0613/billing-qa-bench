@@ -4,6 +4,7 @@ import { api } from '../api'
 import { router } from '../router'
 import { errorMessage } from '../utils/errors'
 import { statusLabel } from '../utils/format'
+import type { ExecutionDetail } from '../types'
 import { useToastStore } from './toast'
 
 /**
@@ -21,6 +22,8 @@ export interface DebugTask {
   /** 发起页面路由（name + params.id）：胶囊展示与完成跳转都以它为基准 */
   originName: string
   originParamsId: string
+  /** 是否来自调试工作台的草稿试运行：胶囊点击后进入用例详情页而非 trace */
+  fromWorkbench: boolean
   /** 用户已收起「调试中」胶囊：仅隐藏运行提示，完成后仍弹出结果胶囊 */
   runningDismissed: boolean
   status: DebugTaskStatus
@@ -36,6 +39,13 @@ export interface DebugTask {
   totalScore: number | null
   /** 失败追问自检状态（DONE / SKIPPED / ERROR），未开启未自检为 null */
   selfCheckStatus: string | null
+  /** 请求异常时的错误摘要 */
+  errorText: string | null
+}
+
+export interface DebugRunOutcome {
+  /** 成功时的执行详情（工作台据此回填试运行结果） */
+  detail: ExecutionDetail | null
   /** 请求异常时的错误摘要 */
   errorText: string | null
 }
@@ -87,6 +97,10 @@ export const useDebugStore = defineStore('debug', () => {
    * - 完成时仍在发起页 → 保持原有体验（toast + 自动跳转 trace，不出气泡）；
    * - 完成时已离开发起页 → 不跳转，底部胶囊常驻展示结果，仅手动关闭；
    * - 请求异常 → 不跳转，胶囊展示错误摘要。
+   *
+   * 调试工作台（`draft` + `snapshotOverride`）复用同一套生命周期：
+   * 只是完成时回到工作台内联展示结果，不自动跳转 trace；
+   * 离开工作台后同样由底部胶囊提示，胶囊点击进入用例详情页。
    */
   async function run(input: {
     id: number
@@ -94,17 +108,23 @@ export const useDebugStore = defineStore('debug', () => {
     environmentId?: number | null
     /** LLM 裁决判失败时，在同一会话内追问被测 Agent 自检原因 */
     enableSelfCheck?: boolean
-  }): Promise<void> {
-    if (isRunning(input.id)) return
+    /** 工作台草稿快照：浅合并到当前版本快照后执行 */
+    snapshotOverride?: Record<string, unknown>
+    /** 草稿试跑：执行记录标记 SANDBOX，不进入趋势统计 */
+    draft?: boolean
+  }): Promise<DebugRunOutcome> {
+    if (isRunning(input.id)) return { detail: null, errorText: null }
     seed += 1
     // 记录发起页面：胶囊只在用户离开它之后展示；完成时「仍在原页」才自动跳转
     const origin = router.currentRoute.value
+    const fromWorkbench = String(origin.name ?? '') === 'case-debug'
     const task: DebugTask = {
       id: seed,
       caseId: input.id,
       caseCode: input.code,
       originName: String(origin.name ?? ''),
       originParamsId: String(origin.params.id ?? ''),
+      fromWorkbench,
       runningDismissed: false,
       status: 'running',
       startedAt: Date.now(),
@@ -119,12 +139,16 @@ export const useDebugStore = defineStore('debug', () => {
     }
     tasks.value = [...tasks.value, task]
 
-    toast.info(`正在执行 ${input.code} 单条调试，请稍候…`)
+    if (!fromWorkbench) {
+      toast.info(`正在执行 ${input.code} 单条调试，请稍候…`)
+    }
 
     try {
       const detail = await api.cases.debug(input.id, {
         environment_id: input.environmentId ?? null,
         enable_self_check: input.enableSelfCheck ?? false,
+        ...(input.snapshotOverride ? { case_snapshot_override: input.snapshotOverride } : {}),
+        ...(input.draft ? { draft: true } : {}),
       })
       const finishedAt = Date.now()
       const selfCheckStatus = detail.self_check?.status ?? null
@@ -138,38 +162,50 @@ export const useDebugStore = defineStore('debug', () => {
         totalScore: detail.total_score,
         selfCheckStatus,
       })
+      // 各自提示文案：工作台叫「试运行」，用例列表叫「单条调试」
+      const actionLabel = fromWorkbench ? '试运行' : '调试'
+      const selfCheckNote =
+        selfCheckStatus === 'DONE'
+          ? '，已追问自检'
+          : selfCheckStatus === 'SKIPPED'
+            ? '，自检未触发'
+            : selfCheckStatus === 'ERROR'
+              ? '，自检追问失败'
+              : ''
       if (isOnOrigin(task)) {
-        // 先移除任务再跳转，避免完成瞬间「结果胶囊」在原页面闪现
-        const selfCheckNote =
-          selfCheckStatus === 'DONE'
-            ? '，已追问自检'
-            : selfCheckStatus === 'SKIPPED'
-              ? '，自检未触发'
-              : selfCheckStatus === 'ERROR'
-                ? '，自检追问失败'
-                : ''
         toast.success(
-          `调试完成：${statusLabel(detail.status)}，得分 ${detail.total_score ?? '—'}${selfCheckNote}`,
+          `${actionLabel}完成：${statusLabel(detail.status)}，得分 ${detail.total_score ?? '—'}${selfCheckNote}`,
         )
+        // 先移除任务再跳转，避免完成瞬间「结果胶囊」在原页面闪现
         remove(task.id)
-        await router.push({
-          name: 'trace',
-          query: {
-            execution: String(detail.id),
-            from: 'case',
-            // 自检成功时直接落在「追问自检」页签，省一次点击
-            ...(selfCheckStatus === 'DONE' ? { tab: 'selfcheck' } : {}),
-          },
-        })
+        if (!fromWorkbench) {
+          await router.push({
+            name: 'trace',
+            query: {
+              execution: String(detail.id),
+              from: 'case',
+              // 自检成功时直接落在「追问自检」页签，省一次点击
+              ...(selfCheckStatus === 'DONE' ? { tab: 'selfcheck' } : {}),
+            },
+          })
+        }
       }
+      return { detail, errorText: null }
     } catch (exc) {
       const finishedAt = Date.now()
+      const errorText = errorMessage(exc)
       patch(task.id, {
         status: 'failed',
         finishedAt,
         durationMs: finishedAt - task.startedAt,
-        errorText: errorMessage(exc),
+        errorText,
       })
+      // 工作台内联展示错误；回到发起页时不再叠一个失败胶囊
+      if (fromWorkbench && isOnOrigin(task)) {
+        remove(task.id)
+        toast.error(errorText)
+      }
+      return { detail: null, errorText }
     }
   }
 

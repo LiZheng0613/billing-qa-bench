@@ -57,7 +57,8 @@ const models = ref<ModelConfig[]>([])
 const loading = ref(true)
 const loadError = ref('')
 const saving = ref(false)
-const running = ref(false)
+// 试运行状态归全局 store：切到其他页面 / 其他用例时按钮态仍然准确
+const running = computed(() => debugStore.isRunning(caseId.value))
 const runError = ref('')
 const selfCheck = ref(false)
 const environmentId = ref<number | null>(null)
@@ -123,34 +124,37 @@ async function loadAll(): Promise<void> {
 
 async function onTryRun(payload: CasePayload): Promise<void> {
   const current = item.value
-  if (!current || running.value || debugStore.isRunning(current.id)) return
-  running.value = true
+  if (!current || running.value) return
   runError.value = ''
   savedVersion.value = null
+  const runCaseId = current.id
   try {
-    const detail = await api.cases.debug(current.id, {
-      environment_id: payload.environment_id ?? environmentId.value ?? current.environment_id ?? null,
-      enable_self_check: selfCheck.value,
-      case_snapshot_override: buildDebugSnapshotOverride(payload),
+    // 试运行生命周期交给全局 debug store：离开工作台后底部胶囊接管进度，
+    // 完成后气泡可直接回到本工作台查看结果。
+    const outcome = await debugStore.run({
+      id: current.id,
+      code: current.code,
+      environmentId:
+        payload.environment_id ?? environmentId.value ?? current.environment_id ?? null,
+      enableSelfCheck: selfCheck.value,
+      snapshotOverride: buildDebugSnapshotOverride(payload),
       draft: true,
     })
+    if (!outcome.detail) {
+      if (outcome.errorText) runError.value = outcome.errorText
+      return
+    }
+    // 已切到别的用例：结果只回填发起它的那个工作台
+    if (loadedCaseId !== runCaseId) return
     runSeq.value += 1
-    runs.value = [{ seq: runSeq.value, detail, finishedAt: Date.now() }, ...runs.value]
-    expandedRunId.value = detail.id
-    const selfCheckNote =
-      detail.self_check?.status === 'DONE'
-        ? '，已追问自检'
-        : detail.self_check?.status === 'ERROR'
-          ? '，自检追问失败'
-          : ''
-    toast.success(
-      `试运行完成：${statusLabel(detail.status)}，得分 ${detail.total_score ?? '—'}${selfCheckNote}`,
-    )
+    runs.value = [
+      { seq: runSeq.value, detail: outcome.detail, finishedAt: Date.now() },
+      ...runs.value,
+    ]
+    expandedRunId.value = outcome.detail.id
   } catch (exc) {
     runError.value = errorMessage(exc)
     toast.error(runError.value)
-  } finally {
-    running.value = false
   }
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AnimatedNumber from './AnimatedNumber.vue'
 import { router } from '../router'
 import { useDebugStore } from '../stores/debug'
@@ -59,6 +59,23 @@ const collapsed = computed(() => ordered.value.length >= 3 && !expanded.value)
 const hiddenCount = computed(() => Math.max(0, ordered.value.length - 2))
 const visible = computed<DebugTask[]>(() =>
   collapsed.value ? ordered.value.slice(-2) : ordered.value,
+)
+
+/**
+ * 工作台草稿试运行的结果已经内联展示：用户回到工作台后，
+ * 自动清掉对应的完成 / 失败气泡，避免同一结果重复提示。
+ * 运行中的任务回到工作台时本身就会被 ordered 隐藏。
+ */
+watch(
+  () =>
+    `${String(router.currentRoute.value.name)}#${String(router.currentRoute.value.params.id ?? '')}`,
+  () => {
+    for (const task of debug.tasks) {
+      if (task.fromWorkbench && task.status !== 'running' && debug.isOnOrigin(task)) {
+        debug.remove(task.id)
+      }
+    }
+  },
 )
 
 /** 关闭/收起动画进行中的任务：180ms 淡出后再执行移除，避免胶囊瞬间消失 */
@@ -140,12 +157,27 @@ function truncate(text: string, max = 36): string {
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 
-/** 运行中胶囊的「查看结果」：结果尚未产生，先跳转该用例详情页 */
-function openCase(task: DebugTask): void {
+/** 工作台试运行与用例列表单条调试的文案区分 */
+function actionVerb(task: DebugTask): string {
+  return task.fromWorkbench ? '试运行' : '调试'
+}
+
+/** 工作台跑出的任务：气泡点击直接进入该用例详情页 */
+function openCaseDetail(task: DebugTask): void {
   void router.push({ name: 'case-detail', params: { id: String(task.caseId) } })
 }
 
+/** 运行中胶囊的「查看结果」：结果尚未产生，先进入该用例详情页 */
+function openCase(task: DebugTask): void {
+  openCaseDetail(task)
+}
+
 function viewResult(task: DebugTask): void {
+  if (task.fromWorkbench) {
+    openCaseDetail(task)
+    closeTask(task)
+    return
+  }
   if (task.executionId === null) return
   // 「查看结果」与 × 等价：跳转 trace 的同时关闭该胶囊（带淡出）
   void router.push({
@@ -206,10 +238,12 @@ function viewResult(task: DebugTask): void {
             <path stroke-linecap="round" d="M12 3a9 9 0 1 0 9 9" />
           </svg>
         </span>
-        <span class="bubble-title">{{ task.caseCode }} 调试中…</span>
+        <span class="bubble-title">{{ task.caseCode }} {{ actionVerb(task) }}中…</span>
         <span class="bubble-sub">{{ elapsedText(task) }}</span>
         <span class="bubble-sep"></span>
-        <button class="bubble-cta" @click="openCase(task)">查看结果 →</button>
+        <button class="bubble-cta" @click="openCase(task)">
+          {{ task.fromWorkbench ? '查看调试详情 →' : '查看结果 →' }}
+        </button>
         <button
           class="bubble-close"
           aria-label="关闭运行提示"
@@ -240,11 +274,18 @@ function viewResult(task: DebugTask): void {
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M18 6 6 18" />
           </svg>
         </span>
-        <span class="bubble-title">{{ task.caseCode }} 调试失败</span>
+        <span class="bubble-title">{{ task.caseCode }} {{ actionVerb(task) }}失败</span>
         <span class="bubble-sub" :title="task.errorText ?? undefined">
           {{ truncate(task.errorText ?? '请求异常') }}
         </span>
         <span class="bubble-sep bubble-in"></span>
+        <button
+          v-if="task.fromWorkbench"
+          class="bubble-cta bubble-in"
+          @click="viewResult(task)"
+        >
+          查看调试详情 →
+        </button>
         <button
           class="bubble-close bubble-in"
           aria-label="关闭提示"
@@ -290,7 +331,7 @@ function viewResult(task: DebugTask): void {
           </svg>
         </span>
         <span class="bubble-title">
-          {{ task.caseCode }} 调试完成 ·
+          {{ task.caseCode }} {{ actionVerb(task) }}完成 ·
           <span
             class="font-bold"
             :class="task.passed === false ? 'text-rose-600' : 'text-emerald-600'"
@@ -319,7 +360,7 @@ function viewResult(task: DebugTask): void {
           style="animation-delay: 40ms"
           @click="viewResult(task)"
         >
-          查看结果 →
+          {{ task.fromWorkbench ? '查看调试详情 →' : '查看结果 →' }}
         </button>
         <button
           class="bubble-close bubble-in"
