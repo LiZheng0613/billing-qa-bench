@@ -451,7 +451,7 @@ def _render_preview_request(
     case_vars: dict[str, Any],
     query: str,
     session_id: str | None,
-) -> tuple[dict[str, Any], Any, list[str]]:
+) -> tuple[dict[str, Any], Any, list[str], list[str]]:
     """用环境模板 + 用例变量渲染一次请求（不发起真实前置接口）。"""
     variables: dict[str, Any] = dict(ctx.variables)
     variables.update(case_vars)
@@ -470,7 +470,10 @@ def _render_preview_request(
     )
 
     header_missing: list[str] = []
-    headers = render_structure(ctx.headers_template or {}, variables, header_missing)
+    header_errors: list[str] = []
+    headers = render_structure(
+        ctx.headers_template or {}, variables, header_missing, header_errors
+    )
     # 与真实执行一致：配置了 Basic 鉴权且模板未显式覆盖时，补充 Authorization 头
     if not any(str(key).lower() == "authorization" for key in (headers or {})):
         auth_header = basic_auth_header(ctx.basic_username, ctx.basic_password)
@@ -478,10 +481,11 @@ def _render_preview_request(
             headers = dict(headers or {})
             headers["Authorization"] = auth_header
     missing: list[str] = list(header_missing)
+    errors: list[str] = list(header_errors)
     body = render_structure(
-        ctx.body_template or dict(DEFAULT_BODY_TEMPLATE), variables, missing
+        ctx.body_template or dict(DEFAULT_BODY_TEMPLATE), variables, missing, errors
     )
-    return headers or {}, body, missing
+    return headers or {}, body, missing, errors
 
 
 @router.post(
@@ -505,9 +509,12 @@ async def preview_request(
     mode = resolve_session_mode(ctx.session_mode)
     query = _preview_query(case)
     session_id = init_session_id(mode, None)
-    headers, body, missing = _render_preview_request(ctx, case_vars, query, session_id)
+    headers, body, missing, errors = _render_preview_request(ctx, case_vars, query, session_id)
 
     warnings: list[str] = []
+    unique_errors = list(dict.fromkeys(errors))
+    if unique_errors:
+        warnings.append(f"模板表达式错误：{'；'.join(unique_errors)}")
     unique_missing = list(dict.fromkeys(missing))
     if unique_missing:
         warnings.append(f"模板占位符缺少变量：{', '.join(unique_missing)}")
@@ -552,7 +559,7 @@ async def debug_chat(
     session_id = init_session_id(mode, None)
 
     # 无论本次调用成败，都回显渲染后的请求报文，便于排查模板/鉴权/变量问题
-    headers, body, _ = _render_preview_request(ctx, case_vars, query, session_id)
+    headers, body, _, _ = _render_preview_request(ctx, case_vars, query, session_id)
     request_preview = {
         "method": ctx.api_method,
         "url": ctx.chat_url,

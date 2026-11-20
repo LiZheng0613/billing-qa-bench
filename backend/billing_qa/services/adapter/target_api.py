@@ -227,8 +227,12 @@ class TargetApiAdapter:
         variables: dict[str, Any] = dict(self.env.variables)
         variables.update(extra_variables or {})
         missing: list[str] = []
-        headers = render_structure(hook.get("headers") or {}, variables, missing)
-        body = render_structure(hook.get("body"), variables, missing)
+        errors: list[str] = []
+        headers = render_structure(hook.get("headers") or {}, variables, missing, errors)
+        body = render_structure(hook.get("body"), variables, missing, errors)
+        if errors:
+            unique_errors = list(dict.fromkeys(errors))
+            raise TargetApiError("前置接口模板表达式错误: " + "; ".join(unique_errors))
         if missing:
             unique = list(dict.fromkeys(missing))
             raise TargetApiError(f"前置接口变量缺失: {', '.join(unique)}")
@@ -309,11 +313,18 @@ class TargetApiAdapter:
                 }
             )
             header_missing: list[str] = []
-            headers = render_structure(self.env.headers_template or {}, variables, header_missing)
-            missing: list[str] = list(header_missing)
-            body = render_structure(
-                self.env.body_template or dict(DEFAULT_BODY_TEMPLATE), variables, missing
+            header_errors: list[str] = []
+            headers = render_structure(
+                self.env.headers_template or {}, variables, header_missing, header_errors
             )
+            missing: list[str] = list(header_missing)
+            errors: list[str] = list(header_errors)
+            body = render_structure(
+                self.env.body_template or dict(DEFAULT_BODY_TEMPLATE), variables, missing, errors
+            )
+            if errors:
+                unique_errors = list(dict.fromkeys(errors))
+                raise TargetApiError("请求模板表达式错误: " + "; ".join(unique_errors))
             if missing:
                 unique = list(dict.fromkeys(missing))
                 raise TargetApiError(f"请求模板变量缺失: {', '.join(unique)}")

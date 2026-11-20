@@ -38,7 +38,7 @@
 | 三重熔断 | 最大轮次 `MAX_TURNS_EXCEEDED`、复读检测 `REPETITION_ABORT`、模拟器放弃 `GIVE_UP`；熔断一律判不通过 |
 | 混合裁决 | 规则硬校验 + LLM 裁判，`AVG` / `VETO` 策略，多裁判可并行；`ANSWER_CONTRACT` 模式由安全 / 行为 / 事实 / 扩展四道闸门判定 |
 | 答案契约判分 | Must / May / MustNot 事实包络；名称-数值绑定（数值必须归属正确的业务名称）；取数取证（`gold_query`）与 `lucky_pass` 侥幸通过诊断 |
-| 被测系统对接 | SSE 流式 / JSON 非流式；请求头 / 体模板 `{{variable}}` 渲染；**Basic 鉴权**；**前置接口钩子**（取 `conversationId` / Token，多字段 JSONPath 提取）；会话由服务端返回回填或客户端生成；ISO 时间戳每轮刷新 |
+| 被测系统对接 | SSE 流式 / JSON 非流式；请求头 / 体模板 `{{variable}}` 占位 + Jinja2 表达式（去空格 / 替换 / Base64 / MD5 / 时间戳等）；**Basic 鉴权**；**前置接口钩子**（取 `conversationId` / Token，多字段 JSONPath 提取）；会话由服务端返回回填或客户端生成；ISO 时间戳每轮刷新 |
 | Prompt 资产 | 模板版本管理、`LATEST / PINNED` 引用策略、单用例覆盖、引用影响面分析、在线试跑沙盒 |
 | AI 帮我填 | 用例抽屉中可手动填写的语义字段均可由 AI 起草回填（不落库，人工确认后应用）；无依据的数值 / 日期不编造，进入「待补充」 |
 | 评审与数据集治理 | 答案契约用例「评审 → 冻结」两步进入数据集，Must 事实强制取证；候选池承接生产日志 / 执行轨迹 / 手工录入，分诊转正 |
@@ -62,7 +62,8 @@ batch_test/
 │   │   ├── models/            # 22 张 ORM 表（18 业务 + 用户 / 角色 / 权限 / 审计）
 │   │   ├── schemas/           # Pydantic 请求/响应模型
 │   │   └── services/
-│   │       ├── adapter/       # 被测系统适配（SSE / JSON、模板渲染、JSONPath 提取、Basic 鉴权、前置接口钩子）
+│   │       ├── adapter/       # 被测系统适配（SSE / JSON、JSONPath 提取、Basic 鉴权、前置接口钩子）
+│   │       ├── templating/    # 模板表达式能力（Jinja2 沙箱引擎、过滤器注册表、变量识别）
 │   │       ├── author/        # AI 用例草稿生成（数值依据校验、字段白名单、多候选去重）
 │   │       ├── capability/    # 取数通道与能力模板（Cypher 工具 / 只读 SQL / HTTP 查询接口）
 │   │       ├── engine/        # 执行器、调度器、规则校验、裁判、指标聚合
@@ -87,7 +88,7 @@ batch_test/
 │       ├── access/            # 访问管理：用户 / 角色与权限 / 审计日志
 │       ├── views/             # 登录 / 测试大盘 / 批量任务与详情 / 用例与详情 / Prompt / 单笔执行结果 / 环境与模型 / 运营后台
 │       └── utils/
-├── docs/                      # 部署、用例 JSON 格式、Agent 对接、答案契约操作手册、演示数据集等
+├── docs/                      # 部署、用例 JSON 格式、Agent 对接、模板表达式语法、答案契约操作手册、演示数据集等
 └── README.md
 ```
 
@@ -307,7 +308,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 ### 6.7 请求变量与多轮会话
 
-环境模板（`headers_template` / `body_template`）用 `{{variable}}` 占位，具体取值按用例注入：
+环境模板（`headers_template` / `body_template`）用 `{{variable}}` 占位，具体取值按用例注入；模板同样支持 **Jinja2 表达式**（如 `"x-agent-usr": "admin_{{ custCode | replace(' ', '') }}"`），可用于拼接固定前缀、去空格、Base64 / MD5 / URL 编码、时间戳等。完整语法、内置过滤器与示例见 [`docs/TEMPLATE_EXPRESSION_SYNTAX.md`](docs/TEMPLATE_EXPRESSION_SYNTAX.md)。
 
 - **请求变量**：用例级 `request_variables`（key-value，值支持字符串 / 数字 / JSON），在用例抽屉「请求变量」中按行维护或直接编辑 JSON；不放敏感信息，明文保存。所有数字（含嵌套对象 / 数组里的数字）统一按原文保存为字符串，避免手机号、订单号等长数字丢精度或变成科学计数法。
 - **三层优先级**：运行时变量（`query` / `session_id` / `history` / `history_text` / `turn` / `timestamp_iso`）> 用例 `request_variables` > 环境变量池。其中 `query` / `history` / `history_text` / `turn` / `timestamp_iso` 为保留字，不允许在用例变量中定义；`session_id` 由会话机制注入，用例中自定义会被运行时值覆盖。
@@ -533,6 +534,8 @@ npm run test:e2e    # 「AI 帮我填」主链路回归
 生产部署（Linux + systemd + Nginx，或容器化）与安全加固清单见 [`docs/deployment.md`](docs/deployment.md)。
 
 对接真实 Agent 系统（Basic 鉴权、前置取 `conversationId`、会话回填、时间戳）的配置指导见 [`docs/AGENT_INTEGRATION_GUIDE.md`](docs/AGENT_INTEGRATION_GUIDE.md)。
+
+模板表达式（固定前缀拼接、去空格、Base64 / MD5、时间戳等）的完整语法与过滤器清单见 [`docs/TEMPLATE_EXPRESSION_SYNTAX.md`](docs/TEMPLATE_EXPRESSION_SYNTAX.md)。
 
 ---
 

@@ -112,6 +112,7 @@
 说明：
 
 - `body` / `headers` 可用环境变量池与**用例请求变量**渲染；
+- 模板支持 Jinja2 表达式，可对变量做去空格 / 替换 / 编码等加工，例如 `"x-agent-usr": "admin_{{ custCode | replace(' ', '') }}"`（完整语法见 [`TEMPLATE_EXPRESSION_SYNTAX.md`](TEMPLATE_EXPRESSION_SYNTAX.md)）；
 - `extract` 为「变量名 → JSONPath」映射，提取结果写入变量池，供主请求与后续轮次复用；
 - 每次执行只调用一次，即每次执行一个 `conversationId`；
 - 所有 `extract` 字段必须都能取到非空值，否则执行直接报错（不会静默发送空值）；
@@ -138,6 +139,9 @@
 ```
 
 - 示例中的 `xxx`、`agent`、`model` 为固定字段，按真实接口保留/增删；
+- 模板支持 Jinja2 表达式：可拼接固定前缀、去空格、做 Base64 / MD5 / 时间格式化等，例如
+  `"x-agent-usr": "admin_{{ custCode | replace(' ', '') }}"`、
+  `"ts": "{{ now('%Y%m%d%H%M%S') }}"`（完整语法见 [`TEMPLATE_EXPRESSION_SYNTAX.md`](TEMPLATE_EXPRESSION_SYNTAX.md)）；
 - 首轮 `sessionid` 会渲染为 `""`，服务端按首轮处理；后续轮次自动填入响应返回值；
 - `timestampe` 的字段名以接口为准（示例沿用对接报文中的拼写）。
 
