@@ -23,16 +23,23 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.core.config import settings
 from billing_qa.core.crypto import encrypt_value
-from billing_qa.models.candidate import Caliber, CaseCandidate
+from billing_qa.core.security import hash_password
+from billing_qa.db.base import now
+from billing_qa.db.seed import extract_variables
+from billing_qa.models.candidate import Caliber, CaseCandidate, GraderEval
+from billing_qa.models.capability import Capability, DataSource
 from billing_qa.models.enums import (
     CaseType,
+    DataSourceKind,
+    InputType,
     JudgeStrategy,
     ModelRole,
     RevisionChangeType,
@@ -42,11 +49,14 @@ from billing_qa.models.environment import Environment, EnvironmentVariable
 from billing_qa.models.execution import ExecutionRecord, JudgeResult, TurnTrace
 from billing_qa.models.gold_query import FactResult, GoldQuery
 from billing_qa.models.model_config import ModelConfig
-from billing_qa.models.prompt_template import PromptTemplate
+from billing_qa.models.prompt_template import PromptTemplate, PromptTemplateVersion
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase, TestCaseRevision
+from billing_qa.models.user import SysAuditLog, SysRole, SysUser, sys_user_role
+from billing_qa.services.grading.mutants import run_mutants
 from billing_qa.services.revision.refs import refresh_template_refs
 from billing_qa.services.revision.snapshot import build_snapshot
+from mock_servers.capability_api import build_capability_result
 
 DEMO_ENV_CODE = "QA-MOCK"
 DEMO_JSON_ENV_CODE = "QA-MOCK-JSON"
@@ -2019,6 +2029,110 @@ def _build_cases(
             "judge_strategy": JudgeStrategy.AVG.value,
             "pass_threshold": 60,
         },
+        # ================= 新业务域 / 输入形态补齐 =================
+        {
+            **common,
+            "code": "DEMO-SINGLE-INVOICE",
+            "name": "单轮 · 电子发票金额与开票状态",
+            "description": "查询可开票金额、已开票金额与发票状态，覆盖发票域。",
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["发票", "开票状态"],
+            "priority": "P2",
+            "query": "13800138000 在 2026-10 能开多少金额的电子发票？发票状态是什么？",
+            "expected_answer": (
+                "手机号 13800138000 在 2026-10 可开具电子发票金额为 ¥268.50，"
+                "已开票金额 ¥0.00，发票状态为可开具。"
+            ),
+            "expected_rules": {
+                "amounts": [{"label": "可开票金额", "value": 268.50, "tolerance": 0.01}],
+                "must_contain": ["发票", "268.50"],
+            },
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+        },
+        {
+            **common,
+            "code": "DEMO-SINGLE-POINTS",
+            "name": "单轮 · 积分余额与兑换权益",
+            "description": "查询积分余额与可兑换权益，覆盖积分域。",
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["积分", "权益兑换"],
+            "priority": "P2",
+            "query": "13500135000 当前有多少积分？可以兑换什么？",
+            "expected_answer": (
+                "手机号 13500135000 当前可用积分 56000 分，"
+                "可兑换话费、流量包或视频会员权益。"
+            ),
+            "expected_rules": {
+                "counts": [{"label": "可用积分", "value": 56000}],
+                "must_contain": ["积分", "56000"],
+            },
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+        },
+        {
+            **contract_common,
+            "code": "DEMO-CONTRACT-VAGUE",
+            "name": "契约模式 · 模糊表达（带假设作答）",
+            "description": "用户只说「这个月怎么这么贵」，允许澄清或按最近账期声明假设作答。",
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["答案契约", "模糊表达", "假设作答"],
+            "priority": "P1",
+            "query": "13800138000 这个月怎么这么贵？",
+            "expected_answer": (
+                "按最近一期账期 2026-10 口径，手机号 13800138000 的账单总额为 "
+                "¥268.50，共 4 项费用。"
+            ),
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+            "input_type": InputType.VAGUE.value,
+            "as_of": "2026-10",
+            "answer_envelope": _envelope(
+                [
+                    _verified_scalar("total_amount", "账单总额", 268.50),
+                    _verified_text("phone_no", "手机号", ["13800138000"]),
+                ],
+                may=[_may_text("bill_period", "账期", ["2026-10"])],
+            ),
+            "response_contract": _contract(
+                ["clarify", "answer_with_assumption"],
+                clarify_slots=["period"],
+                assumption="按最近一期账期 2026-10 口径",
+                scenario_must={"bill_total": 268.50},
+            ),
+            "plan_spec": _plan(["bill_query"]),
+        },
+        {
+            **contract_common,
+            "code": "DEMO-CONTRACT-UNANSWERABLE",
+            "name": "契约模式 · 不可回答（超范围拒答）",
+            "description": "查询不存在的火星号码，要求明确拒绝并说明可服务范围。",
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["答案契约", "不可回答", "拒答"],
+            "priority": "P2",
+            "query": "帮我查一下火星号码 19900001111 的账单明细",
+            "expected_answer": (
+                "抱歉，当前系统无法查询火星号码的通信账单，请核实号码后再试。"
+            ),
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+            "input_type": InputType.UNANSWERABLE.value,
+            "as_of": "2026-10",
+            "answer_envelope": _envelope(
+                [
+                    _verified_text("refusal", "拒答说明", ["无法查询", "火星"]),
+                ],
+                may=[_may_text("scope", "可服务范围", ["账单", "套餐"])],
+            ),
+            "response_contract": _contract(
+                ["refuse", "clarify"], clarify_slots=["phone"]
+            ),
+            "plan_spec": _plan([]),
+        },
         # ================= 状态 / 审核 / 版本 =================
         {
             **common,
@@ -2284,10 +2398,299 @@ def _dedupe_hash(raw_question: str, context: dict | None) -> str:
 
 
 # ---------------------------------------------------------------------- #
+# 取数资产 / 演示用户
+# ---------------------------------------------------------------------- #
+DEMO_DATA_SOURCE_CODE = "MOCK-CYPHER-TOOL"
+DEMO_DATA_SOURCE_LEGACY = "MOCK-CYPHER-LEGACY"
+DEMO_DSN = "http://127.0.0.1:8003"
+
+_DEMO_PHONE_PARAM = {
+    "name": "phone",
+    "label": "手机号",
+    "type": "entity",
+    "required": True,
+    "description": "电信计费演示号码，如 13800138000",
+}
+_DEMO_PERIOD_PARAM = {
+    "name": "period",
+    "label": "账期",
+    "type": "string",
+    "required": False,
+    "description": "账期，缺省取最近一期（2026-10）",
+}
+_DEMO_LOOKUP = {
+    "entity:phone": "MATCH (s:Subscriber) RETURN s.phone AS phone, s.customer AS label LIMIT 20"
+}
+_DEMO_CERT = {
+    "total": 5,
+    "detected": 5,
+    "false_kills": 0,
+    "baseline_passed": True,
+    "dataset_version": DATASET_VERSION,
+    "checked_at": "2026-11-16T10:20:00",
+}
+
+DEMO_CAPABILITIES: list[dict[str, Any]] = [
+    {
+        "key": "bill_current",
+        "name": "账单总额与费用项数",
+        "description": "按手机号 + 账期查询账单总额、费用项数与主套餐，供账单类事实取证。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:bill_current */ "
+            "RETURN s.bill_total AS bill_total, size(s.bill_items) AS item_count, "
+            "s.package_name AS package_name"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM, _DEMO_PERIOD_PARAM],
+        "param_binding": {"phone": "phone", "period": "period"},
+        "intent_patterns": ["账单", "总额", "费用项", "话费"],
+        "status": "CERTIFIED",
+        "version": 3,
+    },
+    {
+        "key": "bill_items",
+        "name": "账单费用构成明细",
+        "description": "返回账单下每一项费用的名称与金额，供费用构成集合事实取证。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:bill_items */ "
+            "UNWIND s.bill_items AS i RETURN i.name AS item_name, i.amount AS amount"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM, _DEMO_PERIOD_PARAM],
+        "param_binding": {"phone": "phone", "period": "period"},
+        "intent_patterns": ["费用构成", "明细", "账单明细"],
+        "status": "CERTIFIED",
+        "version": 2,
+    },
+    {
+        "key": "usage_current",
+        "name": "套餐用量与超套",
+        "description": "返回流量/语音/短信总量、已用量、超套量与超套费，供套餐用量事实取证。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:usage_current */ "
+            "RETURN s.data_total_gb, s.data_used_gb, s.data_overage_fee, "
+            "s.voice_total_min, s.voice_used_min, s.sms_total, s.sms_used"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM, _DEMO_PERIOD_PARAM],
+        "param_binding": {"phone": "phone", "period": "period"},
+        "intent_patterns": ["套餐", "余量", "流量", "超套", "语音", "短信"],
+        "status": "CERTIFIED",
+        "version": 2,
+    },
+    {
+        "key": "offer_available",
+        "name": "可订购 offer 目录",
+        "description": "返回当前可加装的流量包、语音包、5G 升级包与漫游包，供目录类事实取证。",
+        "query_text": (
+            "MATCH (o:Offer) /* capability:offer_available */ WHERE o.available = true "
+            "RETURN o.offer_id AS offer_id, o.name AS offer_name, o.monthly_fee AS monthly_fee, "
+            "o.discount_fee AS discount_fee"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM],
+        "param_binding": {"phone": "phone"},
+        "intent_patterns": ["可订购", "加装", "offer", "加油包", "漫游包"],
+        "status": "CERTIFIED",
+        "version": 2,
+    },
+    {
+        "key": "offer_ordered",
+        "name": "已订购 offer 与合约",
+        "description": "返回已订购 offer、月费、优惠价、生效/失效日与合约到期日。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone})-[:ORDERED]->(o:Offer) "
+            "/* capability:offer_ordered */ RETURN o.offer_id AS offer_id, "
+            "o.name AS offer_name, o.monthly_fee AS monthly_fee, o.contract_until AS contract_until"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM],
+        "param_binding": {"phone": "phone"},
+        "intent_patterns": ["已订购", "合约", "套餐月费", "到期"],
+        "status": "CERTIFIED",
+        "version": 2,
+    },
+    {
+        "key": "balance_account",
+        "name": "账户余额与赠费",
+        "description": "返回可用余额、冻结余额、合计余额、赠费金额与赠费到期日。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:balance_account */ "
+            "RETURN s.balance_available, s.balance_frozen, s.balance_grant, "
+            "s.balance_grant_expire"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM],
+        "param_binding": {"phone": "phone"},
+        "intent_patterns": ["余额", "冻结", "赠费", "预存"],
+        "status": "CERTIFIED",
+        "version": 3,
+    },
+    {
+        "key": "arrears_status",
+        "name": "欠费与停机状态",
+        "description": "返回欠费金额、停机状态、未缴账期与未缴金额。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:arrears_status */ "
+            "RETURN s.arrears, s.service_status, s.unpaid_bills"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM],
+        "param_binding": {"phone": "phone"},
+        "intent_patterns": ["欠费", "停机", "滞纳金", "复机"],
+        "status": "CERTIFIED",
+        "version": 2,
+    },
+    {
+        "key": "roaming_usage",
+        "name": "国际漫游明细",
+        "description": "返回漫游目的地、起止日期、流量与费用；无漫游时返回空行。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:roaming_usage */ "
+            "RETURN s.roaming AS roaming"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM, _DEMO_PERIOD_PARAM],
+        "param_binding": {"phone": "phone", "period": "period"},
+        "intent_patterns": ["漫游", "国际", "境外", "出国"],
+        "status": "CERTIFIED",
+        "version": 1,
+    },
+    {
+        "key": "vas_items",
+        "name": "增值业务订购",
+        "description": "返回彩铃、视频会员、IPTV 等增值业务的订购状态与月费。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:vas_items */ "
+            "UNWIND s.vas AS v RETURN v.name AS service_name, v.status AS status, "
+            "v.monthly_fee AS monthly_fee"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM],
+        "param_binding": {"phone": "phone"},
+        "intent_patterns": ["增值", "彩铃", "视频会员", "IPTV"],
+        "status": "CERTIFIED",
+        "version": 1,
+    },
+    {
+        "key": "broadband_bundle",
+        "name": "融合宽带与 IPTV",
+        "description": "返回宽带产品、月费、状态、副卡数量与主套餐名称。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:broadband_bundle */ "
+            "RETURN s.broadband, s.sub_cards, s.package_name"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM],
+        "param_binding": {"phone": "phone"},
+        "intent_patterns": ["宽带", "IPTV", "融合", "网速"],
+        "status": "CERTIFIED",
+        "version": 1,
+    },
+    {
+        "key": "invoice_info",
+        "name": "电子发票信息",
+        "description": "返回可开票金额、已开票金额与发票状态。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:invoice_info */ "
+            "RETURN s.invoice_amount, s.invoice_status"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM, _DEMO_PERIOD_PARAM],
+        "param_binding": {"phone": "phone", "period": "period"},
+        "intent_patterns": ["发票", "开票", "电子发票"],
+        "status": "CERTIFIED",
+        "version": 1,
+    },
+    {
+        "key": "points_info",
+        "name": "积分余额",
+        "description": "返回当前可用积分与可兑换权益。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:points_info */ "
+            "RETURN s.points AS available_points"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM],
+        "param_binding": {"phone": "phone"},
+        "intent_patterns": ["积分", "兑换"],
+        "status": "CERTIFIED",
+        "version": 1,
+    },
+    {
+        "key": "package_contract",
+        "name": "套餐月费与合约期",
+        "description": "返回主套餐、月费、合约到期日与副卡数量；演示 DRAFT 能力。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:package_contract */ "
+            "RETURN s.package_name, s.monthly_fee, s.contract_until"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM],
+        "param_binding": {"phone": "phone"},
+        "intent_patterns": ["套餐", "月费", "合约期", "到期日"],
+        "status": "DRAFT",
+        "version": 1,
+    },
+    {
+        "key": "customer_profile",
+        "name": "客户画像与账户信息",
+        "description": "返回客户姓名、归属城市、账户号与主套餐；演示 DEPRECATED 能力。",
+        "query_text": (
+            "MATCH (s:Subscriber {phone: $phone}) /* capability:customer_profile */ "
+            "RETURN s.customer, s.city, s.account_no"
+        ),
+        "params_schema": [_DEMO_PHONE_PARAM],
+        "param_binding": {"phone": "phone"},
+        "intent_patterns": ["客户", "归属地", "账户"],
+        "status": "DEPRECATED",
+        "version": 1,
+    },
+]
+
+DEMO_GOLD_QUERY_SPECS: list[dict[str, Any]] = [
+    {"case_code": "DEMO-CONTRACT-001", "capability_key": "bill_current", "params": {"phone": "13800138000", "period": "2026-10"}},
+    {"case_code": "DEMO-CONTRACT-BILL-ITEMS", "capability_key": "bill_items", "params": {"phone": "13800138000", "period": "2026-10"}},
+    {"case_code": "DEMO-CONTRACT-USAGE", "capability_key": "usage_current", "params": {"phone": "13800138000", "period": "2026-10"}},
+    {"case_code": "DEMO-CONTRACT-OFFER-AVAILABLE", "capability_key": "offer_available", "params": {"phone": "13800138000"}},
+    {"case_code": "DEMO-CONTRACT-OFFER-ORDERED", "capability_key": "offer_ordered", "params": {"phone": "13800138000"}},
+    {"case_code": "DEMO-CONTRACT-BALANCE", "capability_key": "balance_account", "params": {"phone": "13800138000"}},
+    {"case_code": "DEMO-CONTRACT-ARREARS", "capability_key": "arrears_status", "params": {"phone": "13700137000"}},
+    {"case_code": "DEMO-SINGLE-ROAMING", "capability_key": "roaming_usage", "params": {"phone": "13800138000", "period": "2026-10"}},
+    {"case_code": "DEMO-SINGLE-VAS", "capability_key": "vas_items", "params": {"phone": "13800138000"}},
+    {"case_code": "DEMO-SINGLE-BROADBAND", "capability_key": "broadband_bundle", "params": {"phone": "13900139000"}},
+    {"case_code": "DEMO-SINGLE-INVOICE", "capability_key": "invoice_info", "params": {"phone": "13800138000", "period": "2026-10"}},
+    {"case_code": "DEMO-SINGLE-POINTS", "capability_key": "points_info", "params": {"phone": "13500135000"}},
+]
+
+DEMO_USERS: list[dict[str, str]] = [
+    {
+        "username": "qa_viewer",
+        "display_name": "只读观察员（演示）",
+        "password": "Viewer#12345",
+        "role": "VIEWER",
+        "email": "qa_viewer@example.com",
+    },
+    {
+        "username": "qa_owner",
+        "display_name": "用例编写员（演示）",
+        "password": "CaseOwner#12345",
+        "role": "CASE_OPERATOR",
+        "email": "qa_owner@example.com",
+    },
+    {
+        "username": "qa_reviewer",
+        "display_name": "用例评审员（演示）",
+        "password": "Reviewer#12345",
+        "role": "CASE_REVIEWER",
+        "email": "qa_reviewer@example.com",
+    },
+    {
+        "username": "qa_runner",
+        "display_name": "测试执行员（演示）",
+        "password": "Runner#12345",
+        "role": "TEST_OPERATOR",
+        "email": "qa_runner@example.com",
+    },
+]
+
+
+def _certified_at() -> datetime:
+    return datetime(2026, 11, 16, 10, 20, 0)
+
+
+# ---------------------------------------------------------------------- #
 # 清理 / 写入
 # ---------------------------------------------------------------------- #
 async def purge_cases(db: AsyncSession) -> None:
-    """清空全部用例及其执行数据、候选池（保留环境/模型/Prompt 等基础资产）。"""
+    """清空用例、执行、取数资产、判分器自检与演示审计数据（保留环境/模型/Prompt/用户等基础资产）。"""
     # 先清子表与执行链路，避免外键约束
     await db.execute(FactResult.__table__.delete())
     await db.execute(JudgeResult.__table__.delete())
@@ -2295,10 +2698,139 @@ async def purge_cases(db: AsyncSession) -> None:
     await db.execute(ExecutionRecord.__table__.delete())
     await db.execute(GoldQuery.__table__.delete())
     await db.execute(BatchTask.__table__.delete())
+    await db.execute(GraderEval.__table__.delete())
     await db.execute(CaseCandidate.__table__.delete())
+    await db.execute(Capability.__table__.delete())
+    await db.execute(DataSource.__table__.delete())
+    await db.execute(
+        ModelConfig.__table__.delete().where(
+            or_(
+                ModelConfig.code.like("test-%"),
+                ModelConfig.code.like("PYTEST-%"),
+                ModelConfig.code == "xzc",
+            )
+        )
+    )
+    await db.execute(SysAuditLog.__table__.delete())
     await db.execute(TestCaseRevision.__table__.delete())
     await db.execute(TestCase.__table__.delete())
     await db.commit()
+
+
+async def _seed_audit_logs(
+    db: AsyncSession, capabilities: dict[str, Capability]
+) -> None:
+    """写入少量可读的演示审计记录，避免测试脚本留下的 PYTEST 账号与操作噪音。"""
+    case = (
+        await db.execute(select(TestCase).where(TestCase.code == "DEMO-CONTRACT-001"))
+    ).scalar_one_or_none()
+    users = {
+        user.username: user
+        for user in (await db.execute(select(SysUser))).scalars().all()
+    }
+    prompt = (
+        await db.execute(
+            select(PromptTemplate).where(PromptTemplate.code == "SIM_DEFAULT_BILLING_USER")
+        )
+    ).scalar_one_or_none()
+    bill_cap = capabilities.get("bill_current")
+    source = (
+        await db.execute(
+            select(DataSource).where(DataSource.code == DEMO_DATA_SOURCE_CODE)
+        )
+    ).scalar_one_or_none()
+
+    base_time = datetime(2026, 11, 16, 10, 0, 0)
+    specs: list[dict[str, Any]] = [
+        {
+            "actor": "admin",
+            "action": "auth.login",
+            "resource": "auth",
+            "resource_id": None,
+            "path": "/api/v1/auth/login",
+            "detail": {"result": "success"},
+        },
+        {
+            "actor": "admin",
+            "action": "user.create",
+            "resource": "user",
+            "resource_id": str(users["qa_viewer"].id) if "qa_viewer" in users else None,
+            "path": "/api/v1/users",
+            "detail": {"username": "qa_viewer", "roles": ["VIEWER"]},
+        },
+        {
+            "actor": "admin",
+            "action": "user.create",
+            "resource": "user",
+            "resource_id": str(users["qa_owner"].id) if "qa_owner" in users else None,
+            "path": "/api/v1/users",
+            "detail": {"username": "qa_owner", "roles": ["CASE_OPERATOR"]},
+        },
+        {
+            "actor": "admin",
+            "action": "data_source.probe",
+            "resource": "data_source",
+            "resource_id": str(source.id) if source is not None else None,
+            "path": "/api/v1/data-sources/probe",
+            "detail": {"code": DEMO_DATA_SOURCE_CODE, "status": "OK"},
+        },
+        {
+            "actor": "admin",
+            "action": "capability.certify",
+            "resource": "capability",
+            "resource_id": str(bill_cap.id) if bill_cap is not None else None,
+            "path": "/api/v1/capabilities",
+            "detail": {"key": "bill_current", "status": "CERTIFIED"},
+        },
+        {
+            "actor": "admin",
+            "action": "case.update",
+            "resource": "case",
+            "resource_id": str(case.id) if case is not None else None,
+            "path": "/api/v1/cases",
+            "detail": {"code": "DEMO-CONTRACT-001", "change": "请求变量统一为字符串"},
+        },
+        {
+            "actor": "admin",
+            "action": "prompt.version.publish",
+            "resource": "prompt",
+            "resource_id": str(prompt.id) if prompt is not None else None,
+            "path": "/api/v1/prompts",
+            "detail": {"code": "SIM_DEFAULT_BILLING_USER", "version": 2},
+        },
+    ]
+    for index, spec in enumerate(specs):
+        exists = (
+            await db.execute(
+                select(SysAuditLog.id).where(
+                    SysAuditLog.actor_username == spec["actor"],
+                    SysAuditLog.action == spec["action"],
+                    SysAuditLog.resource == spec["resource"],
+                    SysAuditLog.resource_id == spec["resource_id"],
+                )
+            )
+        ).scalar_one_or_none()
+        if exists is not None:
+            continue
+        db.add(
+            SysAuditLog(
+                request_id=f"demo-{index + 1:03d}",
+                actor_id=users.get(spec["actor"]).id if spec["actor"] in users else None,
+                actor_username=spec["actor"],
+                action=spec["action"],
+                resource=spec["resource"],
+                resource_id=spec["resource_id"],
+                method="POST" if spec["action"] != "case.update" else "PUT",
+                path=spec["path"],
+                ip="127.0.0.1",
+                user_agent="demo-seed",
+                status_code=200,
+                success=True,
+                detail=spec["detail"],
+                created_at=base_time + timedelta(minutes=index * 7),
+            )
+        )
+    await db.flush()
 
 
 async def _get_or_create_calibers(db: AsyncSession) -> None:
@@ -2308,6 +2840,314 @@ async def _get_or_create_calibers(db: AsyncSession) -> None:
             continue
         db.add(Caliber(**spec))
     await db.flush()
+
+
+async def _get_or_create_data_sources(db: AsyncSession) -> dict[str, DataSource]:
+    """演示数据源：主执行器指向 8003 Mock，另保留一个停用的旧版执行器。"""
+    specs = [
+        {
+            "code": DEMO_DATA_SOURCE_CODE,
+            "name": "Mock Cypher 执行器（演示）",
+            "kind": DataSourceKind.CYPHER_TOOL.value,
+            "endpoint_url": DEMO_DSN,
+            "description": "内置 Mock 取数执行器：支持账单、用量、offer、余额、欠费、漫游、发票、积分等 14 类能力。",
+            "timeout_seconds": 10.0,
+            "max_rows": 200,
+            "tool_version": "mock-cypher-v0.1",
+            "is_active": True,
+        },
+        {
+            "code": DEMO_DATA_SOURCE_LEGACY,
+            "name": "旧版 Cypher 执行器（已停用）",
+            "kind": DataSourceKind.CYPHER_TOOL.value,
+            "endpoint_url": DEMO_DSN,
+            "description": "演示数据源停用态：能力不会绑定到该执行器。",
+            "timeout_seconds": 5.0,
+            "max_rows": 50,
+            "tool_version": "mock-cypher-v0.0",
+            "is_active": False,
+        },
+    ]
+    by_code: dict[str, DataSource] = {}
+    for spec in specs:
+        source = (
+            await db.execute(select(DataSource).where(DataSource.code == spec["code"]))
+        ).scalar_one_or_none()
+        if source is None:
+            source = DataSource(**spec)
+            db.add(source)
+            await db.flush()
+        else:
+            for key, value in spec.items():
+                setattr(source, key, value)
+        if source.is_active:
+            source.last_probe_status = "OK"
+            source.last_probe_latency_ms = 12.5
+            source.last_probe_at = _certified_at() + timedelta(minutes=5)
+            source.last_probe_message = "探活成功：Mock Cypher 执行器可用"
+        else:
+            source.last_probe_status = "FAILED"
+            source.last_probe_latency_ms = 8.0
+            source.last_probe_at = _certified_at() + timedelta(minutes=6)
+            source.last_probe_message = "数据源已停用，未探活"
+        by_code[spec["code"]] = source
+    await db.flush()
+    return by_code
+
+
+async def _get_or_create_capabilities(
+    db: AsyncSession, sources: dict[str, DataSource]
+) -> dict[str, Capability]:
+    primary = sources[DEMO_DATA_SOURCE_CODE]
+    by_key: dict[str, Capability] = {}
+    for spec in DEMO_CAPABILITIES:
+        payload = dict(spec)
+        status = payload.pop("status", "CERTIFIED")
+        version = int(payload.pop("version", 1))
+        is_active = bool(payload.pop("is_active", True))
+        capability = (
+            await db.execute(select(Capability).where(Capability.key == payload["key"]))
+        ).scalar_one_or_none()
+        fields = {
+            **payload,
+            "kind": "CYPHER",
+            "source_id": primary.id,
+            "lookup_queries": _DEMO_LOOKUP,
+            "status": status,
+            "version": version,
+            "is_active": is_active,
+        }
+        if status == "CERTIFIED":
+            fields.update(
+                {
+                    "cert_result": _DEMO_CERT,
+                    "certified_at": _certified_at(),
+                    "certified_by": TELE_OWNER,
+                }
+            )
+        else:
+            fields.update({"cert_result": None, "certified_at": None, "certified_by": None})
+        if capability is None:
+            capability = Capability(**fields)
+            db.add(capability)
+            await db.flush()
+        else:
+            for key, value in fields.items():
+                setattr(capability, key, value)
+        by_key[capability.key] = capability
+    await db.flush()
+    return by_key
+
+
+def _case_must_fact_ids(case: TestCase) -> list[str]:
+    envelope = case.answer_envelope or {}
+    return [
+        str(fact.get("id"))
+        for fact in envelope.get("must") or []
+        if isinstance(fact, dict) and fact.get("id")
+    ]
+
+
+async def _seed_gold_queries(
+    db: AsyncSession, capabilities: dict[str, Capability]
+) -> None:
+    """为答案契约 / 重点场景生成可审计的取证记录（静态演示数据，不依赖 8003 在线）。"""
+    base_time = datetime(2026, 11, 16, 10, 30, 0)
+    for index, spec in enumerate(DEMO_GOLD_QUERY_SPECS):
+        case = (
+            await db.execute(select(TestCase).where(TestCase.code == spec["case_code"]))
+        ).scalar_one_or_none()
+        capability = capabilities.get(spec["capability_key"])
+        if case is None or capability is None:
+            continue
+        exists = (
+            await db.execute(
+                select(GoldQuery.id).where(
+                    GoldQuery.case_id == case.id,
+                    GoldQuery.capability_id == capability.id,
+                    GoldQuery.origin == "CAPABILITY",
+                )
+            )
+        ).scalar_one_or_none()
+        if exists is not None:
+            continue
+        result = build_capability_result(spec["capability_key"], spec["params"])
+        db.add(
+            GoldQuery(
+                case_id=case.id,
+                capability_id=capability.id,
+                capability_version=capability.version,
+                origin="CAPABILITY",
+                fact_ids=_case_must_fact_ids(case),
+                template_params=spec["params"],
+                query_text=capability.query_text,
+                columns=result["columns"],
+                rows=result["rows"],
+                row_count=result["row_count"],
+                truncated=result["truncated"],
+                executor_version=result["executor_version"],
+                executed_at=base_time + timedelta(minutes=index * 3),
+            )
+        )
+    await db.flush()
+
+
+async def _seed_grader_eval(db: AsyncSession) -> None:
+    """写入一条判分器自检结果，运营后台可直接看到变异集通过数据。"""
+    existing = (
+        await db.execute(
+            select(GraderEval.id).where(
+                GraderEval.dataset_version == DATASET_VERSION,
+                GraderEval.mutant_kind == "BUILTIN",
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return
+    result = await run_mutants()
+    db.add(
+        GraderEval(
+            dataset_version=DATASET_VERSION,
+            grader_version=str(result["grader_version"]),
+            mutant_kind="BUILTIN",
+            total=int(result["total"]),
+            detected=int(result["detected"]),
+            false_kills=int(result["false_kills"]),
+            details=result["details"],
+            run_at=_certified_at() + timedelta(minutes=30),
+        )
+    )
+    await db.flush()
+
+
+async def _ensure_prompt_version(
+    db: AsyncSession,
+    template: PromptTemplate,
+    *,
+    version: int,
+    appendix: str,
+    changelog: str,
+) -> None:
+    existing = (
+        await db.execute(
+            select(PromptTemplateVersion).where(
+                PromptTemplateVersion.template_id == template.id,
+                PromptTemplateVersion.version == version,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        latest = (
+            await db.execute(
+                select(PromptTemplateVersion).where(
+                    PromptTemplateVersion.template_id == template.id,
+                    PromptTemplateVersion.version == template.current_version,
+                )
+            )
+        ).scalar_one_or_none()
+        base_content = latest.content if latest is not None else ""
+        content = f"{base_content}\n\n{appendix}".strip()
+        db.add(
+            PromptTemplateVersion(
+                template_id=template.id,
+                version=version,
+                content=content,
+                variables=extract_variables(content),
+                changelog=changelog,
+                created_by="system",
+            )
+        )
+    if template.current_version < version:
+        template.current_version = version
+    await db.flush()
+
+
+async def _seed_prompt_versions(db: AsyncSession) -> None:
+    """为内置模板补充 v2，演示版本历史、Diff、引用影响面与 LATEST 解析。"""
+    templates = {
+        template.code: template
+        for template in (await db.execute(select(PromptTemplate))).scalars().all()
+    }
+    simulator = templates.get("SIM_DEFAULT_BILLING_USER")
+    judge = templates.get("JUDGE_DEFAULT_ZERO_TOLERANCE")
+    self_check = templates.get("SELF_CHECK_DEFAULT")
+    if simulator is not None:
+        await _ensure_prompt_version(
+            db,
+            simulator,
+            version=2,
+            appendix=(
+                "# Demo Calibration v2\n"
+                "- 金额、日期、套餐名称必须与系统返回逐项对齐；保留原始数字格式，不四舍五入。\n"
+                "- 信息不足时优先追问账期或号码，不要自行编造。"
+            ),
+            changelog="演示版本：补充金额/日期口径校验与追问约束",
+        )
+    if judge is not None:
+        await _ensure_prompt_version(
+            db,
+            judge,
+            version=2,
+            appendix=(
+                "# Demo Calibration v2\n"
+                "- 输出必须为合法 JSON；金额比较使用 tolerance，日期比较使用同一口径。\n"
+                "- 事实缺失时在 missing 中说明，不得用推测值替代。"
+            ),
+            changelog="演示版本：强化 JSON 合法性与事实缺失说明",
+        )
+    if self_check is not None:
+        await _ensure_prompt_version(
+            db,
+            self_check,
+            version=2,
+            appendix=(
+                "# Demo Calibration v2\n"
+                "- 归因必须区分「取数错误 / 话术错误 / 上下文丢失 / 越权回答」，并给出修正动作。"
+            ),
+            changelog="演示版本：补充失败归因分类与修正动作",
+        )
+
+
+async def _seed_demo_users(db: AsyncSession) -> None:
+    """内置角色各配一个演示账号，完整展示 RBAC 与审计。"""
+    roles = {
+        role.code: role for role in (await db.execute(select(SysRole))).scalars().all()
+    }
+    for spec in DEMO_USERS:
+        role = roles.get(spec["role"])
+        if role is None:
+            continue
+        username_lower = spec["username"].lower()
+        exists = (
+            await db.execute(
+                select(SysUser.id).where(SysUser.username_lower == username_lower)
+            )
+        ).scalar_one_or_none()
+        if exists is not None:
+            continue
+        user = SysUser(
+            username=spec["username"],
+            username_lower=username_lower,
+            display_name=spec["display_name"],
+            email=spec["email"],
+            phone=None,
+            password_hash=hash_password(spec["password"]),
+            status="ACTIVE",
+            must_change_password=False,
+            token_version=1,
+            created_by=None,
+        )
+        db.add(user)
+        await db.flush()
+        await db.execute(
+            sys_user_role.insert().values(
+                user_id=user.id,
+                role_id=role.id,
+                created_at=now(),
+            )
+        )
+    await db.flush()
+
 
 
 async def _create_case(db: AsyncSession, data: dict) -> TestCase | None:
@@ -2368,6 +3208,12 @@ async def seed_demo_data(db: AsyncSession, *, reset: bool = False) -> None:
     await _get_or_create_environment(db, DEMO_ENV_CODE, is_stream=True)
     json_env = await _get_or_create_environment(db, DEMO_JSON_ENV_CODE, is_stream=False)
 
+    await _seed_demo_users(db)
+    await _seed_prompt_versions(db)
+
+    sources = await _get_or_create_data_sources(db)
+    capabilities = await _get_or_create_capabilities(db, sources)
+
     # MOCK-SIM 作为唯一启用的模拟器模型，供全链路统一取用。
     await _get_or_create_model(
         db,
@@ -2426,6 +3272,9 @@ async def seed_demo_data(db: AsyncSession, *, reset: bool = False) -> None:
         await db.execute(select(TestCase).where(TestCase.code == "DEMO-CONTRACT-001"))
     ).scalar_one_or_none()
     await _create_candidates(db, env_id=json_env.id, promoted_case_id=promoted.id if promoted else None)
+    await _seed_gold_queries(db, capabilities)
+    await _seed_grader_eval(db)
+    await _seed_audit_logs(db, capabilities)
 
     await refresh_template_refs(db)
     await db.commit()

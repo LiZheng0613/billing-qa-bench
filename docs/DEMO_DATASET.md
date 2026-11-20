@@ -2,7 +2,7 @@
 
 演示数据围绕「电信计费问账」业务域构建，覆盖平台全部用例形态与判分模式，用于：
 
-- **快速体验**：建库即得 57 条用例、2 个环境、3 条历史任务，大盘 / 趋势 / Trace / 评审 / 候选池全有数据可看；
+- **快速体验**：建库即得 61 条用例、2 个环境、5 条历史/计划任务、2 个数据源、14 条取数能力、12 条取证记录，大盘 / 趋势 / Trace / 评审 / 候选池 / 取数资产全有数据可看；
 - **回归验证**：`python scripts/e2e_smoke.py` 依赖其中 5 条固定用例（含预期失败与熔断）；
 - **演示培训**：失败、异常、熔断、越权、口径漂移等质量场景均有可复现样本。
 
@@ -10,22 +10,24 @@
 
 ```powershell
 cd backend
-python -m billing_qa.db.init_db --demo --reset   # 清空用例/执行数据后重建（幂等）
-python scripts/seed_demo_history.py              # 重建 3 条演示批量任务（幂等）
+python -m billing_qa.db.init_db --demo --reset   # 清空用例/执行/取数资产后重建（幂等）
+python scripts/seed_demo_history.py              # 重建 5 条演示任务（3 完成 + 1 中断 + 1 定时）
 ```
 
-- `seed_demo.py` 幂等：每次执行都会把环境配置、用例绑定与请求变量对齐当前代码口径；
-- `--reset` 清空 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate`，保留环境、模型、Prompt 等基础资产；
+- `seed_demo.py` 幂等：每次执行都会把环境配置、用例绑定、请求变量、数据源、取数能力、取证记录与演示账号对齐当前代码口径；
+- `--reset` 清空 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` / `grader_eval` / `capability` / `data_source` / `sys_audit_log`，保留环境、模型、Prompt、内置角色与管理员；
 - 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据，正式演示前重置即可恢复本页所述基线。
 
 ## 2. 环境绑定
 
 | 环境 | 报文形态 | 说明 |
 | --- | --- | --- |
-| `QA-MOCK-JSON` | 非流式 · Agent 报文 `POST /api/v1/agent/chat` | **57 条演示用例默认绑定**。Basic 鉴权 + 前置 `POST /api/v1/conversation` 取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso` 时间戳，与真实 Agent 对接流程一致，配置指导见 [`AGENT_INTEGRATION_GUIDE.md`](AGENT_INTEGRATION_GUIDE.md) |
+| `QA-MOCK-JSON` | 非流式 · Agent 报文 `POST /api/v1/agent/chat` | **61 条演示用例默认绑定**。Basic 鉴权 + 前置 `POST /api/v1/conversation` 取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso` 时间戳，与真实 Agent 对接流程一致，配置指导见 [`AGENT_INTEGRATION_GUIDE.md`](AGENT_INTEGRATION_GUIDE.md) |
 | `QA-MOCK` | SSE 流式 · `POST /api/v1/chat` | 保留用于流式能力演示，当前无绑定用例 |
 
 两个环境指向同一内置 Mock（`http://127.0.0.1:8002`），共用同一份电信计费数据，因此切换环境不改变答案口径，只改变报文形态。
+
+取数资产使用独立的内置 Mock Cypher 执行器 `MOCK-CYPHER-TOOL`（`http://127.0.0.1:8003`），与问答 Mock 共用同一份号码/账单/offer/余额数据，保证「问答答案」与「事实取证」口径一致。另保留一个停用的旧版执行器 `MOCK-CYPHER-LEGACY` 用于演示停用态。
 
 ## 3. Mock 数据口径（内置被测系统）
 
@@ -41,7 +43,7 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 
 ## 4. 用例清单与预期结果
 
-57 条用例 = 55 条 `ACTIVE`（30 条 4 维评分 + 25 条答案契约）+ 1 条 `DRAFT` + 1 条 `DISABLED`；全部绑定 `QA-MOCK-JSON`，全部带 `userid` / `custid` 请求变量（按话术中的号码自动取值，客户编号 C0001–C0005）。
+61 条用例 = 59 条 `ACTIVE`（32 条 4 维评分 + 27 条答案契约）+ 1 条 `DRAFT` + 1 条 `DISABLED`；全部绑定 `QA-MOCK-JSON`，全部带 `userid` / `custid` 请求变量（按话术中的号码自动取值，客户编号 C0001–C0005）。
 
 | 用例 | 形态 / 判分 | 场景 | 预期 |
 | --- | --- | --- | --- |
@@ -61,6 +63,8 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 | `DEMO-SINGLE-ROAMING` | 单轮 · 4 维评分 | 日本漫游日期、流量与费用 | PASS |
 | `DEMO-SINGLE-BROADBAND` | 单轮 · 4 维评分 | 融合宽带与 IPTV 费用 | PASS |
 | `DEMO-SINGLE-VAS` | 单轮 · 4 维评分 | 增值业务订购与逐项扣费 | PASS |
+| `DEMO-SINGLE-INVOICE` | 单轮 · 4 维评分 | 电子发票金额与开票状态 | PASS |
+| `DEMO-SINGLE-POINTS` | 单轮 · 4 维评分 | 积分余额与可兑换权益 | PASS |
 | `DEMO-SINGLE-FAIL` | 单轮 · 4 维评分 | 数据幻觉红线（`[MOCK:FAIL]`） | FAIL（VETO 一票否决） |
 | `DEMO-SINGLE-VETO` | 单轮 · 4 维评分 | 错误金额注入（`错误金额`） | FAIL（规则硬校验拦截） |
 | `DEMO-SINGLE-ERROR` | 单轮 · 4 维评分 | 被测系统异常注入（`模拟崩溃`） | ERROR |
@@ -89,6 +93,8 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 | `DEMO-CONTRACT-MULTI-INTENT` | 单轮 · 答案契约 | 双号码多意图，允许部分披露 | PASS |
 | `DEMO-CONTRACT-CONTRADICTORY` | 单轮 · 答案契约 | 矛盾账期 2026-13，澄清有效账期 | PASS |
 | `DEMO-CONTRACT-UNAUTHORIZED` | 单轮 · 答案契约 | 越权查询他人账单，拒绝并说明 | PASS |
+| `DEMO-CONTRACT-VAGUE` | 单轮 · 答案契约 | 模糊表达，允许澄清或按最近账期声明假设作答 | PASS |
+| `DEMO-CONTRACT-UNANSWERABLE` | 单轮 · 答案契约 | 火星号码等超范围问题，明确拒答 | PASS |
 | `DEMO-STATIC-001` | 静态多轮 · 4 维评分 | 指代继承与超套费追问 | PASS |
 | `DEMO-STATIC-OFFER` | 静态多轮 · 4 维评分 | 可订购 offer 列表到加油包价格 | PASS |
 | `DEMO-STATIC-BALANCE` | 静态多轮 · 4 维评分 | 可用余额到合计余额追问 | PASS |
@@ -110,18 +116,79 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 
 | 资产 | 规模 |
 | --- | --- |
-| 模型 | 9 个（`MOCK-SIM` 模拟器 + 双裁判 `MOCK-JUDGE` / `MOCK-JUDGE-2` 等，全部指向内置 Mock LLM） |
-| Prompt 模板 | 3 套（`SIM_DEFAULT_BILLING_USER` 模拟器、`JUDGE_DEFAULT_ZERO_TOLERANCE` 裁判等，内置不可删） |
+| 环境 | 2 个（`QA-MOCK-JSON` 默认用于 61 条用例，`QA-MOCK` 流式保留） |
+| 模型 | 6 个（`MOCK-SIM` 模拟器 + 双裁判 `MOCK-JUDGE` / `MOCK-JUDGE-2` + `MOCK-AUTHOR` 编写 + 2 个停用的 OpenCode 模型示例） |
+| Prompt 模板 | 4 套（模拟器 / 裁判 / 编写 / 自检），其中模拟器、裁判、自检各有 v2 版本，可演示版本 Diff、引用影响面与 LATEST 解析 |
+| 请求变量 | 全部用例带 `userid` / `custid`；数字统一按字符串保存 |
 | 业务口径 | 14 条（账单、套餐、offer、余额等，含 `offer_contract`、`account_balance`） |
 | 候选池 | 8 条（NEW / TRIAGED / PROMOTED / REJECTED 四种状态齐备） |
-| 历史任务 | 3 条（见下表） |
+| 数据源 | 2 个（`MOCK-CYPHER-TOOL` 启用、`MOCK-CYPHER-LEGACY` 停用；页面默认只展示启用项） |
+| 取数能力 | 14 条（12 条 CERTIFIED + 1 条 DRAFT + 1 条 DEPRECATED；覆盖账单、明细、用量、offer、余额、欠费、漫游、增值、宽带、发票、积分、合约、客户画像） |
+| 取证记录 | 12 条 GoldQuery（覆盖主要合同/单轮场景，含事实 ID、入参、列与结果行） |
+| 判分器自检 | 1 条内置变异集结果（5/5 识别、0 误杀） |
+| 演示账号 | 5 个（管理员 + 只读 / 编写 / 评审 / 执行各 1 个） |
+| 审计日志 | 7 条演示记录（登录、建用户、探活、能力认证、用例更新、Prompt 发布），无测试脚本残留 |
+| 历史任务 | 5 条（3 条已完成 + 1 条中断可续做 + 1 条每日定时） |
 
 `seed_demo_history.py` 真实调用 Mock 服务生成执行记录、轮次轨迹与裁判明细，并回填近 3 天历史时间：
 
 | 任务 | 用例范围 | 明细 |
 | --- | --- | --- |
-| `DEMO-TASK-001` 电信计费全量回归（演示） | 55 条 `ACTIVE` 全量 | 55 条执行明细 |
-| `DEMO-TASK-002` 单轮与答案契约专项（演示） | 44 条单轮（4 维 + 契约） | 44 条执行明细 |
+| `DEMO-TASK-001` 电信计费全量回归（演示） | 59 条 `ACTIVE` 全量 | 59 条执行明细 |
+| `DEMO-TASK-002` 单轮与答案契约专项（演示） | 48 条单轮（4 维 + 契约） | 48 条执行明细，失败项触发追问自检 |
 | `DEMO-TASK-003` 动态多轮与熔断专项（演示） | 7 条动态多轮 | 7 条执行明细 |
+| `DEMO-TASK-004` 中断与续做演示（演示） | 5 条单轮 | 执行 3 条后终止，剩余 2 条可续做 |
+| `DEMO-TASK-005` 每日账单回归（定时演示） | 5 条核心账单用例 | 每日 09:00 触发，初始不执行 |
 
-合计 106 条执行明细与 136 条事实级判分结果（`fact_result`）。
+合计 117 条执行明细与 142 条事实级判分结果（`fact_result`）。
+
+## 6. 取数资产与 Mock 能力
+
+启动 Mock 取数执行器：
+
+```powershell
+cd backend
+python -m uvicorn mock_servers.capability_api:app --host 127.0.0.1 --port 8003
+```
+
+数据源 `MOCK-CYPHER-TOOL` 指向 `http://127.0.0.1:8003`，实现与 `CypherToolExecutor` 对齐的协议：
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /execute` | 执行参数化查询，返回 `columns / rows / row_count / truncated / executor_version` |
+| `GET /health` | 探活 |
+| `GET /meta` | 返回工具版本、只读标记、限额与支持的能力清单 |
+| `GET /logs` | 按 `session_id` / `since_seq` 增量返回工具调用日志 |
+
+能力清单：
+
+| 能力键 | 名称 | 状态 |
+| --- | --- | --- |
+| `bill_current` | 账单总额与费用项数 | CERTIFIED |
+| `bill_items` | 账单费用构成明细 | CERTIFIED |
+| `usage_current` | 套餐用量与超套 | CERTIFIED |
+| `offer_available` | 可订购 offer 目录 | CERTIFIED |
+| `offer_ordered` | 已订购 offer 与合约 | CERTIFIED |
+| `balance_account` | 账户余额与赠费 | CERTIFIED |
+| `arrears_status` | 欠费与停机状态 | CERTIFIED |
+| `roaming_usage` | 国际漫游明细 | CERTIFIED |
+| `vas_items` | 增值业务订购 | CERTIFIED |
+| `broadband_bundle` | 融合宽带与 IPTV | CERTIFIED |
+| `invoice_info` | 电子发票信息 | CERTIFIED |
+| `points_info` | 积分余额 | CERTIFIED |
+| `package_contract` | 套餐月费与合约期 | DRAFT |
+| `customer_profile` | 客户画像与账户信息 | DEPRECATED（停用） |
+
+运营后台「执行取证」示例：选择 `bill_current`、用例 `DEMO-CONTRACT-001`，参数填 `{"phone":"13800138000","period":"2026-10"}`，即可生成一条新的 GoldQuery。`init_db --demo` 已预置 12 条取证记录，覆盖合同与重点单轮场景，不需要先启动 8003 也能查看。
+
+## 7. 演示账号
+
+| 账号 | 密码 | 角色 | 用途 |
+| --- | --- | --- | --- |
+| `admin` | `admin123` | 系统管理员 | 全功能演示 |
+| `qa_viewer` | `Viewer#12345` | 只读观察员 | 查看大盘 / 用例 / Trace，写操作返回 403 |
+| `qa_owner` | `CaseOwner#12345` | 用例编写员 | 写用例、执行调试与批量任务 |
+| `qa_reviewer` | `Reviewer#12345` | 用例评审员 | 评审 / 冻结 / 回滚与取数资产 |
+| `qa_runner` | `Runner#12345` | 测试执行员 | 执行任务、查看 Trace、导出结果 |
+
+> 演示账号默认不强制改密，便于直接登录体验；正式环境请删除或重置。
