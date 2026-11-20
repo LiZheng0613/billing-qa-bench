@@ -204,6 +204,12 @@ onBeforeUnmount(() => {
               · {{ detail.case_code || `用例 #${detail.case_id}` }}
             </button>
             <StatusPill v-if="detail" :status="detail.status" size="sm" />
+            <span
+              v-if="detail?.source === 'SANDBOX'"
+              class="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700"
+            >
+              草稿试跑
+            </span>
           </h1>
         </template>
         <template #sub>
@@ -222,7 +228,9 @@ onBeforeUnmount(() => {
               </button>
               {{ relationTask.name ? `· ${relationTask.name}` : '' }}
             </span>
-            <span v-else-if="detail">单笔调试 / 重跑记录</span>
+            <span v-else-if="detail">
+              {{ detail.source === 'SANDBOX' ? '草稿试跑记录（不进入趋势统计）' : '单笔调试 / 重跑记录' }}
+            </span>
           </p>
         </template>
         <template #actions>

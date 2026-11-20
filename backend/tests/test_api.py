@@ -221,6 +221,56 @@ async def test_case_revision_flow(client: httpx.AsyncClient) -> None:
         assert deleted.status_code == 200
 
 
+async def test_draft_debug_uses_snapshot_override(client: httpx.AsyncClient) -> None:
+    """草稿试跑：未保存内容进入执行快照，不生成版本、不动评审状态、不进趋势。"""
+    if not await _mock_target_ready():
+        pytest.skip("Mock 被测系统未启动")
+    envs = (await client.get("/environments", params={"page_size": 200})).json()["items"]
+    env = next(item for item in envs if item["code"] == "QA-MOCK")
+
+    stamp = uuid.uuid4().hex[:8]
+    created = await client.post(
+        "/cases",
+        json={
+            "code": f"PYTEST-DRAFT-{stamp}",
+            "name": "pytest 草稿试跑",
+            "case_type": "SINGLE",
+            "priority": "P2",
+            "environment_id": env["id"],
+            "query": "订单 A2024001 的含税金额是多少？",
+            "expected_answer": "¥12,345.67，共 3 笔",
+        },
+    )
+    assert created.status_code == 200, created.text
+    case_id = created.json()["id"]
+    before_version = created.json()["current_version"]
+    try:
+        result = await client.post(
+            f"/cases/{case_id}/debug",
+            json={
+                "draft": True,
+                "environment_id": env["id"],
+                "case_snapshot_override": {
+                    "query": "草稿覆盖后的提问：账单总额含税吗？",
+                    "expected_answer": "含税",
+                },
+            },
+        )
+        assert result.status_code == 200, result.text
+        detail = result.json()
+        assert detail["source"] == "SANDBOX"
+        assert detail["case_snapshot"]["query"] == "草稿覆盖后的提问：账单总额含税吗？"
+
+        latest = (await client.get(f"/cases/{case_id}")).json()
+        assert latest["current_version"] == before_version
+        revisions = (await client.get(f"/cases/{case_id}/revisions")).json()
+        assert len(revisions) == before_version
+        trend = (await client.get(f"/cases/{case_id}/trend")).json()
+        assert trend["points"] == [], "草稿试跑不应进入趋势统计"
+    finally:
+        await client.delete(f"/cases/{case_id}")
+
+
 async def test_case_returns_template_names(client: httpx.AsyncClient) -> None:
     """用例响应需同时携带模板 code 与 name，界面展示名称而非编码。"""
     prompts = (await client.get("/prompts", params={"page_size": 200})).json()["items"]

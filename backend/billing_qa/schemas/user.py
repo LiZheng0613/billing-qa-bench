@@ -41,7 +41,7 @@ class UserCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=64)
     email: str | None = Field(default=None, max_length=128)
     phone: str | None = Field(default=None, max_length=32)
-    password: str = Field(min_length=8, max_length=72)
+    password: str = Field(min_length=1, max_length=72)
     role_ids: list[int] = Field(default_factory=list)
 
     @field_validator("username")

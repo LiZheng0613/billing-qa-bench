@@ -385,8 +385,8 @@ def test_build_task_results_jsonl_no_mojibake() -> None:
     )
 
     # 1) 原始字节里就是真 UTF-8 中文，而不是 \uXXXX 转义（防止编辑器里看到一堆转义）。
-    assert "您本月合计 100 元。".encode("utf-8") in content
-    assert "账单查询-中文用例".encode("utf-8") in content
+    assert "您本月合计 100 元。".encode() in content
+    assert "账单查询-中文用例".encode() in content
     assert "\\u" not in content.decode("utf-8")
 
     # 2) 无 BOM：jq / pandas 等按行解析的工具不会被首行字节顺序标记破坏。

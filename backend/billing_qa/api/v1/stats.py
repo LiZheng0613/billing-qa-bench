@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.core.authz import require_module_access
 from billing_qa.db.session import get_db
+from billing_qa.models.enums import ExecutionSource
 from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.gold_query import FactResult
 from billing_qa.models.test_case import TestCase
@@ -50,7 +51,10 @@ async def fact_stats(
     until: datetime | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> list[FactStatItem]:
-    conditions = []
+    conditions = [
+        # 草稿试跑（SANDBOX）只是调试实验，不纳入事实通过率统计
+        ExecutionRecord.source != ExecutionSource.SANDBOX
+    ]
     if case_id:
         conditions.append(ExecutionRecord.case_id == case_id)
     if since:
@@ -86,7 +90,10 @@ async def stats_overview(db: AsyncSession = Depends(get_db)) -> FactStatsOvervie
                     "lucky"
                 ),
                 func.avg(ExecutionRecord.total_score).label("avg_score"),
-            ).where(ExecutionRecord.grading_mode == "ANSWER_CONTRACT")
+            ).where(
+                ExecutionRecord.grading_mode == "ANSWER_CONTRACT",
+                ExecutionRecord.source != ExecutionSource.SANDBOX,
+            )
         )
     ).one()
     fact_row = (

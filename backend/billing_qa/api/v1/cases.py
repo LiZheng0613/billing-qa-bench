@@ -21,6 +21,7 @@ from billing_qa.core.security import get_current_operator
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import (
     CaseType,
+    ExecutionSource,
     GradingMode,
     ModelRole,
     RevisionChangeType,
@@ -1042,7 +1043,11 @@ async def case_trend(case_id: int, db: AsyncSession = Depends(get_db)) -> CaseTr
     rows = (
         await db.execute(
             select(ExecutionRecord)
-            .where(ExecutionRecord.case_id == case_id)
+            .where(
+                ExecutionRecord.case_id == case_id,
+                # 草稿试跑只是调试实验，不纳入用例质量趋势
+                ExecutionRecord.source != ExecutionSource.SANDBOX,
+            )
             .order_by(ExecutionRecord.id.desc())
             .limit(20)
         )
@@ -1181,7 +1186,8 @@ async def debug_case(
         case_id=case.id,
         case_version=case.current_version,
         snapshot=snapshot,
-        source="DEBUG",
+        # 草稿试跑标记为 SANDBOX：保留执行轨迹，但排除在趋势 / 通过率统计之外
+        source=ExecutionSource.SANDBOX if payload.draft else ExecutionSource.DEBUG,
         environment_id=payload.environment_id or case.environment_id,
         enable_self_check=payload.enable_self_check,
     )

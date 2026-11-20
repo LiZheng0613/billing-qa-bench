@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -11,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from billing_qa.core.config import settings
 from billing_qa.core.control_store import control_store
 from billing_qa.core.event_bus import event_bus
 from billing_qa.core.logging import get_logger
@@ -66,6 +68,9 @@ class BatchScheduler:
         worker = self._workers.get(task_id)
         return worker is not None and not worker.done()
 
+    def _task_lock_name(self, task_id: int) -> str:
+        return control_store.lock_key(task_id)
+
     # ------------------------------------------------------------------ #
     # 生命周期
     # ------------------------------------------------------------------ #
@@ -75,7 +80,15 @@ class BatchScheduler:
         async with self._lock(task_id):
             if self.is_running(task_id):
                 return False
-            worker = asyncio.create_task(self._run(task_id, retry_failed, resume))
+            token = uuid.uuid4().hex
+            if not await control_store.acquire_lock(
+                self._task_lock_name(task_id), token, settings.task_run_lock_ttl_seconds
+            ):
+                logger.warning("任务已由其他实例执行，跳过启动 task=%s", task_id)
+                return False
+            worker = asyncio.create_task(
+                self._run(task_id, retry_failed, resume, run_token=token)
+            )
             self._workers[task_id] = worker
         return True
 
@@ -89,9 +102,16 @@ class BatchScheduler:
         async with self._lock(task_id):
             if self.is_running(task_id):
                 return False
+            token = uuid.uuid4().hex
+            if not await control_store.acquire_lock(
+                self._task_lock_name(task_id), token, settings.task_run_lock_ttl_seconds
+            ):
+                logger.warning("任务已由其他实例执行，跳过单用例重试 task=%s", task_id)
+                return False
             async with SessionLocal() as db:
                 task = await db.get(BatchTask, task_id)
                 if task is None:
+                    await control_store.release_lock(self._task_lock_name(task_id), token)
                     return False
                 task.status = TaskStatus.RUNNING
                 task.control_state = "RUNNING"
@@ -99,7 +119,9 @@ class BatchScheduler:
                 task.finished_at = None
                 await db.commit()
             await control_store.set_state(task_id, "RUNNING")
-            worker = asyncio.create_task(self._run_case_retry(task_id, case_id))
+            worker = asyncio.create_task(
+                self._run_case_retry(task_id, case_id, run_token=token)
+            )
             self._workers[task_id] = worker
         logger.info("单用例重试已启动 task=%s case=%s", task_id, case_id)
         return True
@@ -129,11 +151,15 @@ class BatchScheduler:
         self._workers.clear()
 
     async def recover_interrupted_tasks(self) -> int:
-        """服务重启后把中断的任务收口为已终止。
+        """服务重启后恢复中断的任务。
 
-        进程退出后 worker 已不存在，任务不可能自行继续；这里直接标记为
-        ABORTED，不留下无人推进的中间态。已完成的用例结果保留，可点击
-        「继续执行」从未完成处续做。
+        - 用户已明确终止（控制面 ABORTING/ABORTED）的任务：保持终止语义，
+          连同历史 ``PAUSED`` 数据一并收口为已终止；
+        - 其余 RUNNING 任务：先收口在途执行记录（保留审计痕迹），再自动
+          续做；拿不到运行锁（其他实例持有 / 上个进程的锁尚未过期）时先
+          跳过，由后台轮询（:meth:`adopt_interrupted_tasks`）在锁过期后接管。
+
+        返回本次处理（续做 + 收口）的任务数。
         """
         async with SessionLocal() as db:
             rows = await db.execute(
@@ -143,27 +169,148 @@ class BatchScheduler:
                 )
             )
             tasks = list(rows.scalars().all())
-            for task in tasks:
-                task.status = TaskStatus.ABORTED
-                task.control_state = "ABORTED"
-                task.finished_at = task.finished_at or now()
-                task.error_message = "服务重启导致任务中断，已自动终止，可通过「继续执行」续做未完成用例"
-                await control_store.set_state(task.id, "ABORTED")
-                await self._close_running_executions(
-                    db, task.id, "服务重启导致任务中断"
+        resumed = 0
+        closed = 0
+        for task in tasks:
+            if str(task.status) == TaskStatus.RUNNING.value:
+                if await self.adopt_interrupted_task(int(task.id)):
+                    resumed += 1
+                else:
+                    # 未接管：区分「带终止意图被收口为 ABORTED」与「锁被其他实例持有跳过」
+                    async with SessionLocal() as db:
+                        fresh_status = await db.scalar(
+                            select(BatchTask.status).where(BatchTask.id == task.id)
+                        )
+                    if fresh_status == TaskStatus.ABORTED.value:
+                        closed += 1
+                continue
+            # 历史 PAUSED 数据：状态已从产品移除，直接收口
+            async with SessionLocal() as db:
+                fresh = await db.get(BatchTask, task.id)
+                if fresh is None or str(fresh.status) == TaskStatus.RUNNING.value:
+                    continue
+                fresh.status = TaskStatus.ABORTED
+                fresh.control_state = "ABORTED"
+                fresh.finished_at = fresh.finished_at or now()
+                fresh.error_message = "历史暂停任务已收口为终止"
+                await self._close_running_executions(db, fresh.id, "服务重启导致执行中断")
+                metrics = await compute_task_metrics(db, fresh)
+                apply_metrics_to_task(fresh, metrics)
+                await db.commit()
+            await control_store.set_state(task.id, "ABORTED")
+            closed += 1
+        if resumed or closed:
+            logger.info(
+                "重启恢复完成：自动续做 %d 个，收口为已终止 %d 个", resumed, closed
+            )
+        return resumed + closed
+
+    async def adopt_interrupted_task(self, task_id: int) -> bool:
+        """接管一个被服务重启中断的 RUNNING 任务并自动续做。
+
+        顺序很关键：**先拿分布式运行锁，再收口在途记录**，避免把另一个
+        实例正在推进的执行误标为终止。返回 False 表示未接管（任务不存在 /
+        状态已变化 / 已有终止意图 / 锁被其他实例持有）。
+        """
+        lock_name = self._task_lock_name(task_id)
+        async with self._lock(task_id):
+            if self.is_running(task_id):
+                return False
+            token = uuid.uuid4().hex
+            if not await control_store.acquire_lock(
+                lock_name, token, settings.task_run_lock_ttl_seconds
+            ):
+                logger.info("任务运行锁被其他实例持有，暂不接管 task=%s", task_id)
+                return False
+            adopted = False
+            try:
+                state = await control_store.get_state(task_id)
+                async with SessionLocal() as db:
+                    task = await db.get(BatchTask, task_id)
+                    if task is None or str(task.status) != TaskStatus.RUNNING.value:
+                        return False
+                    if state in {"ABORTING", "ABORTED"}:
+                        # 用户在重启前已明确终止：保持终止语义，不自动拉起
+                        task.status = TaskStatus.ABORTED
+                        task.control_state = "ABORTED"
+                        task.finished_at = task.finished_at or now()
+                        task.error_message = "服务重启时任务正在终止，已保持终止状态"
+                        await self._close_running_executions(
+                            db, task_id, "服务重启导致执行中断"
+                        )
+                        metrics = await compute_task_metrics(db, task)
+                        apply_metrics_to_task(task, metrics)
+                        await db.commit()
+                        await control_store.set_state(task_id, "ABORTED")
+                        logger.info(
+                            "重启恢复：任务带终止意图，已收口为已终止 task=%s", task_id
+                        )
+                        return False
+                    # 中断续做：把在途记录收口为 ABORTED（保留审计痕迹），
+                    # 续做时这些用例会被重新执行，最终结果不残留终止态。
+                    await self._close_running_executions(
+                        db, task_id, "服务重启导致执行中断"
+                    )
+                    task.control_state = "RUNNING"
+                    task.error_message = None
+                    task.finished_at = None
+                    metrics = await compute_task_metrics(db, task)
+                    apply_metrics_to_task(task, metrics)
+                    await db.commit()
+                await control_store.set_state(task_id, "RUNNING")
+                worker = asyncio.create_task(
+                    self._run(task_id, False, True, run_token=token)
                 )
-                # 收口后重算进度/通过率，避免任务显示「7/55 已完成」但执行记录已全部终止
-                metrics = await compute_task_metrics(db, task)
-                apply_metrics_to_task(task, metrics)
-            await db.commit()
-        if tasks:
-            logger.warning("已把 %d 个中断任务标记为已终止", len(tasks))
-        return len(tasks)
+                self._workers[task_id] = worker
+                adopted = True
+                logger.warning("重启恢复：已自动续做中断任务 task=%s", task_id)
+                return True
+            finally:
+                if not adopted:
+                    # 未成功接管时归还锁（成功时锁移交 worker 心跳续租）
+                    await control_store.release_lock(lock_name, token)
+
+    async def adopt_interrupted_tasks(self, *, limit: int = 20) -> list[int]:
+        """周期自愈：接管无人推进的 RUNNING 任务。
+
+        覆盖启动恢复时锁尚未过期而跳过的任务；多实例下靠分布式运行锁
+        互斥，健康实例持有锁时自动跳过。
+        """
+        adopted: list[int] = []
+        async with SessionLocal() as db:
+            rows = (
+                (
+                    await db.execute(
+                        select(BatchTask.id)
+                        .where(BatchTask.status == TaskStatus.RUNNING.value)
+                        .order_by(BatchTask.id)
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        for task_id in rows:
+            if self.is_running(int(task_id)):
+                continue
+            if await self.adopt_interrupted_task(int(task_id)):
+                adopted.append(int(task_id))
+        return adopted
 
     # ------------------------------------------------------------------ #
     # 主循环
     # ------------------------------------------------------------------ #
-    async def _run(self, task_id: int, retry_failed: bool, resume: bool) -> None:
+    async def _run(
+        self,
+        task_id: int,
+        retry_failed: bool,
+        resume: bool,
+        *,
+        run_token: str | None = None,
+    ) -> None:
+        heartbeat: asyncio.Task[None] | None = None
+        if run_token is not None:
+            heartbeat = asyncio.create_task(self._heartbeat(task_id, run_token))
         try:
             async with SessionLocal() as db:
                 task = await db.get(BatchTask, task_id)
@@ -350,12 +497,39 @@ class BatchScheduler:
                     await self._publish_status(task)
             await control_store.set_state(task_id, "FAILED")
         finally:
+            if heartbeat is not None:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
+            if run_token is not None:
+                await control_store.release_lock(
+                    self._task_lock_name(task_id), run_token
+                )
             self._workers.pop(task_id, None)
+
+    async def _heartbeat(self, task_id: int, token: str) -> None:
+        """持续续租任务运行锁；续租失败说明锁已易主，记录后停止续租。
+
+        不因此中断本地执行：出现双主的概率极低（需要 Redis 抖动叠加另一
+        实例恰好接管），任务最终由各实例自身的执行器收口。
+        """
+        ttl = settings.task_run_lock_ttl_seconds
+        interval = max(5.0, ttl / 3)
+        while True:
+            await asyncio.sleep(interval)
+            if not await control_store.renew_lock(
+                self._task_lock_name(task_id), token, ttl
+            ):
+                logger.error(
+                    "任务运行锁续租失败，可能已被其他实例接管 task=%s", task_id
+                )
+                return
 
     # ------------------------------------------------------------------ #
     # 单用例重试
     # ------------------------------------------------------------------ #
-    async def _run_case_retry(self, task_id: int, case_id: int) -> None:
+    async def _run_case_retry(
+        self, task_id: int, case_id: int, *, run_token: str | None = None
+    ) -> None:
         """在当前批次内重跑单条用例：复用执行器，结果作为该用例的最新一次尝试。"""
         cancelled = False
         try:
@@ -404,6 +578,10 @@ class BatchScheduler:
             try:
                 await self._finish_case_retry(task_id, cancelled=cancelled)
             finally:
+                if run_token is not None:
+                    await control_store.release_lock(
+                        self._task_lock_name(task_id), run_token
+                    )
                 self._workers.pop(task_id, None)
 
     async def _finish_case_retry(self, task_id: int, *, cancelled: bool) -> None:

@@ -285,6 +285,8 @@ class ScheduleDispatcher:
                 await self.tick()
                 # 自愈：恢复中断/未启动的连续轮次链
                 await scheduler.resume_round_chains()
+                # 自愈：接管重启后无人推进的任务（锁过期后由本实例续做）
+                await scheduler.adopt_interrupted_tasks()
             except asyncio.CancelledError:
                 raise
             except Exception:

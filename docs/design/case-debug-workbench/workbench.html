@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>单条用例调试工作台 · 设计稿</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eef2f7;color:#0f172a;font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;font-size:13px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1480px;margin:0 auto;padding:26px 22px 60px}
+.screen{position:relative;background:#f8fafc;border:1px solid #dbe3ee;border-radius:18px;padding:18px;margin-bottom:30px;box-shadow:0 24px 60px -36px rgba(15,23,42,.45)}
+.screen-label{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:11px;color:#64748b}
+.screen-label b{color:#4338ca;font-size:12px;font-weight:650}
+.screen-label span{color:#94a3b8}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;gap:12px}
+.crumb{font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:6px}
+h1{font-size:19px;margin:5px 0 0;font-weight:650;letter-spacing:-.2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+h1 .sub{font-size:12px;color:#94a3b8;font-weight:400}
+.pill{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:3px 9px;font-size:10px;font-weight:600;white-space:nowrap}
+.pill.draft{background:#fffbeb;color:#b45309;border:1px solid #fde68a}
+.pill.ok{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0}
+.pill.fail{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.pill.soft{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0}
+.toolbar{display:flex;gap:8px;align-items:center}
+.btn{border:1px solid #e2e8f0;background:#fff;border-radius:10px;padding:7px 14px;font-size:12px;color:#334155;font-weight:500;white-space:nowrap}
+.btn.primary{background:#4f46e5;border-color:#4f46e5;color:#fff;box-shadow:0 8px 16px -8px rgba(79,70,229,.7)}
+.btn.soft{border-color:#c7d2fe;background:#eef2ff;color:#4338ca}
+.btn.ghost{background:transparent;border-color:transparent;color:#64748b}
+.grid{display:grid;grid-template-columns:1.06fr .94fr;gap:14px;align-items:start}
+.grid.stretch{align-items:stretch}
+.grid.stretch>.card{display:flex;flex-direction:column}
+.grid.stretch .empty{flex:1}
+.panel-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #eef2f7;gap:10px}
+.panel-title{font-size:13px;font-weight:650}
+.panel-sub{font-size:10px;color:#94a3b8;margin-top:2px}
+.panel-body{padding:14px 16px 16px}
+.field{margin-bottom:11px}
+.label{font-size:10px;color:#64748b;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center}
+.input{border:1px solid #e2e8f0;background:#fff;border-radius:10px;padding:9px 11px;font-size:12px;color:#0f172a;min-height:36px;display:flex;align-items:center;line-height:1.5}
+.input.area{min-height:56px;align-items:flex-start;white-space:pre-wrap}
+.input.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#475569}
+.input.changed{border-color:#f59e0b;box-shadow:0 0 0 3px #fef3c7;background:#fffdf6}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.row4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px}
+.seg{display:inline-flex;background:#f1f5f9;border-radius:9px;padding:3px;gap:2px}
+.seg span{padding:4px 9px;border-radius:7px;font-size:10px;color:#64748b}
+.seg .on{background:#fff;color:#4338ca;font-weight:650;box-shadow:0 1px 2px rgba(15,23,42,.1)}
+.type-tabs{display:inline-flex;background:#f1f5f9;border-radius:8px;padding:2px;gap:2px;margin-bottom:8px}
+.type-tabs span{font-size:9px;color:#64748b;padding:3px 9px;border-radius:6px}
+.type-tabs .on{background:#fff;color:#4338ca;font-weight:650;box-shadow:0 1px 2px rgba(15,23,42,.08)}
+.collapse{display:flex;justify-content:space-between;align-items:center;border:1px solid #eef2f7;background:#f8fafc;border-radius:10px;padding:9px 11px;font-size:11px;color:#475569}
+.opt-row{display:flex;gap:8px;align-items:center;padding:0 16px 12px}
+.select{border:1px solid #e2e8f0;border-radius:9px;padding:7px 10px;font-size:11px;color:#334155;background:#fff;flex:1;display:flex;justify-content:space-between;align-items:center}
+.select i{color:#94a3b8;font-style:normal}
+.switch{display:flex;align-items:center;gap:6px;font-size:10px;color:#475569;white-space:nowrap}
+.toggle{width:28px;height:16px;border-radius:999px;background:#cbd5e1;position:relative;flex:none}
+.toggle:after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.toggle.on{background:#4f46e5}
+.toggle.on:after{left:14px}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:58px 24px 66px;text-align:center}
+.empty .ico{width:52px;height:52px;border-radius:16px;background:#eef2ff;display:grid;place-items:center;color:#6366f1;font-size:22px;margin-bottom:12px}
+.empty b{font-size:13px;color:#334155;font-weight:600}
+.empty p{font-size:11px;color:#94a3b8;max-width:270px;margin:6px 0 0;line-height:1.7}
+.actionbar{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:11px 16px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;gap:12px}
+.actionbar .hint{font-size:10px;color:#94a3b8;display:flex;align-items:center;gap:6px}
+.actions{display:flex;gap:8px;align-items:center}
+.result{padding:0 16px 16px}
+.scorecard{display:flex;align-items:center;gap:16px;background:linear-gradient(180deg,#f8fafc,#fff);border:1px solid #e2e8f0;border-radius:12px;padding:13px 15px}
+.score{font-size:30px;font-weight:700;letter-spacing:-1px;line-height:1}
+.score small{font-size:10px;color:#94a3b8;font-weight:400;margin-left:3px;letter-spacing:0}
+.stat{font-size:10px;color:#94a3b8;line-height:1.4}
+.stat b{display:block;font-size:12px;color:#334155;font-weight:600;margin-top:2px}
+.divider{height:28px;width:1px;background:#e2e8f0;flex:none}
+.gain{margin-left:auto;text-align:right;font-size:10px;color:#047857;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:5px 8px;white-space:nowrap}
+.sec{margin-bottom:13px}
+.sec-title{font-size:10px;font-weight:650;color:#64748b;margin-bottom:7px;display:flex;justify-content:space-between;align-items:center}
+.turn{border:1px solid #eef2f7;border-radius:10px;margin-bottom:6px;overflow:hidden;background:#fff}
+.turn-head{display:flex;justify-content:space-between;align-items:center;padding:8px 11px;font-size:11px;color:#475569}
+.turn-head .idx{font-weight:650;color:#334155}
+.turn-body{padding:9px 11px;border-top:1px solid #f1f5f9;background:#fcfdff;font-size:11px;color:#475569;line-height:1.7}
+.turn-body .q{color:#94a3b8;margin-bottom:4px}
+.turn-body .a{color:#334155}
+.reason{background:#f8fafc;border:1px solid #eef2f7;border-radius:10px;padding:10px 12px;font-size:11px;color:#475569;line-height:1.75}
+.reason b{color:#334155;font-weight:600}
+.link{font-size:11px;color:#4f46e5;margin-top:9px;display:inline-flex;gap:4px;align-items:center;font-weight:500}
+.runbar{display:flex;align-items:center;justify-content:space-between;border:1px solid #eef2f7;background:#f8fafc;border-radius:10px;padding:8px 11px;font-size:10px;color:#64748b;margin:0 16px 11px}
+.savecard{margin:0 16px 16px;border:1px solid #a7f3d0;background:#f0fdf4;border-radius:12px;padding:12px 14px}
+.savecard .t{display:flex;gap:8px;align-items:center;font-size:12px;font-weight:650;color:#065f46}
+.check{width:20px;height:20px;border-radius:50%;background:#10b981;color:#fff;display:grid;place-items:center;font-size:10px;flex:none}
+.savecard .mini{display:flex;gap:6px;margin-top:9px}
+.savecard .note{color:#3f6212;margin-top:4px}
+.mini .btn{flex:1;padding:6px 8px;font-size:11px;text-align:center}
+.changecard{margin:0 16px 16px;border:1px solid #eef2f7;background:#fbfcfe;border-radius:12px;padding:11px 14px}
+.chgrow{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#475569;padding:4px 0;border-bottom:1px dashed #eef2f7}
+.chgrow:last-of-type{border-bottom:0}
+.chgrow b{color:#4338ca;font-weight:600;white-space:nowrap}
+table{width:100%;border-collapse:collapse}
+th{font-size:9px;letter-spacing:.05em;color:#94a3b8;font-weight:650;text-align:left;padding:9px 12px;border-bottom:1px solid #eef2f7;background:#fbfcfe}
+td{font-size:11px;padding:10px 12px;border-bottom:1px solid #f4f7fb;color:#475569;vertical-align:middle}
+tr:last-child td{border-bottom:0}
+.badge{display:inline-flex;border-radius:999px;padding:2px 7px;font-size:9px;font-weight:600}
+.badge.sandbox{background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe}
+.badge.gray{background:#f1f5f9;color:#64748b;border:1px solid #e8edf5}
+.linknum{color:#4f46e5;font-family:ui-monospace,Consolas,monospace;font-size:11px;font-weight:650}
+.legend{display:flex;gap:16px;font-size:10px;color:#94a3b8;padding:9px 14px;border-top:1px solid #eef2f7;background:#fbfcfe;border-radius:0 0 14px 14px}
+.note{font-size:10px;color:#94a3b8;margin-top:6px;line-height:1.6}
+.kb{font-family:ui-monospace,Consolas,monospace;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:0 4px;font-size:10px;color:#475569}
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:6px;background:#eef2ff;color:#4338ca;font-size:10px;font-weight:600;padding:2px 6px}
+.legend-pill{display:flex;gap:10px;align-items:center;font-size:10px;color:#64748b}
+.sec-block{border:1px solid #eef2f7;border-radius:10px;margin-bottom:8px;background:#fff}
+.sec-head{display:flex;align-items:center;gap:6px;padding:9px 11px;background:#fbfcfe;border-radius:9px}
+.sec-block.open .sec-head{background:#fff;border-bottom:1px solid #f1f5f9;border-radius:9px 9px 0 0}
+.sec-head .t{font-size:11px;font-weight:650;color:#334155;white-space:nowrap}
+.sec-head .sum{font-size:10px;color:#94a3b8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.sec-head .chev{color:#94a3b8;font-size:10px;flex:none}
+.sec-body{padding:10px 11px 0}
+.chg-badge{font-size:9px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:999px;padding:1px 6px;font-weight:600;white-space:nowrap;flex:none}
+.facts{border:1px solid #eef2f7;border-radius:8px;overflow:hidden}
+.factrow{display:grid;grid-template-columns:1.3fr 1fr .9fr .7fr;gap:6px;font-size:10px;padding:5px 8px;border-bottom:1px solid #f4f7fb;align-items:center}
+.factrow:last-child{border-bottom:0}
+.factrow.head{color:#94a3b8;font-weight:600;background:#fbfcfe}
+.factrow.changed{background:#fffdf6}
+.rulebox{border:1px solid #eef2f7;border-radius:8px;padding:7px 9px;margin-bottom:6px;background:#fcfdff}
+.rulebox .rt{font-size:10px;color:#94a3b8;margin-bottom:4px}
+.rulebox .rv{font-size:11px;color:#334155;display:flex;justify-content:space-between;gap:8px}
+.rulebox .rv span:last-child{color:#64748b}
+.check-pill{display:inline-flex;align-items:center;gap:5px;border:1px solid #e2e8f0;border-radius:7px;padding:4px 8px;font-size:10px;color:#475569;background:#fff}
+.check-pill.on{border-color:#c7d2fe;background:#eef2ff;color:#4338ca}
+.check-pill .box{width:10px;height:10px;border-radius:3px;border:1px solid #cbd5e1;display:inline-block;flex:none}
+.check-pill.on .box{background:#4f46e5;border-color:#4f46e5}
+.chip-row{display:flex;flex-wrap:wrap;gap:5px}
+.mini-tag{font-size:9px;background:#eef2ff;border:1px solid #c7d2fe;color:#4338ca;border-radius:4px;padding:0 5px;font-weight:500}
+.blue-box{border:1px solid #c7d2fe;background:#f5f7ff;border-radius:10px;padding:10px 11px;margin-bottom:8px}
+.blue-box .blue-title{font-size:10px;font-weight:650;color:#4338ca;margin-bottom:7px;display:flex;justify-content:space-between}
+.tabsline{display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap}
+.tabsline span{font-size:9px;padding:3px 8px;border-radius:6px;border:1px solid transparent;color:#64748b}
+.tabsline .on{background:#fff;border-color:#c7d2fe;color:#4338ca;font-weight:650}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+.muted-box{border:1px dashed #dbe3ee;border-radius:10px;padding:9px 11px;font-size:10px;color:#94a3b8;background:#fbfcfe;line-height:1.7}
+.small{font-size:10px;color:#94a3b8}
+@media (max-width:1100px){.grid{grid-template-columns:1fr}.two-col{grid-template-columns:1fr}.savecard{margin-top:12px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ================= 1 ================= -->
+  <div class="screen-label"><b>① 调试工作台 · 初始态</b><span>从用例详情进入 · 独立路由 /cases/:id/debug</span></div>
+  <div class="screen">
+    <div class="top">
+      <div>
+        <div class="crumb">‹&nbsp;返回用例详情 &nbsp;·&nbsp; Assets / 用例详情 / TC-2026-001</div>
+        <h1>调试工作台 <span class="sub">TC-2026-001 · 10 月账单总额核对</span> <span class="pill draft">◌ 草稿 · 不保存版本</span></h1>
+      </div>
+      <div class="toolbar"><button class="btn ghost">关闭</button></div>
+    </div>
+
+    <div class="grid stretch">
+      <div class="card">
+        <div class="panel-head">
+          <div><div class="panel-title">编辑用例</div><div class="panel-sub">左侧修改，右侧试运行，不会生成新版本</div></div>
+          <button class="btn soft">✦ AI 起草</button>
+        </div>
+        <div class="panel-body">
+          <div class="field"><div class="label">用例名称</div><div class="input">10 月账单总额核对</div></div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">基础信息</span><span class="sum">TC-2026-001 · 单轮问答 · 启用 · P1 · 张审核 · 生产账务集群-01</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">请求变量</span><span class="sum">行编辑 · 2 个变量（user_id / channel）</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="sec-block open">
+            <div class="sec-head"><span class="t">用例内容</span><span class="sum">单轮问答 · 提问 + 预期答案</span><span class="chev">⌃</span></div>
+            <div class="sec-body">
+              <div class="type-tabs"><span class="on">单轮问答</span><span>静态多轮</span><span>动态多轮</span></div>
+              <div class="field"><div class="label">用户提问 <span class="anno">query</span></div><div class="input area">2026 年 10 月账单总额是多少？</div></div>
+              <div class="field"><div class="label">预期答案</div><div class="input area">10 月账单总额为 128,640.00 元，含税。</div></div>
+            </div>
+          </div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">判分方式与契约</span><span class="sum">4 维评分 · 规则硬校验生效</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">规则硬校验</span><span class="sum">金额 1 · 笔数 1 · 日期 1 · 必含 1 · 禁含 1</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">Prompt 与模型</span><span class="sum">sim.billing LATEST · judge.amount v3 · gpt-4.1 / claude-4 · 通过线 60</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">变更说明</span><span class="sum">保存新版本时填写（试运行不需要）</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="note">✓ 折叠的分组同样会进入试运行快照，点击分组标题可逐组展开。</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="panel-head">
+          <div><div class="panel-title">试运行结果</div><div class="panel-sub">本次会话内的试跑都会保留在这里</div></div>
+          <span class="pill soft">未运行</span>
+        </div>
+        <div class="opt-row">
+          <div class="select">执行环境：生产账务集群-01 <i>▾</i></div>
+          <div class="switch"><span class="toggle"></span>失败追问自检</div>
+        </div>
+        <div class="empty">
+          <div class="ico">▶</div>
+          <b>还没有试运行结果</b>
+          <p>修改左侧内容后点击「试运行」，结果会显示在这里，不生成新版本、不影响评审状态。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="actionbar">
+      <div class="hint">✓ 改动只在当前会话草稿中，离开页面即丢弃</div>
+      <div class="actions">
+        <button class="btn ghost">放弃修改</button>
+        <button class="btn">保存为新版本</button>
+        <button class="btn primary">▶ 试运行（不保存）</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 2 ================= -->
+  <div class="screen-label"><b>② 试运行结果 · 契约字段展开</b><span>结果就地展示，可继续改 → 再跑；满意后保存新版本</span></div>
+  <div class="screen">
+    <div class="top">
+      <div>
+        <div class="crumb">‹&nbsp;返回用例详情 &nbsp;·&nbsp; Assets / 用例详情 / TC-2026-001</div>
+        <h1>调试工作台 <span class="sub">第 2 次试运行 · TC-2026-001</span> <span class="pill draft">◌ 草稿 · 未保存</span></h1>
+      </div>
+      <div class="toolbar"><button class="btn ghost">关闭</button></div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="panel-head">
+          <div><div class="panel-title">编辑用例</div><div class="panel-sub">基于当前版本 v5 修改</div></div>
+          <span class="chip">已修改 8 处 · 4 个分组</span>
+        </div>
+        <div class="panel-body">
+          <div class="field"><div class="label">用例名称</div><div class="input changed">10 月账单总额核对（含税）</div></div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">基础信息</span><span class="sum">TC-2026-001 · 单轮问答 · 启用 · P1 · 张审核</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">请求变量</span><span class="sum">行编辑 · 2 个变量</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="sec-block open">
+            <div class="sec-head"><span class="t">用例内容</span><span class="chg-badge">2 项变更</span><span class="sum">单轮问答</span><span class="chev">⌃</span></div>
+            <div class="sec-body">
+              <div class="type-tabs"><span class="on">单轮问答</span><span>静态多轮</span><span>动态多轮</span></div>
+              <div class="field"><div class="label">用户提问 <span class="anno">query</span></div><div class="input area changed">2026 年 10 月账单总额是多少？请说明是否含税。</div></div>
+              <div class="field"><div class="label">预期答案</div><div class="input area changed">10 月账单总额为 128,640.00 元，含税。</div></div>
+            </div>
+          </div>
+
+          <div class="sec-block open">
+            <div class="sec-head"><span class="t">判分方式与契约</span><span class="chg-badge">3 项变更</span><span class="sum">答案契约判分</span><span class="chev">⌃</span></div>
+            <div class="sec-body">
+              <div class="field"><div class="label">判分方式</div><div class="seg"><span>4 维评分</span><span class="on">答案契约判分</span></div></div>
+              <div class="row3">
+                <div class="field"><div class="label">输入形态</div><div class="input">明确问题</div></div>
+                <div class="field"><div class="label">冻结时间（账期）</div><div class="input mono">2026-10-31</div></div>
+                <div class="field"><div class="label">扩展策略</div><div class="input">宽松（有据扩展中性）</div></div>
+              </div>
+              <div class="row3">
+                <div class="field"><div class="label">风险等级</div><div class="input">低（LOW）</div></div>
+                <div class="field"><div class="label">用例负责人</div><div class="input">张审核</div></div>
+                <div class="field"><div class="label">数据快照标识</div><div class="input mono">MOCK-2026-10</div></div>
+              </div>
+              <div class="blue-box">
+                <div class="blue-title"><span>契约配置</span><span class="mini-tag">4 个页签全部进入试跑</span></div>
+                <div class="tabsline"><span class="on">事实包络</span><span>禁止表达</span><span>可接受行为</span><span>计划约束</span></div>
+                <div class="facts">
+                  <div class="factrow head"><span>事实</span><span>期望值</span><span>容差 / 类型</span><span>状态</span></div>
+                  <div class="factrow"><span>本期账单总额</span><span>128,640.00</span><span>0.01 · 数值</span><span><span class="badge sandbox">已取证</span></span></div>
+                  <div class="factrow changed"><span>含税口径</span><span>是</span><span>布尔 · 关键词</span><span><span class="badge sandbox">已取证</span></span></div>
+                </div>
+                <div class="chip-row" style="margin-top:7px">
+                  <span class="check-pill on"><span class="box"></span>允许澄清</span>
+                  <span class="check-pill on"><span class="box"></span>允许带假设作答</span>
+                  <span class="check-pill"><span class="box"></span>允许部分披露</span>
+                  <span class="check-pill"><span class="box"></span>拒绝并说明原因</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">规则硬校验</span><span class="sum">答案契约模式下不参与判定（自动隐藏）</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">Prompt 与模型</span><span class="chg-badge">1 项变更</span><span class="sum">sim.billing LATEST · judge.amount v4 · 通过线 70</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="sec-block">
+            <div class="sec-head"><span class="t">变更说明</span><span class="sum">保存新版本时填写</span><span class="chev">⌄</span></div>
+          </div>
+
+          <div class="note">✓ 折叠分组内的变更同样进入试运行快照，点击分组标题可展开全部字段。</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="panel-head">
+          <div><div class="panel-title">试运行结果</div><div class="panel-sub">2 次试运行 · 最新在前</div></div>
+          <span class="pill soft">12.4s</span>
+        </div>
+        <div class="opt-row">
+          <div class="select">执行环境：生产账务集群-01 <i>▾</i></div>
+          <div class="switch"><span class="toggle on"></span>失败追问自检</div>
+        </div>
+
+        <div class="runbar"><span>第 1 次试运行 · 07:42:10</span><span><span class="pill fail">FAIL</span>&nbsp; 62.0 分</span></div>
+
+        <div class="result">
+          <div class="scorecard">
+            <div><span class="pill ok">PASS</span><div class="score" style="margin-top:7px">86.5<small>分</small></div></div>
+            <div class="divider"></div>
+            <div class="stat">耗时<b>12.4s</b></div>
+            <div class="stat">轮次<b>3 轮</b></div>
+            <div class="stat">判分模式<b>答案契约</b></div>
+            <div class="gain">较 v5 ↑ +24.5</div>
+          </div>
+
+          <div class="sec">
+            <div class="sec-title"><span>事实判定</span><span class="anno">2 / 2 命中</span></div>
+            <div class="facts">
+              <div class="factrow head"><span>事实</span><span>期望</span><span>实际</span><span>结果</span></div>
+              <div class="factrow"><span>本期账单总额</span><span>128,640.00</span><span>128,640.00</span><span><span class="pill ok">命中</span></span></div>
+              <div class="factrow"><span>含税口径</span><span>是</span><span>「含税」</span><span><span class="pill ok">命中</span></span></div>
+            </div>
+          </div>
+
+          <div class="sec">
+            <div class="sec-title"><span>轮次摘要</span><span class="anno">第 1 次试运行结果已折叠在上方</span></div>
+            <div class="turn">
+              <div class="turn-head"><span><span class="idx">第 1 轮</span> &nbsp;·&nbsp; 命中意图：账单汇总</span><span>⌃</span></div>
+              <div class="turn-body">
+                <div class="q">用户：2026 年 10 月账单总额是多少？请说明是否含税。</div>
+                <div class="a">Agent：2026 年 10 月账单总额为 128,640.00 元（含税）。…</div>
+              </div>
+            </div>
+            <div class="turn"><div class="turn-head"><span><span class="idx">第 2 轮</span> &nbsp;·&nbsp; 命中意图：口径追问</span><span>⌄</span></div></div>
+            <div class="turn"><div class="turn-head"><span><span class="idx">第 3 轮</span> &nbsp;·&nbsp; 命中意图：金额校验</span><span>⌄</span></div></div>
+          </div>
+
+          <div class="sec">
+            <div class="sec-title"><span>裁判理由</span><span class="pill ok">追问自检 · 已触发</span></div>
+            <div class="reason"><b>金额与口径均匹配。</b>最终回复给出 128,640.00 元，与期望答案一致；明确说明「含税」，满足事实包络要求；轮次路径符合预期。</div>
+          </div>
+
+          <div class="link">查看完整轨迹（SQL / 取数 / 裁判 CoT）↗</div>
+        </div>
+
+        <div class="savecard">
+          <div class="t"><span class="check">✓</span>已保存为 v6</div>
+          <div class="note">本次试运行内容已固化为版本；如需继续流转，可直接评审或冻结。</div>
+          <div class="mini"><button class="btn">评审</button><button class="btn soft">冻结进数据集</button></div>
+        </div>
+
+        <div class="changecard">
+          <div class="panel-title" style="font-size:11px;margin-bottom:6px">本次草稿变更（8）</div>
+          <div class="chgrow"><span>基础信息 · 用例名称</span><b>1 项</b></div>
+          <div class="chgrow"><span>用例内容 · query / 预期答案</span><b>2 项</b></div>
+          <div class="chgrow"><span>判分方式与契约 · 方式 / 扩展策略 / 事实</span><b>3 项</b></div>
+          <div class="chgrow"><span>Prompt 与模型 · 裁判模板 / 通过线</span><b>2 项</b></div>
+          <div class="note">✓ 全部变更（含契约事实与规则）均已进入试运行快照</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="actionbar">
+      <div class="hint">✓ 已试运行 2 次，尚未生成任何版本</div>
+      <div class="actions">
+        <button class="btn ghost">放弃修改</button>
+        <button class="btn soft">再次试运行</button>
+        <button class="btn primary">保存为新版本</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 3 ================= -->
+  <div class="screen-label"><b>③ 全字段展开态</b><span>点击分组标题即可展开；左：内容与运行参数，右：评分契约与模型（实际为单列手风琴）</span></div>
+  <div class="screen">
+    <div class="top">
+      <div>
+        <div class="crumb">‹&nbsp;返回用例详情 &nbsp;·&nbsp; Assets / 用例详情 / TC-2026-001</div>
+        <h1>调试工作台 <span class="sub">全部字段展开 · 动态多轮 + 答案契约示例</span> <span class="pill draft">◌ 草稿 · 不保存版本</span></h1>
+      </div>
+      <div class="toolbar"><button class="btn ghost">收起全部</button></div>
+    </div>
+
+    <div class="two-col">
+      <div>
+        <div class="sec-block open">
+          <div class="sec-head"><span class="t">基础信息</span><span class="sum">全部可调（编号 / 类型除外）</span><span class="chev">⌃</span></div>
+          <div class="sec-body">
+            <div class="row2">
+              <div class="field"><div class="label">用例编号 <span class="anno">不可变</span></div><div class="input mono">TC-2026-001</div></div>
+              <div class="field"><div class="label">用例类型 <span class="anno">不可变</span></div><div class="input">动态多轮</div></div>
+            </div>
+            <div class="field"><div class="label">用例名称</div><div class="input">10 月账单总额核对（含税）</div></div>
+            <div class="field"><div class="label">描述</div><div class="input">核对 2026 年 10 月账单总额与含税口径。</div></div>
+            <div class="row3">
+              <div class="field"><div class="label">状态</div><div class="input">启用 ACTIVE</div></div>
+              <div class="field"><div class="label">优先级</div><div class="input">P1</div></div>
+              <div class="field"><div class="label">标签</div><div class="input">账单 · 金额</div></div>
+            </div>
+            <div class="field"><div class="label">执行环境</div><div class="select">生产账务集群-01 <i>▾</i></div></div>
+          </div>
+        </div>
+
+        <div class="sec-block open">
+          <div class="sec-head"><span class="t">请求变量</span><span class="sum">行编辑 / JSON 双模式</span><span class="chev">⌃</span></div>
+          <div class="sec-body">
+            <div class="row2">
+              <div class="field"><div class="label">key</div><div class="input mono">user_id</div></div>
+              <div class="field"><div class="label">value</div><div class="input mono">13800138000</div></div>
+            </div>
+            <div class="row2">
+              <div class="field"><div class="label">key</div><div class="input mono">channel</div></div>
+              <div class="field"><div class="label">value</div><div class="input mono">app</div></div>
+            </div>
+            <div class="muted-box">渲染进环境请求头 / 请求体模板；优先级：运行时 &gt; 用例变量 &gt; 环境变量池。query / session_id / history / turn 由运行时自动注入。</div>
+          </div>
+        </div>
+
+        <div class="sec-block open">
+          <div class="sec-head"><span class="t">用例内容</span><span class="sum">动态多轮（单轮 / 静态多轮切换后字段随之变化）</span><span class="chev">⌃</span></div>
+          <div class="sec-body">
+            <div class="type-tabs"><span>单轮问答</span><span>静态多轮</span><span class="on">动态多轮</span></div>
+            <div class="field"><div class="label">用户目标 user_goal</div><div class="input area">在不直接提供订单号的前提下，通过追问拿到订单 A2024001 的含税金额与明细笔数。</div></div>
+            <div class="field"><div class="label">初始提问 initial_query</div><div class="input">我想核对一下最近订单的账单明细。</div></div>
+            <div class="field"><div class="label">人设描述 persona_description</div><div class="input area">某科技公司财务，表达口语化，关注金额细节。</div></div>
+            <div class="row2">
+              <div class="field"><div class="label">最大轮次</div><div class="input">5</div></div>
+              <div class="field"><div class="label">终止关键词</div><div class="input">¥128,640.00, 含税</div></div>
+            </div>
+            <div class="field">
+              <div class="label">隐藏上下文（按提示逐轮释放）</div>
+              <div class="rulebox"><div class="rt">order_no</div><div class="rv"><span>内容：A2024001</span><span>释放提示：用户说出订单号</span></div></div>
+              <div class="rulebox" style="margin-bottom:9px"><div class="rt">bill_month</div><div class="rv"><span>内容：2026-10</span><span>释放提示：用户确认账期</span></div></div>
+            </div>
+            <div class="muted-box">静态多轮切换后：逐轮脚本（提问 / 预期答案 / 备注 / 单轮规则 JSON）+ 会话级预期 JSON + fail_fast。</div>
+          </div>
+        </div>
+
+        <div class="sec-block open">
+          <div class="sec-head"><span class="t">判分方式</span><span class="sum">答案契约判分</span><span class="chev">⌃</span></div>
+          <div class="sec-body">
+            <div class="field"><div class="seg"><span>4 维评分</span><span class="on">答案契约判分</span></div></div>
+            <div class="row3">
+              <div class="field"><div class="label">输入形态</div><div class="input">明确问题</div></div>
+              <div class="field"><div class="label">冻结时间（账期）</div><div class="input mono">2026-10-31</div></div>
+              <div class="field"><div class="label">扩展策略</div><div class="input">宽松</div></div>
+            </div>
+            <div class="row3">
+              <div class="field"><div class="label">风险等级</div><div class="input">低 LOW</div></div>
+              <div class="field"><div class="label">用例负责人</div><div class="input">张审核</div></div>
+              <div class="field"><div class="label">数据快照标识</div><div class="input mono">MOCK-2026-10</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="sec-block open">
+          <div class="sec-head"><span class="t">答案契约</span><span class="sum">事实 / 禁止 / 行为 / 计划</span><span class="chev">⌃</span></div>
+          <div class="sec-body">
+            <div class="tabsline"><span class="on">事实包络</span><span>禁止表达</span><span>可接受行为</span><span>计划约束</span></div>
+            <div class="small" style="margin-bottom:5px">Must 事实（必答）</div>
+            <div class="facts" style="margin-bottom:7px">
+              <div class="factrow head"><span>事实</span><span>期望值</span><span>容差 / 类型</span><span>状态</span></div>
+              <div class="factrow"><span>本期账单总额</span><span>128,640.00</span><span>0.01 · 数值</span><span><span class="badge sandbox">已取证</span></span></div>
+              <div class="factrow"><span>含税口径</span><span>是</span><span>布尔 · 关键词</span><span><span class="badge sandbox">已取证</span></span></div>
+            </div>
+            <div class="small" style="margin-bottom:5px">May 事实（可接受扩展）</div>
+            <div class="facts" style="margin-bottom:7px">
+              <div class="factrow head"><span>事实</span><span>期望值</span><span>容差 / 类型</span><span>状态</span></div>
+              <div class="factrow"><span>明细笔数</span><span>3</span><span>整数</span><span><span class="badge gray">待取证</span></span></div>
+            </div>
+            <div class="small" style="margin-bottom:4px">每条事实可调：业务名称 · 类型 · 期望值 / 候选值 · 单位 · 容差 · 关键词 · 别名 · 是否必须绑定名称</div>
+            <div class="muted-box" style="margin-bottom:7px">禁止表达：must_not 文本、禁用短语（如「保证收益」「百分之百准确」）</div>
+            <div class="chip-row" style="margin-bottom:7px">
+              <span class="check-pill on"><span class="box"></span>允许澄清</span>
+              <span class="check-pill on"><span class="box"></span>允许带假设作答</span>
+              <span class="check-pill"><span class="box"></span>允许部分披露</span>
+              <span class="check-pill"><span class="box"></span>拒绝并说明原因</span>
+            </div>
+            <div class="row2">
+              <div class="field"><div class="label">澄清必须问到的槽位</div><div class="input mono">time_range, focus</div></div>
+              <div class="field"><div class="label">假设声明</div><div class="input">按当前账期</div></div>
+            </div>
+            <div class="small" style="margin-bottom:4px">计划约束（仅诊断）：期望能力 bill_current / order_detail · 工具调用预算 3</div>
+          </div>
+        </div>
+
+        <div class="sec-block open">
+          <div class="sec-head"><span class="t">规则硬校验</span><span class="sum">全字段示意 · 实际契约模式下自动隐藏</span><span class="chev">⌃</span></div>
+          <div class="sec-body">
+            <div class="rulebox"><div class="rt">金额规则</div><div class="rv"><span>账单总额 = 128,640.00 · 容差 0.01</span><span>别名：账单合计 · 必须绑定名称</span></div></div>
+            <div class="rulebox"><div class="rt">笔数规则</div><div class="rv"><span>费用项数 = 3</span><span>别名：item_count</span></div></div>
+            <div class="row3">
+              <div class="field"><div class="label">日期</div><div class="input mono">2026-10-01</div></div>
+              <div class="field"><div class="label">必须包含</div><div class="input">A2024001</div></div>
+              <div class="field"><div class="label">禁止包含</div><div class="input">系统异常</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec-block open">
+          <div class="sec-head"><span class="t">Prompt 与模型</span><span class="sum">模板 / 策略 / 版本 / 多裁判</span><span class="chev">⌃</span></div>
+          <div class="sec-body">
+            <div class="field"><div class="label">用户模拟器模板 · 策略 / 版本</div><div class="select">sim.billing · LATEST <i>▾</i></div></div>
+            <div class="field"><div class="label">LLM 裁判模板 · 策略 / 版本</div><div class="select">judge.amount · PINNED v4 <i>▾</i></div></div>
+            <div class="row2">
+              <div class="field"><div class="label">裁判策略</div><div class="input">平均分 AVG</div></div>
+              <div class="field"><div class="label">通过分数线</div><div class="input">60</div></div>
+            </div>
+            <div class="field">
+              <div class="label">裁判模型（可多选）</div>
+              <div class="chip-row">
+                <span class="check-pill on"><span class="box"></span>gpt-4.1</span>
+                <span class="check-pill on"><span class="box"></span>claude-4</span>
+                <span class="check-pill"><span class="box"></span>qwen-max</span>
+              </div>
+            </div>
+            <div class="field"><div class="label">提示词覆盖</div><div class="collapse"><span>2 项自定义（system / judge）</span><span>展开 ›</span></div></div>
+          </div>
+        </div>
+
+        <div class="sec-block open">
+          <div class="sec-head"><span class="t">变更说明</span><span class="sum">仅保存新版本时写入版本记录</span><span class="chev">⌃</span></div>
+          <div class="sec-body">
+            <div class="field"><div class="label">变更说明</div><div class="input">调整预期金额、裁判模板与契约事实取证</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="actionbar" style="margin-top:14px">
+      <div class="hint">✓ 以上全部分组与字段都会进入试运行快照，仅用例编号 / 类型不可变更</div>
+      <div class="actions">
+        <button class="btn ghost">放弃修改</button>
+        <button class="btn">保存为新版本</button>
+        <button class="btn primary">▶ 试运行（不保存）</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 4 ================= -->
+  <div class="screen-label"><b>④ 用例详情 · 草稿执行记录标识</b><span>草稿试跑保留可追溯，但不进入通过率趋势</span></div>
+  <div class="screen">
+    <div class="card" style="overflow:hidden">
+      <div class="panel-head">
+        <div><div class="panel-title">执行记录</div><div class="panel-sub">共 42 次执行（含批量、调试与重跑）</div></div>
+        <div class="legend-pill"><span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block"></span>执行中 · 实时推送</div>
+      </div>
+      <table>
+        <thead><tr>
+          <th style="width:84px">执行</th><th style="width:92px">状态</th><th style="width:64px">得分</th><th style="width:104px">追问自检</th><th style="width:96px">版本</th><th style="width:104px">来源</th><th style="width:76px">耗时</th><th>开始时间</th><th style="width:64px;text-align:right">操作</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="linknum">#1284</span><div class="anno" style="margin-top:2px">试运行 #2</div></td>
+            <td><span class="pill ok">PASS</span></td><td><b style="color:#334155">86.5</b></td>
+            <td><span class="badge sandbox">已追问</span></td>
+            <td><span class="kb">v5</span> <span class="anno">草稿</span></td>
+            <td><span class="badge sandbox">草稿试跑</span></td><td>12.4s</td><td>11-20 07:44:32</td>
+            <td style="text-align:right"><span class="linknum">查看</span></td>
+          </tr>
+          <tr>
+            <td><span class="linknum">#1283</span><div class="anno" style="margin-top:2px">试运行 #1</div></td>
+            <td><span class="pill fail">FAIL</span></td><td>62.0</td>
+            <td><span class="badge gray">未触发</span></td>
+            <td><span class="kb">v5</span> <span class="anno">草稿</span></td>
+            <td><span class="badge sandbox">草稿试跑</span></td><td>10.8s</td><td>11-20 07:42:10</td>
+            <td style="text-align:right"><span class="linknum">查看</span></td>
+          </tr>
+          <tr>
+            <td><span class="linknum">#1276</span><div class="anno" style="margin-top:2px">批量任务 · 账务回归</div></td>
+            <td><span class="pill ok">PASS</span></td><td>78.0</td>
+            <td><span class="badge gray">未触发（通过）</span></td>
+            <td><span class="kb">v5</span></td>
+            <td><span class="badge gray">批量</span></td><td>11.2s</td><td>11-19 22:00:04</td>
+            <td style="text-align:right"><span class="linknum">查看</span></td>
+          </tr>
+          <tr>
+            <td><span class="linknum">#1251</span><div class="anno" style="margin-top:2px">单条调试</div></td>
+            <td><span class="pill ok">PASS</span></td><td>76.5</td>
+            <td><span class="badge gray">未触发（通过）</span></td>
+            <td><span class="kb">v5</span></td>
+            <td><span class="badge gray">单条调试</span></td><td>10.9s</td><td>11-19 16:31:40</td>
+            <td style="text-align:right"><span class="linknum">查看</span></td>
+          </tr>
+          <tr>
+            <td><span class="linknum">#1244</span><div class="anno" style="margin-top:2px">重跑</div></td>
+            <td><span class="pill fail">FAIL</span></td><td>54.0</td>
+            <td><span class="badge gray">—</span></td>
+            <td><span class="kb">v4</span></td>
+            <td><span class="badge gray">重跑</span></td><td>13.1s</td><td>11-19 14:08:12</td>
+            <td style="text-align:right"><span class="linknum">查看</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="legend">
+        <span>● 草稿试跑：使用未保存表单内容执行，不产生版本、不影响评审状态</span>
+        <span>趋势 / 通过率统计已排除草稿试跑</span>
+      </div>
+    </div>
+    <div class="note" style="padding:0 4px">Trace 详情页同样会显示「草稿试跑」徽标，并提示本次执行的快照与当前版本 v5 的差异。</div>
+  </div>
+
+</div>
+</body>
+</html>

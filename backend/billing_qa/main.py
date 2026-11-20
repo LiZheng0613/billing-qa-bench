@@ -30,7 +30,10 @@ async def lifespan(app: FastAPI):
     await control_store.connect()
     recovered = await scheduler.recover_interrupted_tasks()
     if recovered:
-        logger.warning("检测到 %d 个中断任务，已自动终止（可通过「继续执行」续做）", recovered)
+        logger.warning(
+            "检测到 %d 个中断任务：执行中的已自动续做，终止中的已收口为已终止",
+            recovered,
+        )
     await schedule_dispatcher.start()
     logger.info("服务已就绪: http://%s:%s%s/docs", settings.host, settings.port, settings.api_prefix)
     try:

@@ -555,7 +555,7 @@ onBeforeUnmount(() => {
               </label>
               <label class="block">
                 <span class="label">初始密码</span>
-                <input v-model="createForm.password" type="password" class="input" placeholder="至少 8 位，含字母和数字" />
+                <input v-model="createForm.password" type="password" class="input" placeholder="请输入初始密码" />
               </label>
               <div class="grid grid-cols-2 gap-2">
                 <label class="block">

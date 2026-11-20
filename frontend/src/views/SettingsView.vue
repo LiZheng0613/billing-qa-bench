@@ -510,6 +510,19 @@ function caseDebugQuery(item: TestCase): string {
   return ''
 }
 
+async function loadAllCasesForDebug(): Promise<TestCase[]> {
+  // 分页拉取全量用例（后端单页上限 200），不按环境过滤，任意用例均可用于调试
+  const all: TestCase[] = []
+  let page = 1
+  for (;;) {
+    const result = await api.cases.list({ page, page_size: 200 })
+    all.push(...result.items)
+    if (all.length >= result.total) break
+    page += 1
+  }
+  return all
+}
+
 async function openDebug(item: Environment): Promise<void> {
   debugEnv.value = item
   debugCases.value = []
@@ -520,8 +533,13 @@ async function openDebug(item: Environment): Promise<void> {
   debugOpen.value = true
   debugLoadingCases.value = true
   try {
-    const page = await api.cases.list({ environment_id: item.id, page_size: 200 })
-    debugCases.value = [...page.items].sort((a, b) => b.id - a.id)
+    const all = await loadAllCasesForDebug()
+    debugCases.value = all.sort((a, b) => {
+      // 绑定当前环境的用例排前面作为默认首选，其余用例仍全部可选
+      const aBound = a.environment_id === item.id ? 0 : 1
+      const bBound = b.environment_id === item.id ? 0 : 1
+      return aBound - bBound || b.id - a.id
+    })
     if (debugCases.value.length) {
       debugCaseId.value = debugCases.value[0].id
       applyDebugCase()
@@ -531,6 +549,12 @@ async function openDebug(item: Environment): Promise<void> {
   } finally {
     debugLoadingCases.value = false
   }
+}
+
+// 非当前环境绑定的用例标注其归属环境，便于区分
+function debugCaseEnvSuffix(item: TestCase): string {
+  if (item.environment_id === debugEnv.value?.id) return ''
+  return item.environment_name ? ` · 绑定环境：${item.environment_name}` : ' · 未绑定环境'
 }
 
 function applyDebugCase(): void {
@@ -1788,11 +1812,14 @@ onMounted(() => {
             @change="applyDebugCase"
           >
             <option v-if="debugLoadingCases" :value="null">加载用例中…</option>
-            <option v-else-if="!debugCases.length" :value="null">该环境暂未绑定用例</option>
+            <option v-else-if="!debugCases.length" :value="null">暂无用例</option>
             <option v-for="item in debugCases" :key="item.id" :value="item.id">
-              {{ item.code }} · {{ item.name }}
+              {{ item.code }} · {{ item.name }}{{ debugCaseEnvSuffix(item) }}
             </option>
           </select>
+          <p class="mt-1 text-[11px] leading-relaxed text-slate-500">
+            所有用例均可用于调试，绑定当前环境的用例优先排在前面。
+          </p>
         </div>
 
         <div>

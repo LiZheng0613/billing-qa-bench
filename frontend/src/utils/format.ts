@@ -105,7 +105,7 @@ const STATUS_LABELS: Record<string, string> = {
   RETRY: '失败重跑',
   RESUME: '继续执行',
   DEBUG: '单条调试',
-  SANDBOX: '沙盒',
+  SANDBOX: '草稿试跑',
   INITIAL: '初始提问',
   SIMULATOR: '模拟用户',
   STATIC: '脚本轮次',

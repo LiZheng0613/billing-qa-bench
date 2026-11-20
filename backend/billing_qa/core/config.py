@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     repetition_similarity_threshold: float = 0.9
     task_retention_days: int = 30
     schedule_poll_interval_seconds: float = 15.0
+    # 任务运行锁 TTL：多实例下实例崩溃后锁自然过期，允许其他实例接管续做
+    task_run_lock_ttl_seconds: float = 60.0
 
     # ---------- LLM JSON 输出修复重试 ----------
     # 模型返回 200 但内容不是约定的标准化 JSON（Markdown 代码块 / 噪声 / 缺字段）时，

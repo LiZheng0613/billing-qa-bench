@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import time
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -13,6 +14,22 @@ from billing_qa.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+# 只续租自己持有的锁（值等于 token 才 PEXPIRE）
+_RENEW_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('pexpire', KEYS[1], ARGV[2])
+end
+return 0
+"""
+
+# 只释放自己持有的锁（值等于 token 才 DEL），避免误删其他实例的锁
+_RELEASE_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
+
 
 class ControlStore:
     """Redis 优先；连不上时自动降级为进程内字典，保证单机可运行。"""
@@ -21,6 +38,8 @@ class ControlStore:
         self._redis: aioredis.Redis | None = None
         self._local: dict[str, str] = {}
         self._local_hash: dict[str, dict[str, str]] = {}
+        # 进程内运行锁：name -> (token, 过期时刻 monotonic 秒)
+        self._local_locks: dict[str, tuple[str, float]] = {}
         self._connected = False
         self._checked = False
 
@@ -103,6 +122,77 @@ class ControlStore:
         if self._redis is not None:
             with contextlib.suppress(Exception):
                 await self._redis.delete(key, self._key(task_id, "progress"))
+
+    # ------------------------------------------------------------------ #
+    # 分布式运行锁：多实例部署下同一任务只允许一个实例执行。
+    # Redis 不可用时降级为进程内锁（带 TTL 语义），单进程行为不变。
+    # ------------------------------------------------------------------ #
+    def lock_key(self, task_id: int) -> str:
+        """任务运行锁的键名。"""
+        return f"{settings.redis_key_prefix}lock:task:{task_id}:run"
+
+    async def acquire_lock(self, name: str, token: str, ttl_seconds: float) -> bool:
+        """获取运行锁；已被其他持有者占用时返回 False。"""
+        if self._redis is not None:
+            try:
+                return bool(
+                    await self._redis.set(
+                        name, token, nx=True, px=max(1, int(ttl_seconds * 1000))
+                    )
+                )
+            except Exception as exc:
+                logger.warning("获取 Redis 运行锁失败，降级为进程内锁: %s", exc)
+        return self._acquire_local_lock(name, token, ttl_seconds)
+
+    async def renew_lock(self, name: str, token: str, ttl_seconds: float) -> bool:
+        """续租运行锁；持有者不匹配（已易主/已过期）时返回 False。"""
+        if self._redis is not None:
+            try:
+                renewed = await self._redis.eval(
+                    _RENEW_LOCK_SCRIPT, 1, name, token, max(1, int(ttl_seconds * 1000))
+                )
+                return bool(renewed)
+            except Exception as exc:
+                logger.warning("续租 Redis 运行锁失败，降级为进程内锁: %s", exc)
+        return self._renew_local_lock(name, token, ttl_seconds)
+
+    async def release_lock(self, name: str, token: str) -> None:
+        """释放运行锁；只删除自己持有的锁，避免误删其他实例的锁。"""
+        if self._redis is not None:
+            try:
+                await self._redis.eval(_RELEASE_LOCK_SCRIPT, 1, name, token)
+                return
+            except Exception as exc:
+                logger.warning("释放 Redis 运行锁失败，降级为进程内锁: %s", exc)
+        self._release_local_lock(name, token)
+
+    @staticmethod
+    def _local_ttl(ttl_seconds: float) -> float:
+        return max(0.0, ttl_seconds)
+
+    def _acquire_local_lock(self, name: str, token: str, ttl_seconds: float) -> bool:
+        current = time.monotonic()
+        # 顺带清理已过期的本地锁
+        self._local_locks = {
+            key: value for key, value in self._local_locks.items() if value[1] > current
+        }
+        if name in self._local_locks:
+            return False
+        self._local_locks[name] = (token, current + self._local_ttl(ttl_seconds))
+        return True
+
+    def _renew_local_lock(self, name: str, token: str, ttl_seconds: float) -> bool:
+        held = self._local_locks.get(name)
+        current = time.monotonic()
+        if held is None or held[1] <= current or held[0] != token:
+            return False
+        self._local_locks[name] = (token, current + self._local_ttl(ttl_seconds))
+        return True
+
+    def _release_local_lock(self, name: str, token: str) -> None:
+        held = self._local_locks.get(name)
+        if held is not None and held[0] == token:
+            self._local_locks.pop(name, None)
 
 
 control_store = ControlStore()

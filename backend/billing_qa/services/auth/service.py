@@ -64,13 +64,6 @@ def _normalize_username(username: str) -> str:
     return username.strip().lower()
 
 
-def _validate_password(password: str) -> None:
-    if len(password) < 8:
-        raise ValidationError("密码至少需要 8 位")
-    if not any(ch.isalpha() for ch in password) or not any(ch.isdigit() for ch in password):
-        raise ValidationError("密码必须同时包含字母和数字")
-
-
 def _generate_temp_password() -> str:
     alphabet = string.ascii_letters + string.digits
     value = "".join(secrets.choice(alphabet) for _ in range(14))
@@ -380,7 +373,6 @@ async def create_user(
     ).scalar_one_or_none()
     if exists is not None:
         raise ConflictError("用户名已存在")
-    _validate_password(password)
     roles = (
         await _validate_role_ids(db, role_ids)
         if role_ids
@@ -639,7 +631,6 @@ async def change_password(
     user = await get_user(db, user_id)
     if not verify_password(old_password, user.password_hash):
         raise AppError("原密码错误", code="AUTH_FAILED", status_code=400)
-    _validate_password(new_password)
     user.password_hash = hash_password(new_password)
     user.must_change_password = False
     user.token_version += 1

@@ -182,21 +182,32 @@ onMounted(async () => {
     <button
       v-for="role in roles"
       :key="role.id"
-      class="flex min-w-[112px] flex-none items-center gap-1.5 rounded-[11px] border p-1.5 text-left transition"
-      :class="selectedRole?.id === role.id ? 'border-indigo-200 bg-[#f7f7ff]' : 'border-transparent hover:border-indigo-100 hover:bg-[#fafaff]'"
+      class="group flex min-w-[112px] flex-none items-center gap-1.5 rounded-[11px] border p-1.5 text-left transition-colors duration-150"
+      :class="selectedRole?.id === role.id
+        ? 'border-brand-edge bg-brand-soft/60 shadow-[0_1px_2px_rgba(79,70,229,0.08)]'
+        : 'border-transparent hover:border-brand-edge/70 hover:bg-[#fafaff]'"
+      :aria-pressed="selectedRole?.id === role.id"
       @click="selectRole(role.id)"
     >
-      <span class="grid h-7 w-7 place-items-center rounded-lg bg-indigo-50 text-indigo-600">
+      <span
+        class="grid h-7 w-7 flex-none place-items-center rounded-lg transition-colors duration-150"
+        :class="selectedRole?.id === role.id
+          ? 'bg-brand text-white shadow-sm'
+          : 'bg-brand-soft text-brand group-hover:bg-brand-edge'"
+      >
         <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
           <path stroke-linecap="round" stroke-linejoin="round" :d="roleIcon(role.code)" />
         </svg>
       </span>
       <span class="min-w-0 flex-1">
-        <span class="block truncate text-[10.5px] font-semibold text-ink-soft">{{ role.name }}</span>
-        <span class="block text-[8.5px] text-slate-400">{{ role.user_count }} 人 · {{ role.permission_count }} 项</span>
-      </span>
-      <span v-if="selectedRole?.id === role.id" class="grid h-3.5 w-3.5 place-items-center rounded-full bg-indigo-600 text-white">
-        <svg class="h-2 w-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" d="m5 12 4 4L19 6" /></svg>
+        <span
+          class="block truncate text-[10.5px] font-semibold transition-colors"
+          :class="selectedRole?.id === role.id ? 'text-brand-deep' : 'text-ink-soft'"
+        >{{ role.name }}</span>
+        <span
+          class="block text-[8.5px] transition-colors"
+          :class="selectedRole?.id === role.id ? 'text-brand/70' : 'text-slate-400'"
+        >{{ role.user_count }} 人 · {{ role.permission_count }} 项</span>
       </span>
     </button>
   </div>

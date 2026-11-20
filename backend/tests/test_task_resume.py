@@ -1,4 +1,9 @@
-"""终止后续做：只补跑未完成用例，已有最终判定的用例保持原结果。
+"""续做与重启恢复：终止后续做只补跑未完成用例；服务重启后 RUNNING 任务自动续做。
+
+覆盖三块语义：
+1. 手动「继续执行」：未执行 / 执行中 / 已终止的用例补跑，已有最终判定的保持原结果；
+2. 重启自动续做：中断任务恢复执行，在途记录收口为 ABORTED 留审计，最终不残留终止态；
+3. 终止意图优先 + 分布式运行锁互斥（多实例下防止重复接管）。
 
 依赖本机 PostgreSQL、Redis 与内置 Mock 服务；不可用时自动跳过。
 """
@@ -68,15 +73,24 @@ async def _create_task(
     case_ids: list[int],
     *,
     status: str = "ABORTED",
+    control_state: str | None = None,
     records: list[tuple[int, int, dict[str, Any], str, int]] | None = None,
 ) -> int:
-    """构造「已终止批次 + 可选历史执行」的最小数据。"""
+    """构造「指定状态批次 + 可选历史执行」的最小数据。"""
+
+    def default_control_state() -> str:
+        if status == "RUNNING":
+            return "RUNNING"
+        if status == "ABORTED":
+            return "ABORTED"
+        return "FINISHED"
+
     async with SessionLocal() as db:
         task = BatchTask(
             code=f"PYTEST-RESUME-{uuid.uuid4().hex[:8]}",
             name="pytest 终止续做",
             status=status,
-            control_state="ABORTED" if status == "ABORTED" else "FINISHED",
+            control_state=control_state or default_control_state(),
             case_ids=case_ids,
             total_cases=len(case_ids),
             concurrency=1,
@@ -86,7 +100,7 @@ async def _create_task(
             retry_on_error=False,
             max_error_retries=0,
             created_by="pytest",
-            finished_at=now(),
+            finished_at=None if status == "RUNNING" else now(),
         )
         db.add(task)
         await db.flush()
@@ -319,4 +333,135 @@ async def test_task_detail_reports_unfinished_cases(
         if target is not None:
             assert target["unfinished_cases"] == 1
     finally:
+        await _cleanup(task_id)
+
+
+async def test_recover_resumes_interrupted_running_task() -> None:
+    """重启恢复：RUNNING 任务自动续做，在途用例重跑，最终不残留终止态用例。"""
+    if not await _dependencies_ready():
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
+    done = await _load_demo_case("DEMO-SINGLE-FAIL")
+    inflight = await _load_demo_case("DEMO-SINGLE-001")
+    if done is None or inflight is None:
+        pytest.skip("演示用例缺失")
+    done_id, done_version, done_snapshot = done
+    case_id, version, snapshot = inflight
+    task_id = await _create_task(
+        [done_id, case_id],
+        status="RUNNING",
+        control_state="RUNNING",
+        records=[
+            (done_id, done_version, done_snapshot, "PASS", 1),
+            (case_id, version, snapshot, "RUNNING", 1),
+        ],
+    )
+    await control_store.set_state(task_id, "RUNNING")
+    try:
+        recovered = await scheduler.recover_interrupted_tasks()
+        assert recovered >= 1
+        assert scheduler.is_running(task_id)
+        await _wait_not_running(task_id)
+
+        records = await _records(task_id)
+        assert len(records) == 3
+        resumed = [record for record in records if record.source == "RESUME"]
+        assert len(resumed) == 1
+        assert resumed[0].case_id == case_id
+        assert resumed[0].attempt_no == 2
+        assert resumed[0].status == "PASS"
+        # 被重启打断的尝试收口为 ABORTED，作为历史审计痕迹保留
+        interrupted = [
+            record
+            for record in records
+            if record.case_id == case_id and record.source == "BATCH"
+        ]
+        assert len(interrupted) == 1
+        assert interrupted[0].status == "ABORTED"
+        # 每个用例的最新一次执行都不是终止态
+        latest_by_case: dict[int, ExecutionRecord] = {}
+        for record in records:  # 按 id 升序，后写入的是最新
+            latest_by_case[record.case_id] = record
+        assert all(
+            record.status != "ABORTED" for record in latest_by_case.values()
+        )
+
+        async with SessionLocal() as db:
+            task = await db.get(BatchTask, task_id)
+            assert task is not None
+            assert task.status == "COMPLETED"
+            assert task.control_state == "FINISHED"
+            assert task.error_message is None
+    finally:
+        await _wait_not_running(task_id)
+        await _cleanup(task_id)
+
+
+async def test_recover_keeps_abort_intent() -> None:
+    """重启前已下达终止指令的任务：保持终止语义，不会被自动拉起。"""
+    if not await _dependencies_ready():
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
+    loaded = await _load_demo_case("DEMO-SINGLE-001")
+    if loaded is None:
+        pytest.skip("演示用例缺失")
+    case_id, version, snapshot = loaded
+    task_id = await _create_task(
+        [case_id],
+        status="RUNNING",
+        control_state="RUNNING",
+        records=[(case_id, version, snapshot, "RUNNING", 1)],
+    )
+    await control_store.set_state(task_id, "ABORTING")
+    try:
+        assert await scheduler.adopt_interrupted_task(task_id) is False
+        assert not scheduler.is_running(task_id)
+
+        records = await _records(task_id)
+        assert len(records) == 1  # 没有产生新的执行记录
+        assert records[0].status == "ABORTED"  # 在途记录被收口
+
+        async with SessionLocal() as db:
+            task = await db.get(BatchTask, task_id)
+            assert task is not None
+            assert task.status == "ABORTED"
+            assert task.control_state == "ABORTED"
+    finally:
+        await _cleanup(task_id)
+
+
+async def test_adopt_skips_while_lock_held_by_other_instance() -> None:
+    """运行锁被其他实例持有时不接管；锁释放后可以接管并续做。"""
+    if not await _dependencies_ready():
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
+    loaded = await _load_demo_case("DEMO-SINGLE-001")
+    if loaded is None:
+        pytest.skip("演示用例缺失")
+    case_id, _, _ = loaded
+    task_id = await _create_task(
+        [case_id], status="RUNNING", control_state="RUNNING"
+    )
+    await control_store.set_state(task_id, "RUNNING")
+    lock_name = control_store.lock_key(task_id)
+    try:
+        assert await control_store.acquire_lock(lock_name, "other-instance", 60)
+        assert await scheduler.adopt_interrupted_task(task_id) is False
+        assert not scheduler.is_running(task_id)
+        assert await _records(task_id) == []  # 既未收口也未启动
+
+        # 释放后可以接管，自动续做完成
+        await control_store.release_lock(lock_name, "other-instance")
+        assert await scheduler.adopt_interrupted_task(task_id) is True
+        await _wait_not_running(task_id)
+
+        records = await _records(task_id)
+        assert len(records) == 1
+        assert records[0].source == "RESUME"
+        assert records[0].status == "PASS"
+
+        async with SessionLocal() as db:
+            task = await db.get(BatchTask, task_id)
+            assert task is not None
+            assert task.status == "COMPLETED"
+    finally:
+        await control_store.release_lock(lock_name, "other-instance")
+        await _wait_not_running(task_id)
         await _cleanup(task_id)

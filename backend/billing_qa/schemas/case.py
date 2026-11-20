@@ -600,5 +600,7 @@ class RunCompare(BaseModel):
 class CaseDebugRequest(BaseModel):
     environment_id: int | None = None
     case_snapshot_override: dict[str, Any] | None = None
+    # 草稿试跑：用未保存的表单快照执行，执行记录标记为 SANDBOX，且不进入趋势统计
+    draft: bool = False
     # LLM 裁决判失败时，在同一会话内追问被测 Agent 自检原因（追问自检）
     enable_self_check: bool = False
