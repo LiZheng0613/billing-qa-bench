@@ -125,6 +125,8 @@ const activeName = computed(
 const pageTitle = computed(() =>
   typeof route.meta.title === 'string' ? route.meta.title : '测试平台',
 )
+// 调试工作台是满屏工作区：不展示全局页脚，避免占用浮窗操作栏的空间。
+const isWorkbench = computed(() => route.name === 'case-debug')
 
 // 面包屑：优先使用页面按数据注册的完整路径，否则用路由 meta 的父级 + 当前页标题。
 const breadcrumbs = computed<BreadcrumbItem[]>(() => {
@@ -143,7 +145,7 @@ function logout(): void {
 
 <template>
   <div class="min-h-screen bg-canvas">
-    <div class="flex min-h-screen">
+    <div class="flex" :class="isWorkbench ? 'h-screen overflow-hidden' : 'min-h-screen'">
       <aside
         class="sticky top-0 z-40 h-screen w-[252px] shrink-0 py-4 pl-4 max-xl:w-[96px] max-xl:py-3 max-xl:pl-3 max-md:w-[80px] max-md:pl-2"
       >
@@ -319,7 +321,7 @@ function logout(): void {
         </div>
       </aside>
 
-      <div class="flex min-w-0 flex-1 flex-col">
+      <div class="flex min-w-0 flex-1 flex-col" :class="isWorkbench ? 'min-h-0' : ''">
         <header
           class="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 bg-canvas/85 px-6 backdrop-blur max-md:px-4"
         >
@@ -353,11 +355,22 @@ function logout(): void {
           </div>
         </header>
 
-        <main class="mx-auto w-full max-w-[1460px] flex-1 px-6 pb-8 max-md:px-4">
-          <RouterView />
+        <main
+          class="mx-auto w-full max-w-[1460px] flex-1 px-6 max-md:px-4"
+          :class="isWorkbench ? 'min-h-0 overflow-hidden pb-0' : 'pb-8'"
+        >
+          <!-- 调试工作台缓存：从执行详情返回时保留草稿、试运行结果与展开状态。 -->
+          <RouterView v-slot="{ Component }">
+            <KeepAlive include="CaseDebugWorkbench">
+              <component :is="Component" />
+            </KeepAlive>
+          </RouterView>
         </main>
 
-        <footer class="px-6 pb-6 text-center text-[10.5px] text-slate-600 max-md:px-4">
+        <footer
+          v-if="!isWorkbench"
+          class="px-6 pb-6 text-center text-[10.5px] text-slate-600 max-md:px-4"
+        >
           问账智能客服批量测试平台 · FastAPI + Vue3 · 本地部署版
         </footer>
       </div>

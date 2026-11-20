@@ -170,12 +170,26 @@ const props = defineProps<{
   embedded?: boolean
   /** 草稿试跑进行中：禁用重复发起 */
   running?: boolean
+  /** 独立工作台：所有分区常驻展开，不再折叠 */
+  noCollapse?: boolean
+  /** 独立工作台：操作按钮由父级浮窗承接 */
+  hideFooter?: boolean
+  /** 独立工作台：表单不内部滚动，交给外层统一滚动 */
+  noScroll?: boolean
+  /** 独立工作台：用例状态只读，不允许在工作台修改 */
+  hideStatus?: boolean
+  /** 独立工作台：执行环境统一由底部运行栏控制，表单内不重复展示 */
+  hideEnvironment?: boolean
+  /** 受控执行环境：独立工作台浮窗与表单双向同步 */
+  environmentId?: number | null
 }>()
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
   (e: 'submit', payload: CasePayload): void
   (e: 'try-run', payload: CasePayload): void
+  (e: 'update:environmentId', value: number | null): void
+  (e: 'update:dirtyCount', value: number): void
 }>()
 
 const toast = useToastStore()
@@ -246,6 +260,24 @@ const form = reactive({
   change_summary: '',
 })
 
+// 独立工作台：浮窗执行环境与表单内执行环境保持双向同步。
+watch(
+  () => props.environmentId,
+  (value) => {
+    if (value === undefined) return
+    if ((value ?? null) !== form.environment_id) form.environment_id = value ?? null
+  },
+)
+watch(
+  () => form.environment_id,
+  (value) => {
+    if (props.environmentId === undefined) return
+    if ((value ?? null) !== (props.environmentId ?? null)) {
+      emit('update:environmentId', value ?? null)
+    }
+  },
+)
+
 const contractTab = ref<'facts' | 'mustnot' | 'contract' | 'plan'>('facts')
 const originalEnvelope = ref<AnswerEnvelope | null>(null)
 const originalPlan = ref<PlanSpec | null>(null)
@@ -270,13 +302,14 @@ const isCopy = computed(() => !props.caseData && Boolean(props.copyFrom))
 const copySource = computed<TestCase | null>(() =>
   props.caseData ?? (isCopy.value ? props.copyFrom ?? null : null),
 )
-const title = computed(() =>
-  isEdit.value
+const title = computed(() => {
+  if (props.embedded) return '用例草稿'
+  return isEdit.value
     ? `编辑用例 · v${props.caseData?.current_version}`
     : isCopy.value
       ? `复制用例 · 源 ${props.copyFrom?.code ?? ''}`
-      : '新建用例',
-)
+      : '新建用例'
+})
 
 const simulatorTemplates = computed(() =>
   props.templates.filter((item) => item.template_type === 'USER_SIMULATOR'),
@@ -306,12 +339,15 @@ const collapsedSections = ref<Record<string, boolean>>({
   summary: true,
 })
 
+/** 仅普通抽屉 / 可折叠的工作台展示折叠交互；独立工作台所有分区常驻展开。 */
+const collapsible = computed(() => Boolean(props.embedded && !props.noCollapse))
+
 function isSectionCollapsed(key: string): boolean {
-  return Boolean(props.embedded && collapsedSections.value[key])
+  return collapsible.value && Boolean(collapsedSections.value[key])
 }
 
 function toggleSection(key: string): void {
-  if (!props.embedded) return
+  if (!collapsible.value) return
   collapsedSections.value = { ...collapsedSections.value, [key]: !collapsedSections.value[key] }
 }
 
@@ -447,6 +483,18 @@ function isSectionDirty(key: string): boolean {
     props.embedded && initialSections.value[key] && initialSections.value[key] !== sectionSignature(key),
   )
 }
+
+/** 独立工作台浮窗展示的未保存分区数量。 */
+const DIRTY_SECTION_KEYS = ['basic', 'variables', 'content', 'grading', 'rules', 'prompt', 'summary'] as const
+const dirtySectionCount = computed(
+  () => DIRTY_SECTION_KEYS.filter((key) => isSectionDirty(key)).length,
+)
+
+watch(
+  dirtySectionCount,
+  (value) => emit('update:dirtyCount', value),
+  { immediate: true },
+)
 
 function splitList(text: string): string[] {
   return text
@@ -1072,9 +1120,12 @@ function resetForm(): void {
   form.status = source?.status ?? 'ACTIVE'
   form.priority = source?.priority ?? 'P1'
   form.tagsText = (source?.tags ?? []).join(', ')
-  form.environment_id = source
-    ? source.environment_id ?? null
-    : props.environments[0]?.id ?? null
+  form.environment_id =
+    props.environmentId !== undefined
+      ? props.environmentId ?? null
+      : source
+        ? source.environment_id ?? null
+        : props.environments[0]?.id ?? null
   form.query = source?.query ?? ''
   form.expected_answer = source?.expected_answer ?? ''
   rulesFromCase(source?.expected_rules)
@@ -1631,6 +1682,9 @@ function tryRun(): void {
   if (!payload) return
   emit('try-run', payload)
 }
+
+// 独立工作台底部浮窗通过 ref 调用表单校验 + 提交 / 试运行。
+defineExpose({ tryRun, submit })
 
 // ------------------------------------------------------- AI 帮我填
 type AiPane = 'input' | 'result'
@@ -4159,7 +4213,11 @@ function openDraftResult(): void {
             </div>
           </div>
 
-          <div ref="drawerBody" class="flex-1 space-y-6 overflow-y-auto px-5 py-5">
+          <div
+            ref="drawerBody"
+            class="flex-1 space-y-6 px-5 py-5"
+            :class="noScroll ? '' : 'overflow-y-auto'"
+          >
             <div
               v-if="aiApplied"
               class="sticky top-0 z-10 flex items-center gap-2.5 rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-white px-3 py-2 shadow-sm"
@@ -4195,13 +4253,13 @@ function openDraftResult(): void {
             <section class="space-y-3">
               <h3
                 class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
-                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                :class="collapsible ? 'flex cursor-pointer select-none items-center gap-2' : ''"
                 @click="toggleSection('basic')"
               >
                 基础信息
-                <span v-if="embedded" class="section-summary">{{ basicSummary }}</span>
+                <span v-if="collapsible" class="section-summary">{{ basicSummary }}</span>
                 <span v-if="isSectionDirty('basic')" class="section-dirty" title="有未保存修改">●</span>
-                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('basic') ? '⌄' : '⌃' }}</span>
+                <span v-if="collapsible" class="section-chev">{{ isSectionCollapsed('basic') ? '⌄' : '⌃' }}</span>
               </h3>
               <div v-show="!isSectionCollapsed('basic')" class="space-y-3">
               <div class="grid gap-3 sm:grid-cols-2">
@@ -4219,7 +4277,11 @@ function openDraftResult(): void {
                 <textarea v-model="form.description" class="input" :class="{ 'ai-fill': aiHighlight.has('description') }" rows="2" placeholder="用例背景与关注点" />
               </div>
               <div class="grid gap-3 sm:grid-cols-3">
-                <div>
+                <div v-if="hideStatus">
+                  <label class="label">用例类型</label>
+                  <input class="input" :value="CASE_TYPE_LABELS[form.case_type] ?? form.case_type" disabled />
+                </div>
+                <div v-else>
                   <label class="label">状态</label>
                   <select v-model="form.status" class="input">
                     <button><selectedcontent></selectedcontent></button>
@@ -4243,7 +4305,7 @@ function openDraftResult(): void {
                   <input v-model="form.tagsText" class="input" :class="{ 'ai-fill': aiHighlight.has('tagsText') }" placeholder="账单核验, 金额" />
                 </div>
               </div>
-              <div>
+              <div v-if="!hideEnvironment" class="sm:max-w-[420px]">
                 <label class="label">执行环境</label>
                 <select v-model="form.environment_id" class="input">
                   <button><selectedcontent></selectedcontent></button>
@@ -4260,13 +4322,13 @@ function openDraftResult(): void {
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3
                   class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
-                  :class="embedded ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
+                  :class="collapsible ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
                   @click="toggleSection('variables')"
                 >
                   请求变量
-                  <span v-if="embedded" class="section-summary">{{ variablesSummary }}</span>
+                  <span v-if="collapsible" class="section-summary">{{ variablesSummary }}</span>
                   <span v-if="isSectionDirty('variables')" class="section-dirty" title="有未保存修改">●</span>
-                  <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('variables') ? '⌄' : '⌃' }}</span>
+                  <span v-if="collapsible" class="section-chev">{{ isSectionCollapsed('variables') ? '⌄' : '⌃' }}</span>
                 </h3>
                 <div v-if="!isSectionCollapsed('variables')" class="flex items-center gap-1">
                   <button
@@ -4353,12 +4415,12 @@ function openDraftResult(): void {
             <section class="space-y-3">
               <h3
                 class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
-                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                :class="collapsible ? 'flex cursor-pointer select-none items-center gap-2' : ''"
                 @click="toggleSection('type')"
               >
                 用例类型
-                <span v-if="embedded" class="section-summary">{{ CASE_TYPE_LABELS[form.case_type] ?? form.case_type }}</span>
-                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('type') ? '⌄' : '⌃' }}</span>
+                <span v-if="collapsible" class="section-summary">{{ CASE_TYPE_LABELS[form.case_type] ?? form.case_type }}</span>
+                <span v-if="collapsible" class="section-chev">{{ isSectionCollapsed('type') ? '⌄' : '⌃' }}</span>
               </h3>
               <div v-show="!isSectionCollapsed('type')" class="space-y-3">
               <div class="flex flex-wrap gap-2">
@@ -4386,13 +4448,13 @@ function openDraftResult(): void {
             <section v-if="form.case_type === 'SINGLE'" class="space-y-3">
               <h3
                 class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
-                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                :class="collapsible ? 'flex cursor-pointer select-none items-center gap-2' : ''"
                 @click="toggleSection('content')"
               >
                 单轮配置
-                <span v-if="embedded" class="section-summary">{{ contentSummary }}</span>
+                <span v-if="collapsible" class="section-summary">{{ contentSummary }}</span>
                 <span v-if="isSectionDirty('content')" class="section-dirty" title="有未保存修改">●</span>
-                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('content') ? '⌄' : '⌃' }}</span>
+                <span v-if="collapsible" class="section-chev">{{ isSectionCollapsed('content') ? '⌄' : '⌃' }}</span>
               </h3>
               <div v-show="!isSectionCollapsed('content')" class="space-y-3">
               <div>
@@ -4410,13 +4472,13 @@ function openDraftResult(): void {
               <div class="flex items-center justify-between">
                 <h3
                   class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
-                  :class="embedded ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
+                  :class="collapsible ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
                   @click="toggleSection('content')"
                 >
                   静态多轮脚本
-                  <span v-if="embedded" class="section-summary">{{ contentSummary }}</span>
+                  <span v-if="collapsible" class="section-summary">{{ contentSummary }}</span>
                 <span v-if="isSectionDirty('content')" class="section-dirty" title="有未保存修改">●</span>
-                  <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('content') ? '⌄' : '⌃' }}</span>
+                  <span v-if="collapsible" class="section-chev">{{ isSectionCollapsed('content') ? '⌄' : '⌃' }}</span>
                 </h3>
                 <button v-if="!isSectionCollapsed('content')" class="btn-ghost btn-xs" @click="addTurn">添加一轮</button>
               </div>
@@ -4468,13 +4530,13 @@ function openDraftResult(): void {
             <section v-else class="space-y-3">
               <h3
                 class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
-                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                :class="collapsible ? 'flex cursor-pointer select-none items-center gap-2' : ''"
                 @click="toggleSection('content')"
               >
                 动态多轮配置
-                <span v-if="embedded" class="section-summary">{{ contentSummary }}</span>
+                <span v-if="collapsible" class="section-summary">{{ contentSummary }}</span>
                 <span v-if="isSectionDirty('content')" class="section-dirty" title="有未保存修改">●</span>
-                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('content') ? '⌄' : '⌃' }}</span>
+                <span v-if="collapsible" class="section-chev">{{ isSectionCollapsed('content') ? '⌄' : '⌃' }}</span>
               </h3>
               <div v-show="!isSectionCollapsed('content')" class="space-y-3">
               <div>
@@ -4524,13 +4586,13 @@ function openDraftResult(): void {
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3
                   class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
-                  :class="embedded ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
+                  :class="collapsible ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
                   @click="toggleSection('grading')"
                 >
                   判分方式
-                  <span v-if="embedded" class="section-summary">{{ gradingSummary }}</span>
+                  <span v-if="collapsible" class="section-summary">{{ gradingSummary }}</span>
                   <span v-if="isSectionDirty('grading')" class="section-dirty" title="有未保存修改">●</span>
-                  <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('grading') ? '⌄' : '⌃' }}</span>
+                  <span v-if="collapsible" class="section-chev">{{ isSectionCollapsed('grading') ? '⌄' : '⌃' }}</span>
                 </h3>
                 <div v-if="!isSectionCollapsed('grading')" class="flex gap-2">
                   <button
@@ -4887,13 +4949,13 @@ function openDraftResult(): void {
               <div class="flex items-center justify-between">
                 <h3
                   class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
-                  :class="embedded ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
+                  :class="collapsible ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
                   @click="toggleSection('rules')"
                 >
                   规则硬校验
-                  <span v-if="embedded" class="section-summary">{{ rulesSummary }}</span>
+                  <span v-if="collapsible" class="section-summary">{{ rulesSummary }}</span>
                   <span v-if="isSectionDirty('rules')" class="section-dirty" title="有未保存修改">●</span>
-                  <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('rules') ? '⌄' : '⌃' }}</span>
+                  <span v-if="collapsible" class="section-chev">{{ isSectionCollapsed('rules') ? '⌄' : '⌃' }}</span>
                 </h3>
                 <div v-if="!isSectionCollapsed('rules')" class="flex gap-2">
                   <button class="btn-ghost btn-xs" @click="addAmount">添加金额</button>
@@ -4987,13 +5049,13 @@ function openDraftResult(): void {
             <section class="space-y-3">
               <h3
                 class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
-                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                :class="collapsible ? 'flex cursor-pointer select-none items-center gap-2' : ''"
                 @click="toggleSection('prompt')"
               >
                 Prompt 与模型
-                <span v-if="embedded" class="section-summary">{{ promptSummary }}</span>
+                <span v-if="collapsible" class="section-summary">{{ promptSummary }}</span>
                 <span v-if="isSectionDirty('prompt')" class="section-dirty" title="有未保存修改">●</span>
-                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('prompt') ? '⌄' : '⌃' }}</span>
+                <span v-if="collapsible" class="section-chev">{{ isSectionCollapsed('prompt') ? '⌄' : '⌃' }}</span>
               </h3>
               <div v-show="!isSectionCollapsed('prompt')" class="space-y-3">
               <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -5096,13 +5158,13 @@ function openDraftResult(): void {
             <section v-if="isEdit" class="space-y-3">
               <h3
                 class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
-                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                :class="collapsible ? 'flex cursor-pointer select-none items-center gap-2' : ''"
                 @click="toggleSection('summary')"
               >
                 变更说明
-                <span v-if="embedded" class="section-summary">保存新版本时写入版本记录</span>
+                <span v-if="collapsible" class="section-summary">保存新版本时写入版本记录</span>
                 <span v-if="isSectionDirty('summary')" class="section-dirty" title="有未保存修改">●</span>
-                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('summary') ? '⌄' : '⌃' }}</span>
+                <span v-if="collapsible" class="section-chev">{{ isSectionCollapsed('summary') ? '⌄' : '⌃' }}</span>
               </h3>
               <div v-show="!isSectionCollapsed('summary')">
                 <input v-model="form.change_summary" class="input" placeholder="例如：调整预期金额与裁判阈值" />
@@ -5110,7 +5172,10 @@ function openDraftResult(): void {
             </section>
           </div>
 
-          <footer class="flex items-center justify-between gap-2 border-t border-slate-200 px-5 py-3">
+          <footer
+            v-if="!hideFooter"
+            class="flex items-center justify-between gap-2 border-t border-slate-200 px-5 py-3"
+          >
             <p class="text-[11px] text-slate-500">
               {{
                 embedded

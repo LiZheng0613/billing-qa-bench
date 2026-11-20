@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>设计稿 02 · 用例调试工作台（无折叠版）</title>
+<style>
+  :root{
+    --canvas:#f5f5f7; --line:#e8e8ed; --line-soft:#f0f0f4; --line-strong:#dcdfe6;
+    --ink:#111827; --ink-soft:#374151; --muted:#6b7280; --faint:#9ca3af;
+    --brand:#4f46e5; --brand-deep:#4338ca; --brand-soft:#eef2ff; --brand-edge:#e0e7ff;
+    --green:#059669; --green-soft:#ecfdf5; --green-edge:#a7f3d0;
+    --amber:#b45309; --amber-soft:#fffbeb; --amber-edge:#fde68a;
+    --rose:#be123c; --rose-soft:#fff1f2; --rose-edge:#fecdd3;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#cbd5e1 transparent}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{border-radius:999px;background:#cbd5e1;border:2px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:#94a3b8;background-clip:content-box}
+  body{
+    font-family:"Inter","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    background:#eceef2;color:var(--ink);font-size:13px;-webkit-font-smoothing:antialiased;
+  }
+  button{font-family:inherit}
+  .board{max-width:1500px;margin:0 auto;padding:28px 24px 44px}
+  .board-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}
+  .board-head .kicker{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--brand)}
+  .board-head h1{font-size:21px;letter-spacing:-.02em;margin-top:4px}
+  .board-head p{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.6}
+  .tag-soft{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:11px;color:var(--muted);white-space:nowrap}
+  .tag-soft b{color:var(--brand)}
+
+  /* ================= App 框架 ================= */
+  .app{
+    position:relative;display:flex;height:920px;background:var(--canvas);
+    border:1px solid var(--line-strong);border-radius:24px;overflow:hidden;
+    box-shadow:0 40px 90px -50px rgba(17,24,39,.45);
+  }
+  .sidebar{width:224px;flex:none;padding:16px 0 16px 16px}
+  .rail{
+    height:100%;display:flex;flex-direction:column;gap:12px;background:#fff;
+    border:1px solid var(--line);border-radius:20px;padding:18px 12px 12px;
+    box-shadow:0 1px 2px rgba(17,24,39,.04),0 24px 48px -34px rgba(17,24,39,.4);
+  }
+  .logo{display:flex;align-items:center;gap:10px;padding:0 6px}
+  .logo .mark{
+    width:32px;height:32px;border-radius:9px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:13px;
+    background:linear-gradient(135deg,#6366f1,#4f46e5);box-shadow:0 6px 14px -8px rgba(79,70,229,.9);
+  }
+  .logo p{font-size:13px;font-weight:600;letter-spacing:-.02em;line-height:1.15}
+  .logo span{font-size:8.5px;font-weight:600;letter-spacing:.12em;color:#64748b;text-transform:uppercase}
+  .nav-label{font-size:9px;font-weight:600;letter-spacing:.12em;color:#64748b;text-transform:uppercase;padding:8px 10px 2px}
+  .nav{display:flex;flex-direction:column;gap:3px;flex:1}
+  .nav a{
+    display:flex;align-items:center;gap:10px;height:38px;padding:0 10px;border-radius:11px;
+    font-size:12px;font-weight:500;color:#64748b;text-decoration:none;
+  }
+  .nav a svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8}
+  .nav a.on{background:var(--brand-soft);color:var(--brand)}
+  .rail-foot{border-top:1px solid var(--line-soft);padding-top:10px;display:flex;align-items:center;gap:9px}
+  .avatar{width:30px;height:30px;border-radius:999px;background:#f1f5f9;display:grid;place-items:center;font-size:11px;font-weight:600;color:#475569}
+  .rail-foot .who p{font-size:11.5px;font-weight:500;line-height:1.2}
+  .rail-foot .who span{font-size:9.5px;color:#64748b}
+
+  /* ================= 主区 ================= */
+  .main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}
+  .topbar{height:56px;display:flex;align-items:center;gap:8px;padding:0 26px;font-size:11px;color:#64748b;border-bottom:1px solid rgba(232,232,237,.7)}
+  .topbar .sep{color:#cbd5e1}
+  .topbar .cur{color:var(--ink-soft);font-weight:500}
+  .topbar .spacer{flex:1}
+  .topbar .pill{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 10px;font-size:10px;color:#64748b}
+  .content{flex:1;min-height:0;overflow-y:auto;scrollbar-gutter:stable;padding:16px 24px 120px}
+
+  .back{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);background:none;border:0;cursor:pointer;margin-bottom:10px}
+  .back svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2}
+
+  .page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
+  .eyebrow{font-size:9.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--brand)}
+  .title-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px}
+  .page-head h2{font-size:20px;letter-spacing:-.02em}
+  .code{font-family:"JetBrains Mono",Consolas,monospace;font-size:11px;color:var(--muted)}
+  .badge{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:9.5px;font-weight:500;color:#475569;background:#fff;line-height:16px;white-space:nowrap}
+  .badge.brand{background:var(--brand-soft);border-color:var(--brand-edge);color:var(--brand-deep)}
+  .badge.green{background:var(--green-soft);border-color:var(--green-edge);color:#047857}
+  .badge.amber{background:var(--amber-soft);border-color:var(--amber-edge);color:var(--amber)}
+  .badge.rose{background:var(--rose-soft);border-color:var(--rose-edge);color:var(--rose)}
+  .page-head .desc{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.65}
+  .actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+  .btn{border:1px solid var(--line);background:#fff;color:var(--ink-soft);border-radius:12px;padding:7px 12px;font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;transition:background-color .15s,border-color .15s}
+  .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 8px 18px -12px rgba(79,70,229,.8)}
+  .btn.ghost-brand{border-color:var(--brand-edge);color:var(--brand);background:var(--brand-soft)}
+
+  /* ================= 工作台两栏 ================= */
+  .workbench{display:grid;grid-template-columns:minmax(0,1fr) 460px;gap:16px;align-items:start}
+  .card{background:#fff;border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 1px 2px rgba(17,24,39,.04)}
+
+  /* ---------- 编辑区 ---------- */
+  .editor-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line-soft)}
+  .editor-head .h{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600}
+  .editor-head .meta{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--faint)}
+  .dirty-dot{width:6px;height:6px;border-radius:999px;background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.14)}
+  .editor-body{display:block}
+  .form-scroll{padding:14px 18px 20px}
+  .form-section{padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--line-soft)}
+  .form-section:last-child{border-bottom:none;margin-bottom:0;padding-bottom:4px}
+  .sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .sec-title{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--ink)}
+  .sec-title::before{content:"";width:3px;height:12px;border-radius:2px;background:var(--brand)}
+  .sec-hint{font-size:9.5px;color:var(--faint)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px}
+  .lbl{display:block;font-size:9.5px;color:var(--muted);margin:0 0 4px;font-weight:500}
+  .inp,.sel,.ta{width:100%;border:1px solid var(--line);border-radius:8px;background:#fff;padding:7px 9px;font-size:11.5px;color:var(--ink);font-family:inherit}
+  .inp::placeholder,.ta::placeholder{color:#cbd5e1}
+  .ta{resize:none;line-height:1.65}
+  .inp.filled{border-color:var(--brand-edge);background:#fbfbff;box-shadow:0 0 0 3px rgba(79,70,229,.06)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:7px;background:#fafafa;padding:3px 7px;font-size:9.5px;color:#475569}
+  .chip b{font-family:"JetBrains Mono",Consolas,monospace;font-weight:600;color:var(--ink-soft)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;padding:2px;background:#f8fafc}
+  .seg span{padding:5px 11px;border-radius:6px;font-size:10.5px;color:#64748b;cursor:pointer}
+  .seg span.on{background:#fff;color:var(--brand);font-weight:600;box-shadow:0 1px 3px rgba(17,24,39,.12)}
+  .inline{display:flex;align-items:center;gap:8px}
+  .fake-table{border:1px solid var(--line-soft);border-radius:10px;overflow:hidden}
+  .fake-table table{width:100%;border-collapse:collapse}
+  .fake-table th{text-align:left;font-size:9px;font-weight:500;color:#94a3b8;padding:7px 9px;border-bottom:1px solid var(--line);background:#fafafa;white-space:nowrap}
+  .fake-table td{padding:8px 9px;border-bottom:1px solid var(--line-soft);font-size:10.5px;vertical-align:middle}
+  .fake-table tr:last-child td{border-bottom:none}
+  .mono{font-family:"JetBrains Mono",Consolas,monospace}
+  .kv-row{display:grid;grid-template-columns:160px minmax(0,1fr) 24px;gap:7px;align-items:center;margin-bottom:6px}
+  .kv-row .inp{font-family:"JetBrains Mono",Consolas,monospace;font-size:10.5px}
+  .icon-btn{width:24px;height:24px;border:1px solid var(--line);border-radius:6px;background:#fff;color:#94a3b8;cursor:pointer;font-size:12px;line-height:1}
+  .add-line{font-size:10px;color:var(--brand);background:none;border:0;cursor:pointer;padding:3px 0}
+
+  /* ---------- 右侧结果区 ---------- */
+  .runner{display:flex;flex-direction:column;gap:14px;position:sticky;top:14px}
+
+  /* 结果 */
+  .results-card{overflow:visible}
+  .results-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 15px;border-bottom:1px solid var(--line-soft)}
+  .results-head h3{font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:7px}
+  .results-head h3::before{content:"";width:3px;height:12px;border-radius:2px;background:var(--brand)}
+  .results-head .cnt{font-size:9.5px;color:var(--faint)}
+  .result{padding:11px 14px 13px;border-bottom:1px solid var(--line-soft)}
+  .result:last-child{border-bottom:none}
+  .result-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
+  .result-head .seq{font-size:9.5px;color:var(--faint)}
+  .result-head .score{margin-left:auto;font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap}
+  .result-head .score .score-sub{font-size:9px;font-weight:500;color:var(--faint);margin-left:1px}
+  .result-sub{display:flex;flex-wrap:wrap;align-items:center;gap:3px 7px;margin:-1px 0 8px;font-size:9px;color:var(--faint)}
+  .result-sub span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+  .result-sub span + span::before{content:"·";color:#cbd5e1}
+  .metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;border:1px solid var(--line-soft);background:#fafafa;border-radius:9px;padding:8px 10px}
+  .metric .k{font-size:8.5px;color:var(--faint)}
+  .metric .v{font-size:11px;font-weight:600;color:var(--ink-soft);margin-top:1px}
+  .config-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px 12px;border:1px solid var(--line-soft);border-radius:9px;padding:8px 10px;margin-top:8px;background:#fff}
+  .config-item .k{font-size:8px;color:var(--faint)}
+  .config-item .v{font-size:9.5px;font-weight:500;color:var(--ink-soft);margin-top:1px;line-height:1.45;overflow-wrap:anywhere}
+  .section-label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:8.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:9px 0 4px}
+  .section-label .r{font-weight:400;letter-spacing:0;text-transform:none;color:#94a3b8}
+  .turn-card{border:1px solid var(--line-soft);border-radius:9px;background:#fff;overflow:hidden}
+  .turn-row{display:flex;gap:7px;padding:7px 9px;border-bottom:1px solid var(--line-soft);font-size:9.5px;line-height:1.6}
+  .turn-row:last-of-type{border-bottom:none}
+  .turn-row .who{flex:none;width:34px;font-size:8.5px;font-weight:600;color:#94a3b8}
+  .turn-row.agent .who{color:var(--brand)}
+  .turn-row p{min-width:0;color:#475569}
+  .turn-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 9px;border-top:1px solid var(--line-soft);background:#fafafa;font-size:8.5px;color:var(--faint)}
+  .turn-foot .link{color:var(--brand);font-weight:500;white-space:nowrap}
+  .selfcheck{border:1px solid var(--green-edge);background:var(--green-soft);border-radius:9px;margin-top:8px;overflow:hidden}
+  .selfcheck-head{display:flex;align-items:center;gap:6px;padding:7px 9px;border-bottom:1px solid rgba(167,243,208,.7)}
+  .selfcheck-head .t{font-size:10px;font-weight:600;color:#047857}
+  .selfcheck-head .lat{margin-left:auto;font-size:9px;color:#10b981}
+  .selfcheck-body{padding:7px 9px;font-size:10px;line-height:1.65;color:#065f46}
+  .selfcheck-link{padding:0 9px 8px;font-size:9.5px;color:#047857;font-weight:600;cursor:pointer}
+  .facts{margin-top:8px}
+  .facts .k{font-size:8.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-bottom:4px}
+  .facts table{width:100%;border-collapse:collapse;border:1px solid var(--line-soft);border-radius:8px;overflow:hidden}
+  .facts th{text-align:left;font-size:8.5px;color:#94a3b8;font-weight:500;padding:5px 7px;background:#fafafa;border-bottom:1px solid var(--line-soft)}
+  .facts td{font-size:9.5px;padding:5px 7px;border-bottom:1px solid var(--line-soft);color:#475569}
+  .facts tr:last-child td{border-bottom:none}
+  .judge{margin-top:8px;border:1px solid var(--line-soft);border-radius:8px;padding:7px 9px;background:#fff}
+  .judge .k{font-size:8.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-bottom:3px}
+  .judge p{font-size:9.5px;line-height:1.6;color:#64748b}
+  .trace-link{display:inline-flex;margin-top:7px;font-size:9.5px;font-weight:600;color:var(--brand);cursor:pointer}
+  .result.collapsed{padding-bottom:10px}
+  .result.collapsed .result-head{margin-bottom:0}
+  .result.collapsed .score{font-size:11px}
+
+  /* ================= 底部常驻操作栏 ================= */
+  .action-bar{
+    position:absolute;left:18px;right:18px;bottom:14px;z-index:12;
+    display:flex;align-items:center;gap:12px;row-gap:8px;flex-wrap:wrap;padding:10px 16px;
+    background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:20px;
+    box-shadow:0 2px 6px rgba(17,24,39,.06),0 26px 50px -34px rgba(17,24,39,.45);
+    backdrop-filter:blur(12px);
+  }
+  .action-bar .status{display:flex;align-items:center;gap:7px;min-width:0}
+  .action-bar .status .t{font-size:11px;font-weight:500;color:var(--ink-soft);white-space:nowrap}
+  .bar-field{display:flex;align-items:center;gap:7px;flex:none}
+  .bar-field .k{font-size:10px;color:var(--muted);white-space:nowrap}
+  .bar-select{
+    width:310px;border:1px solid var(--line);border-radius:12px;background:#fff;
+    padding:7px 30px 7px 11px;font-size:11px;color:var(--ink-soft);font-family:inherit;
+    appearance:none;-webkit-appearance:none;cursor:pointer;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 10px center;background-size:13px 13px;
+  }
+  .action-bar .switch-wrap{
+    display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:#fff;
+    border-radius:12px;padding:7px 10px;flex:none;
+  }
+  .switch-wrap .txt b{font-size:11px;color:var(--ink-soft);font-weight:500;line-height:1.25;white-space:nowrap}
+  .switch{width:30px;height:17px;border-radius:999px;background:var(--brand);position:relative;flex:none}
+  .switch::after{content:"";position:absolute;top:2px;left:15px;width:13px;height:13px;border-radius:999px;background:#fff;box-shadow:0 1px 2px rgba(17,24,39,.25)}
+  .action-bar .spacer{flex:1}
+  .action-bar .btns{display:flex;gap:7px;flex:none}
+  .btn.lg{padding:8px 14px;font-size:11.5px;border-radius:12px}
+
+  /* ================= 标注 ================= */
+  .anno{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:999px;background:var(--brand);color:#fff;font-size:9.5px;font-weight:700;line-height:1;vertical-align:1px;flex:none}
+  .anno.amber{background:#f59e0b}
+  .legend{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}
+  .legend .item{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px 13px;display:flex;gap:9px;align-items:flex-start}
+  .legend .item p{font-size:11px;color:#475569;line-height:1.7}
+  .legend .item b{color:var(--ink)}
+  .legend .item code{font-family:Consolas,monospace;font-size:10px;background:var(--brand-soft);color:var(--brand-deep);border-radius:4px;padding:0 4px}
+  .legend .item .anno{margin-top:1px}
+
+  /* ================= 响应式 ================= */
+  @media (max-width:1180px){
+    .board{padding:20px 16px 34px}
+    .sidebar{display:none}
+    .workbench{grid-template-columns:1fr}
+    .runner{position:static}
+    .legend{grid-template-columns:1fr 1fr}
+  }
+  @media (max-width:900px){
+    .action-bar{left:12px;right:12px;bottom:10px}
+    .content{padding-bottom:160px}
+    .legend{grid-template-columns:1fr}
+    .grid3{grid-template-columns:1fr 1fr}
+  }
+</style>
+</head>
+<body>
+<div class="board">
+  <div class="board-head">
+    <div>
+      <div class="kicker">Design 02 · Case Debug Workbench</div>
+      <h1>用例调试工作台 · 无折叠重设计</h1>
+      <p>独立工作台不再套用编辑抽屉：表单分区常驻展开、不折叠也不额外占一列做导航；自检从隐藏开关升级为显式运行模式，并常驻底部操作栏。</p>
+    </div>
+    <span class="tag-soft">交互：<b>独立界面 · 无折叠 · 自检模式显式化</b></span>
+  </div>
+
+  <div class="app">
+    <!-- ================= 侧边栏 ================= -->
+    <aside class="sidebar">
+      <div class="rail">
+        <div class="logo">
+          <div class="mark">问</div>
+          <div><p>问账 QA</p><span>Billing QA</span></div>
+        </div>
+        <div class="nav-label">工作台</div>
+        <nav class="nav">
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>测试大盘</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>批量任务</a>
+          <a class="on" href="#"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg>用例资产</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="m8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14"/></svg>Prompt 资产</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V8M3 21h18"/></svg>运营后台</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm13 14v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>用户与权限</a>
+        </nav>
+        <div class="rail-foot">
+          <div class="avatar">A</div>
+          <div class="who"><p>admin</p><span>系统管理员</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ================= 主区 ================= -->
+    <div class="main">
+      <div class="topbar">
+        <span>问账 QA</span><span class="sep">/</span><span>用例资产</span><span class="sep">/</span><span>用例详情</span><span class="sep">/</span><span class="cur">调试工作台</span>
+        <span class="spacer"></span><span class="pill">本地部署版</span>
+      </div>
+
+      <div class="content">
+        <button class="back">
+          <svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6"/></svg>
+          返回用例详情
+        </button>
+
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Assets · 用例调试</div>
+            <div class="title-row">
+              <h2>调试工作台</h2>
+              <span class="code">CASE-BILL-012</span>
+              <span class="badge green">启用 ACTIVE</span>
+              <span class="badge amber">草稿 · 不保存版本</span>
+              <span class="badge">当前 v3</span>
+            </div>
+            <div class="desc">11 月账单总额查询 · 修改任意内容后直接试运行，不生成版本、不影响评审状态 <span class="anno">1</span></div>
+          </div>
+          <div class="actions">
+            <button class="btn">查看用例详情</button>
+            <button class="btn">版本对比</button>
+          </div>
+        </div>
+
+        <div class="workbench">
+          <!-- ================= 编辑区 ================= -->
+          <section class="card">
+            <header class="editor-head">
+              <div class="h">
+                用例草稿
+                <span class="dirty-dot" title="有未保存修改"></span>
+                <span class="badge amber">3 处未保存</span>
+              </div>
+              <div class="meta">
+                <span>最近保存 v3 · 14:02</span>
+                <button class="btn" style="padding:4px 9px;font-size:10px">恢复已保存内容</button>
+              </div>
+            </header>
+
+            <div class="editor-body">
+              <!-- 所有分区常驻展开，不折叠、不额外占一列做导航 -->
+              <div class="form-scroll">
+                <section class="form-section" id="s1">
+                  <div class="sec-head">
+                    <div class="sec-title">基础信息</div>
+                    <span class="sec-hint">名称 / 状态 / 环境</span>
+                  </div>
+                  <div class="grid2">
+                    <div><label class="lbl">用例名称</label><input class="inp filled" value="11月账单总额查询" /></div>
+                    <div><label class="lbl">用例编号</label><input class="inp" value="CASE-BILL-012" readonly style="background:#fafafa;color:#94a3b8" /></div>
+                  </div>
+                  <div class="grid2" style="margin-top:9px">
+                    <div>
+                      <label class="lbl">用例类型</label>
+                      <input class="inp" value="单轮问答 SINGLE" readonly style="background:#fafafa;color:#94a3b8" />
+                    </div>
+                    <div><label class="lbl">优先级</label><select class="sel"><option>P1</option></select></div>
+                  </div>
+                  <div style="margin-top:9px">
+                    <label class="lbl">标签</label>
+                    <div class="chips">
+                      <span class="chip">账单</span><span class="chip">单轮</span><span class="chip">契约</span><span class="chip">+ 添加</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="form-section" id="s2">
+                  <div class="sec-head">
+                    <div class="sec-title">用例内容</div>
+                    <span class="sec-hint">单轮问答 · 修改会写入试运行快照</span>
+                  </div>
+                  <label class="lbl">用户提问</label>
+                  <textarea class="ta filled" rows="2">帮我查一下 2026 年 11 月的账单总额是多少？</textarea>
+                  <label class="lbl" style="margin-top:9px">期望答案</label>
+                  <textarea class="ta filled" rows="2">2026 年 11 月账单总额为 286.40 元。</textarea>
+                  <div style="margin-top:9px">
+                    <label class="lbl">期望规则（只读摘要）</label>
+                    <div class="chips">
+                      <span class="chip">金额 <b>286.40 ± 0.01</b></span>
+                      <span class="chip">日期 <b>2026-11</b></span>
+                      <span class="chip">必含 <b>286.40</b></span>
+                      <span class="chip">+ 编辑规则</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="form-section" id="s3">
+                  <div class="sec-head">
+                    <div class="sec-title">判分与契约</div>
+                    <span class="sec-hint">答案契约 · Must 事实 2/2 已取证</span>
+                  </div>
+                  <div class="inline" style="justify-content:space-between">
+                    <div class="seg"><span class="on">答案契约</span><span>4 维评分</span></div>
+                    <div class="inline" style="gap:6px">
+                      <span class="lbl" style="margin:0">通过线</span>
+                      <input class="inp" value="80" style="width:58px;padding:5px 7px" />
+                    </div>
+                  </div>
+                  <div class="fake-table" style="margin-top:9px">
+                    <table>
+                      <thead><tr><th>Must 事实</th><th>取值</th><th>取证状态</th></tr></thead>
+                      <tbody>
+                        <tr><td>账单总额</td><td class="mono">286.40 CNY</td><td><span class="badge green">已取证</span></td></tr>
+                        <tr><td>账期</td><td class="mono">2026-11</td><td><span class="badge green">已取证</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="chips" style="margin-top:8px">
+                    <span class="chip">May 0 条</span>
+                    <span class="chip">MustNot 1 条</span>
+                    <span class="chip">冻结时间 <b>2026-11-30</b></span>
+                  </div>
+                </section>
+
+                <section class="form-section" id="s4">
+                  <div class="sec-head">
+                    <div class="sec-title">规则硬校验</div>
+                    <span class="sec-hint">与契约判分叠加生效</span>
+                  </div>
+                  <div class="grid3">
+                    <div><label class="lbl">金额校验</label><input class="inp" value="286.40 ± 0.01" /></div>
+                    <div><label class="lbl">笔数校验</label><input class="inp" placeholder="未配置" /></div>
+                    <div><label class="lbl">日期校验</label><input class="inp" value="2026-11" /></div>
+                  </div>
+                </section>
+
+                <section class="form-section" id="s5">
+                  <div class="sec-head">
+                    <div class="sec-title">Prompt 与模型</div>
+                    <span class="sec-hint">模板版本在试运行时解析</span>
+                  </div>
+                  <div class="grid2">
+                    <div><label class="lbl">模拟器模板</label><select class="sel"><option>SIM_DEFAULT_BILLING_USER · LATEST</option></select></div>
+                    <div><label class="lbl">裁判模板</label><select class="sel"><option>JUDGE_ZERO_TOLERANCE · PINNED v2</option></select></div>
+                  </div>
+                  <div style="margin-top:9px">
+                    <label class="lbl">裁判模型</label>
+                    <div class="chips"><span class="chip">Qwen-Max</span><span class="chip">DeepSeek-V3</span><span class="chip">+ 选择</span></div>
+                  </div>
+                </section>
+
+                <section class="form-section" id="s6">
+                  <div class="sec-head">
+                    <div class="sec-title">请求变量</div>
+                    <span class="sec-hint">运行时注入，不进入版本快照</span>
+                  </div>
+                  <div class="kv-row"><input class="inp" value="userid" readonly /><input class="inp filled" value="13800001234" /><button class="icon-btn">×</button></div>
+                  <div class="kv-row"><input class="inp" value="custid" readonly /><input class="inp" value="C-8821" /><button class="icon-btn">×</button></div>
+                  <button class="add-line">+ 添加变量</button>
+                </section>
+
+                <section class="form-section" id="s7">
+                  <div class="sec-head">
+                    <div class="sec-title">变更说明</div>
+                    <span class="sec-hint">保存新版本时写入版本记录</span>
+                  </div>
+                  <input class="inp" value="调整 11 月账单金额与 Must 事实，补充账期口径" />
+                </section>
+              </div>
+            </div>
+          </section>
+
+          <!-- ================= 右侧结果区 ================= -->
+          <aside class="runner">
+            <section class="card results-card">
+              <header class="results-head">
+                <h3>试运行结果 <span class="anno">5</span></h3>
+                <span class="cnt">2 次 · 最新在前 · 不计入趋势</span>
+              </header>
+
+              <!-- 最新一次：展开 -->
+              <div class="result">
+                <div class="result-head">
+                  <span class="seq">第 2 次 · 14:32:06</span>
+                  <span class="badge rose">FAIL · 未通过</span>
+                  <span class="badge">草稿 SANDBOX</span>
+                  <span class="score">72 <span class="score-sub">/ 80</span></span>
+                </div>
+                <div class="result-sub">
+                  <span>执行 #8821</span>
+                  <span>用例 v3</span>
+                  <span>正常结束</span>
+                  <span>1 次尝试</span>
+                </div>
+
+                <div class="metrics">
+                  <div class="metric"><div class="k">耗时</div><div class="v">18.4s</div></div>
+                  <div class="metric"><div class="k">首字 TTFT</div><div class="v">1.2s</div></div>
+                  <div class="metric"><div class="k">轮次</div><div class="v">1 / 5 轮</div></div>
+                </div>
+
+                <div class="config-grid">
+                  <div class="config-item"><div class="k">执行环境</div><div class="v">QA-MOCK-JSON</div></div>
+                  <div class="config-item"><div class="k">判分方式</div><div class="v">答案契约 · 通过线 80</div></div>
+                  <div class="config-item"><div class="k">模拟器模板</div><div class="v">SIM_DEFAULT_BILLING_USER · v4</div></div>
+                  <div class="config-item"><div class="k">裁判模板 / 模型</div><div class="v">JUDGE_ZERO_TOLERANCE · v2 / Qwen-Max</div></div>
+                </div>
+
+                <div class="selfcheck">
+                  <div class="selfcheck-head">
+                    <span class="badge green">已追问</span>
+                    <span class="t">失败追问自检 <span class="anno">4</span></span>
+                    <span class="lat">触发：裁决 FAIL · 3.2s</span>
+                  </div>
+                  <div class="selfcheck-body">
+                    <b>Agent 自检结论：</b>回答金额为 268.40 元，与期望 286.40 元不一致；根因是取数时误用了 10 月账期，会话上下文未丢失，建议修正账期参数后重试。
+                  </div>
+                  <div class="selfcheck-link">查看追问自检详情（Prompt / 请求响应）↗</div>
+                </div>
+
+                <div class="section-label"><span>轮次摘要</span><span class="r">1 轮 · 回答耗时 5.8s</span></div>
+                <div class="turn-card">
+                  <div class="turn-row">
+                    <span class="who">用户</span>
+                    <p>帮我查一下 2026 年 11 月的账单总额是多少？</p>
+                  </div>
+                  <div class="turn-row agent">
+                    <span class="who">Agent</span>
+                    <p>您 2026 年 10 月的账单总额为 268.40 元，其中套餐费 199.00 元、增值业务费 69.40 元。</p>
+                  </div>
+                  <div class="turn-foot">
+                    <span>引用 3 条取数结果 · 1,842 tokens</span>
+                    <span class="link">查看完整对话 ↗</span>
+                  </div>
+                </div>
+
+                <div class="facts">
+                  <div class="k">事实判定 · 0 / 2 命中</div>
+                  <table>
+                    <thead><tr><th>事实</th><th>期望</th><th>实际</th><th>结果</th></tr></thead>
+                    <tbody>
+                      <tr><td>账单总额</td><td class="mono">286.40</td><td class="mono">268.40</td><td><span class="badge rose">未命中</span></td></tr>
+                      <tr><td>账期</td><td class="mono">2026-11</td><td class="mono">2026-10</td><td><span class="badge rose">未命中</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="judge">
+                  <div class="k">裁判理由</div>
+                  <p>金额与账期两项 Must 事实均未命中，回答使用了错误账期，判定不通过。</p>
+                </div>
+                <span class="trace-link">查看完整轨迹（SQL / 取数 / 裁判 CoT）↗</span>
+              </div>
+
+              <!-- 较早一次：摘要行 -->
+              <div class="result collapsed">
+                <div class="result-head">
+                  <span class="seq">第 1 次 · 14:28:41 · 15.2s</span>
+                  <span class="badge green">PASS · 通过</span>
+                  <span class="badge">自检未触发（通过）</span>
+                  <span class="score">91 <span class="score-sub">/ 80</span></span>
+                </div>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </div>
+
+      <!-- ================= 底部常驻操作栏 ================= -->
+      <div class="action-bar">
+        <div class="status">
+          <span class="dirty-dot"></span>
+          <span class="t">3 处未保存修改</span>
+        </div>
+        <label class="bar-field" title="执行环境决定被测接口与鉴权配置">
+          <span class="k">执行环境</span>
+          <select class="bar-select">
+            <option>电信计费问账环境（Mock 非流式 · Agent 报文）</option>
+          </select>
+          <span class="anno">2</span>
+        </label>
+        <div class="switch-wrap" title="LLM 裁决失败时，在同一会话追问 Agent 自检原因（多一轮 Agent 调用）">
+          <span class="txt"><b>失败追问自检调试</b></span>
+          <span class="switch"></span>
+          <span class="anno">3</span>
+        </div>
+        <span class="spacer"></span>
+        <div class="btns">
+          <button class="btn lg">放弃修改</button>
+          <button class="btn lg">保存为新版本 <span class="anno">6</span></button>
+          <button class="btn lg primary">▶ 失败追问自检调试（不保存）</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 设计说明 ================= -->
+  <div class="legend">
+    <div class="item">
+      <span class="anno">1</span>
+      <p><b>独立工作台，不再折叠。</b>分区始终展开、连续排布，不额外占用一列做结构导航；每个分区右上角保留摘要，未保存修改用橙色圆点提示，避免靠折叠藏内容。</p>
+    </div>
+    <div class="item">
+      <span class="anno">2</span>
+      <p><b>运行配置全部收口到底部。</b>执行环境、失败追问自检开关、保存与试运行在同一条操作栏完成；右栏只保留试运行结果，不再重复一张运行设置卡片。</p>
+    </div>
+    <div class="item">
+      <span class="anno">3</span>
+      <p><b>浮窗式底部操作栏。</b>与卡片同样使用 20px 圆角、描边和浮层阴影，四边留白悬浮在内容之上；不再用贴边通栏。自检开关与主按钮同栏常驻，主按钮随模式变化。</p>
+    </div>
+    <div class="item">
+      <span class="anno">4</span>
+      <p><b>自检结论就地展示。</b>试运行卡片内直接展示触发状态、结论、追问时延；需要排查细节时再跳转 Trace「追问自检」页签。</p>
+    </div>
+    <div class="item">
+      <span class="anno">5</span>
+      <p><b>结果按时间堆叠。</b>最新一次完整展开并通过率线对照得分，历史试跑保留摘要行，不打断当前编辑；ERROR 时补充 error_kind / error_message，超轮次 / 复读等终止状态直接显示在状态位。</p>
+    </div>
+    <div class="item">
+      <span class="anno">6</span>
+      <p><b>保存与试运行彻底解耦。</b>试运行使用当前表单快照，不生成版本；只有点击「保存为新版本」才落库并进入评审 / 冻结流转。</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

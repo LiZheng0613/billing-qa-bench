@@ -36,7 +36,6 @@ import {
   statusLabel,
   truncate,
 } from '../utils/format'
-import { useDebugStore } from '../stores/debug'
 import { useToastStore } from '../stores/toast'
 
 interface StatCard {
@@ -56,7 +55,6 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
 const confirm = useConfirm()
-const debugStore = useDebugStore()
 
 const caseId = computed(() => Number(route.params.id))
 
@@ -432,14 +430,6 @@ async function submitCase(payload: CasePayload): Promise<void> {
   }
 }
 
-/** 悬停「单条调试」时浮出的扩展入口：开启失败追问自检的单条调试（省去常驻开关占位） */
-const debugMenuOpen = ref(false)
-
-function closeDebugMenuOnBlur(event: FocusEvent): void {
-  const next = event.relatedTarget as Node | null
-  const root = event.currentTarget as HTMLElement
-  if (!next || !root.contains(next)) debugMenuOpen.value = false
-}
 
 /** 执行记录中的追问自检状态标签 */
 function selfCheckBadge(run: CaseExecutionItem): { label: string; className: string } {
@@ -456,19 +446,6 @@ function selfCheckBadge(run: CaseExecutionItem): { label: string; className: str
     }
   }
   return { label: run.self_check_status ?? '—', className: 'bg-slate-100 text-slate-500' }
-}
-
-function debugCase(enableSelfCheck = false): void {
-  const current = item.value
-  if (!current || debugStore.isRunning(current.id)) return
-  // 请求生命周期归全局 debug store：跨页面保持「调试中」防重复发起；
-  // 完成时仍在本页 → 自动跳转 trace；已离开 → 底部胶囊常驻提示
-  void debugStore.run({
-    id: current.id,
-    code: current.code,
-    environmentId: current.environment_id,
-    enableSelfCheck,
-  })
 }
 
 function openReview(): void {
@@ -687,41 +664,6 @@ onBeforeUnmount(() => {
         <button class="btn-ghost" :disabled="!item" @click="openEdit">编辑</button>
         <button class="btn-ghost" :disabled="!item" @click="openCopy">复制</button>
         <button class="btn-primary" :disabled="!item" @click="openWorkbench">调试工作台</button>
-        <div
-          class="relative inline-flex"
-          @mouseenter="debugMenuOpen = true"
-          @mouseleave="debugMenuOpen = false"
-          @focusin="debugMenuOpen = true"
-          @focusout="closeDebugMenuOnBlur"
-        >
-          <button
-            class="btn-ghost"
-            :disabled="!item || debugStore.isRunning(caseId)"
-            @click="debugMenuOpen = false; debugCase()"
-          >
-            {{ debugStore.isRunning(caseId) ? '调试中…' : '单条调试' }}
-          </button>
-          <!-- 悬停/键盘聚焦时浮出扩展入口：开启失败追问自检的单条调试（省去常驻开关占位） -->
-          <div
-            class="absolute left-0 top-full z-30 pt-2 transition duration-150"
-            :class="
-              debugMenuOpen
-                ? 'visible translate-y-0 opacity-100'
-                : 'invisible -translate-y-1 opacity-0'
-            "
-          >
-            <!-- 与「单条调试」同圆角 / 同字号 / 同色系阴影，仅降为描边形态区分主次 -->
-            <button
-              type="button"
-              class="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-brand/40 bg-white px-3 py-2 text-sm font-medium text-brand shadow-[0_10px_24px_-16px_rgba(79,70,229,0.9)] transition duration-150 hover:border-brand hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-45"
-              :disabled="!item || debugStore.isRunning(caseId)"
-              title="LLM 裁决失败时，在同一会话追问 Agent 自检原因（多一轮 Agent 调用）"
-              @click="debugMenuOpen = false; debugCase(true)"
-            >
-              失败追问自检调试
-            </button>
-          </div>
-        </div>
         <details ref="menuRef" class="relative">
           <summary
             class="btn-ghost cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden"

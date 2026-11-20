@@ -35,10 +35,12 @@ const executionActive = computed(
   () => Boolean(detail.value && ACTIVE_EXECUTION_STATUSES.has(detail.value.status)),
 )
 
-// 从用例详情进入时优先展示用例路径，否则按批量任务路径展示。
-const origin = computed<'task' | 'case'>(() =>
-  route.query.from === 'case' ? 'case' : 'task',
-)
+// 从用例详情 / 调试工作台进入时优先展示用例路径，否则按批量任务路径展示。
+const origin = computed<'task' | 'case' | 'workbench'>(() => {
+  if (route.query.from === 'workbench') return 'workbench'
+  if (route.query.from === 'case') return 'case'
+  return 'task'
+})
 
 // 调试完成跳转可带 tab=selfcheck，让执行详情直接落在「追问自检」页签。
 const initialTab = computed(() => {
@@ -52,9 +54,12 @@ function syncBreadcrumb(data: ExecutionDetail | null): void {
     return
   }
   const trail: BreadcrumbItem[] = []
-  if (origin.value === 'case' && data.case_id) {
+  if ((origin.value === 'case' || origin.value === 'workbench') && data.case_id) {
     trail.push({ label: '用例资产', to: '/cases' })
     trail.push({ label: '用例详情', to: `/cases/${data.case_id}` })
+    if (origin.value === 'workbench') {
+      trail.push({ label: '调试工作台', to: `/cases/${data.case_id}/debug` })
+    }
   } else if (data.task_id) {
     trail.push({ label: '批量任务', to: '/tasks' })
     trail.push({ label: '任务详情', to: `/tasks/${data.task_id}` })
@@ -109,6 +114,12 @@ function openCase(): void {
   }
 }
 
+function openWorkbench(): void {
+  if (detail.value?.case_id) {
+    void router.push({ name: 'case-debug', params: { id: String(detail.value.case_id) } })
+  }
+}
+
 function back(): void {
   if (window.history.length > 1) router.back()
   else void router.push({ name: 'dashboard' })
@@ -116,6 +127,7 @@ function back(): void {
 
 // 顶部左上角只保留一个返回入口：按进入来源回到用例详情或所属批量任务详情。
 const backLabel = computed(() => {
+  if (origin.value === 'workbench') return '返回调试工作台'
   if (origin.value === 'case') return '返回用例详情'
   if (detail.value?.task_id) return '返回批量任务详情'
   if (detail.value?.case_id) return '返回用例详情'
@@ -123,7 +135,8 @@ const backLabel = computed(() => {
 })
 
 function goBack(): void {
-  if (origin.value === 'case' && detail.value?.case_id) openCase()
+  if (origin.value === 'workbench' && detail.value?.case_id) openWorkbench()
+  else if (origin.value === 'case' && detail.value?.case_id) openCase()
   else if (detail.value?.task_id) openTask()
   else if (detail.value?.case_id) openCase()
   else back()
