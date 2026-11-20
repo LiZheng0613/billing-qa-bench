@@ -297,7 +297,14 @@ export const api = {
       http.get<RunCompare>('/cases/compare/runs', { run_a: runA, run_b: runB }),
     debug: (
       id: number,
-      payload?: { environment_id?: number | null; enable_self_check?: boolean },
+      payload?: {
+        environment_id?: number | null
+        enable_self_check?: boolean
+        /** 未保存的草稿快照，浅合并到当前版本快照后执行 */
+        case_snapshot_override?: Record<string, unknown> | null
+        /** 草稿试跑：执行记录标记为 SANDBOX，不进入趋势统计 */
+        draft?: boolean
+      },
     ) => http.post<ExecutionDetail>(`/cases/${id}/debug`, payload ?? {}),
     facts: (id: number) => http.get<FactAtomView[]>(`/cases/${id}/facts`),
     verifyFact: (id: number, factId: string, payload: FactVerifyPayload) =>

@@ -14,10 +14,15 @@ import {
   schedulePayload,
   scheduleSummary,
   scheduleValidationError,
+  toDatetimeLocal,
 } from '../../utils/schedule'
 import { useToastStore } from '../../stores/toast'
 
-const props = defineProps<{ modelValue: boolean }>()
+const props = defineProps<{
+  modelValue: boolean
+  /** 复制模式的源任务：界面与新建一致，所有配置从源任务带入 */
+  copyFrom?: BatchTask | null
+}>()
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
   (e: 'created', task: BatchTask): void
@@ -49,6 +54,13 @@ const form = reactive({
 
 const activeCaseCount = computed(
   () => cases.value.filter((item) => item.status === 'ACTIVE').length,
+)
+
+const modalTitle = computed(() => (props.copyFrom ? '复制批量任务' : '新建批量任务'))
+const modalSubtitle = computed(() =>
+  props.copyFrom
+    ? `基于「${props.copyFrom.name}」创建副本：用例范围与执行参数已带入，可按需调整`
+    : '选择用例与执行方式（立即 / 指定时间 / 每天 / 每周），并设置并发、限速与失败重试策略',
 )
 
 const scopeCount = computed(() =>
@@ -89,7 +101,40 @@ async function loadOptions(): Promise<void> {
   }
 }
 
+function suggestCopyName(name: string): string {
+  const suffix = '-副本'
+  const base = (name || '').trim() || '批量任务'
+  return base.length + suffix.length > 200 ? `${base.slice(0, 200 - suffix.length)}${suffix}` : `${base}${suffix}`
+}
+
 function resetForm(): void {
+  const source = props.copyFrom
+  if (source) {
+    // 复制：名称默认加 -副本，其余配置与源任务完全一致。
+    form.name = suggestCopyName(source.name)
+    form.description = source.description ?? ''
+    form.environment_id = source.environment_id ?? null
+    form.concurrency = source.concurrency ?? 3
+    form.qps_limit = source.qps_limit ?? 5
+    form.retry_on_error = source.retry_on_error ?? source.retry_on_env_error ?? true
+    form.max_error_retries = source.max_error_retries ?? source.max_env_retries ?? 2
+    form.retry_backoff_seconds = source.retry_backoff_seconds ?? 3
+    form.enable_self_check = source.enable_self_check ?? false
+    form.case_scope = 'SELECTED'
+    form.case_ids = Array.isArray(source.case_ids) ? [...source.case_ids] : []
+    form.auto_start = true
+    form.schedule = normalizeSchedule({
+      type: source.schedule_type ?? 'IMMEDIATE',
+      scheduledAt: source.scheduled_at
+        ? toDatetimeLocal(new Date(source.scheduled_at))
+        : defaultSchedule().scheduledAt,
+      time: source.schedule_time || '09:00',
+      weekdays: (source.schedule_weekdays ?? []).slice(),
+      repeatRounds: source.repeat_rounds ?? 1,
+    })
+    caseKeyword.value = ''
+    return
+  }
   const stamp = new Date()
   form.name = `回归任务 ${stamp.getMonth() + 1}/${stamp.getDate()} ${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}`
   form.description = ''
@@ -197,8 +242,8 @@ watch(
 <template>
   <BaseModal
     :model-value="modelValue"
-    title="新建批量任务"
-    subtitle="选择用例与执行方式（立即 / 指定时间 / 每天 / 每周），并设置并发、限速与失败重试策略"
+    :title="modalTitle"
+    :subtitle="modalSubtitle"
     width="xl"
     @update:model-value="emit('update:modelValue', $event)"
   >

@@ -55,6 +55,20 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        path: 'cases/:id/debug',
+        name: 'case-debug',
+        component: () => import('./views/CaseDebugWorkbench.vue'),
+        meta: {
+          title: '调试工作台',
+          nav: 'cases',
+          permission: 'case:read',
+          breadcrumb: [
+            { label: '用例资产', to: '/cases' },
+            { label: '用例详情' },
+          ],
+        },
+      },
+      {
         path: 'prompts',
         name: 'prompts',
         component: () => import('./views/PromptsView.vue'),

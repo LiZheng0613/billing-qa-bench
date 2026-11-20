@@ -160,15 +160,22 @@ function emptyFactRow(kind: FactKind = 'scalar'): FactRow {
 const props = defineProps<{
   modelValue: boolean
   caseData: TestCase | null
+  /** 复制模式的源用例：与新建一样走 POST /cases，但所有内容从源用例带入 */
+  copyFrom?: TestCase | null
   environments: Environment[]
   templates: PromptListItem[]
   models: ModelConfig[]
   saving: boolean
+  /** 工作台内嵌模式：去掉抽屉遮罩 / 固定定位，表单直接铺在父容器里 */
+  embedded?: boolean
+  /** 草稿试跑进行中：禁用重复发起 */
+  running?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
   (e: 'submit', payload: CasePayload): void
+  (e: 'try-run', payload: CasePayload): void
 }>()
 
 const toast = useToastStore()
@@ -211,7 +218,7 @@ const form = reactive({
   judgeVersion: null as number | null,
   judge_model_ids: [] as number[],
   judgeStrategy: 'AVG' as JudgeStrategy,
-  pass_threshold: 60,
+  pass_threshold: 60 as number | null,
   gradingMode: 'LEGACY' as GradingMode,
   inputType: 'CLEAR' as InputType,
   asOf: '',
@@ -242,6 +249,8 @@ const form = reactive({
 const contractTab = ref<'facts' | 'mustnot' | 'contract' | 'plan'>('facts')
 const originalEnvelope = ref<AnswerEnvelope | null>(null)
 const originalPlan = ref<PlanSpec | null>(null)
+const originalContract = ref<ResponseContract | null>(null)
+const originalRequestVariables = ref<Record<string, unknown> | null>(null)
 
 const factSections = computed(() => [
   {
@@ -257,7 +266,17 @@ const factSections = computed(() => [
 ])
 
 const isEdit = computed(() => Boolean(props.caseData))
-const title = computed(() => (isEdit.value ? `编辑用例 · v${props.caseData?.current_version}` : '新建用例'))
+const isCopy = computed(() => !props.caseData && Boolean(props.copyFrom))
+const copySource = computed<TestCase | null>(() =>
+  props.caseData ?? (isCopy.value ? props.copyFrom ?? null : null),
+)
+const title = computed(() =>
+  isEdit.value
+    ? `编辑用例 · v${props.caseData?.current_version}`
+    : isCopy.value
+      ? `复制用例 · 源 ${props.copyFrom?.code ?? ''}`
+      : '新建用例',
+)
 
 const simulatorTemplates = computed(() =>
   props.templates.filter((item) => item.template_type === 'USER_SIMULATOR'),
@@ -267,11 +286,185 @@ const judgeTemplates = computed(() =>
 )
 const judgeModels = computed(() => props.models.filter((item) => item.role === 'JUDGE'))
 
+// ------------------------------------------------------- 工作台内嵌折叠
+const STATUS_LABELS: Record<string, string> = { ACTIVE: '启用', DRAFT: '草稿', DISABLED: '停用' }
+const CASE_TYPE_LABELS: Record<string, string> = {
+  SINGLE: '单轮问答',
+  STATIC_MULTI: '静态多轮',
+  DYNAMIC_MULTI: '动态多轮',
+}
+
+/** 仅内嵌（调试工作台）启用折叠；普通编辑抽屉保持原样全展开。 */
+const collapsedSections = ref<Record<string, boolean>>({
+  basic: true,
+  variables: true,
+  type: true,
+  content: false,
+  grading: true,
+  rules: true,
+  prompt: true,
+  summary: true,
+})
+
+function isSectionCollapsed(key: string): boolean {
+  return Boolean(props.embedded && collapsedSections.value[key])
+}
+
+function toggleSection(key: string): void {
+  if (!props.embedded) return
+  collapsedSections.value = { ...collapsedSections.value, [key]: !collapsedSections.value[key] }
+}
+
+const basicSummary = computed(() => {
+  const environment = props.environments.find((item) => item.id === form.environment_id)
+  return [STATUS_LABELS[form.status] ?? form.status, form.priority, form.tagsText, environment?.name]
+    .filter(Boolean)
+    .join(' · ')
+})
+const variablesSummary = computed(
+  () =>
+    `${form.requestVariables.length} 个变量 · ${form.requestVariablesMode === 'rows' ? '行编辑' : 'JSON'}`,
+)
+const contentSummary = computed(() => {
+  const label = CASE_TYPE_LABELS[form.case_type] ?? form.case_type
+  if (form.case_type === 'STATIC_MULTI') return `${label} · ${form.turns.length} 轮`
+  if (form.case_type === 'DYNAMIC_MULTI') return `${label} · 最多 ${form.maxTurns} 轮`
+  return `${label} · 提问 + 预期答案`
+})
+const gradingSummary = computed(
+  () =>
+    `${form.gradingMode === 'ANSWER_CONTRACT' ? '答案契约判分' : '4 维评分'} · 通过线 ${form.pass_threshold}`,
+)
+const rulesSummary = computed(
+  () => `金额 ${form.amounts.length} · 笔数 ${form.counts.length} · 日期 ${form.datesText ? 1 : 0}`,
+)
+const promptSummary = computed(() => {
+  const simulator = simulatorTemplates.value.find((item) => item.id === form.simulator_template_id)
+  const judge = judgeTemplates.value.find((item) => item.id === form.judge_template_id)
+  return [simulator?.name || '未指定模拟器', judge?.name || '未指定裁判', `通过线 ${form.pass_threshold}`].join(' · ')
+})
+
+/** 每个分组的「是否有未保存修改」签名：折叠时也能看到小圆点提示。 */
+const initialSections = ref<Record<string, string>>({})
+
+function sectionSignature(key: string): string {
+  let state: Record<string, unknown>
+  switch (key) {
+    case 'basic':
+      state = {
+        name: form.name,
+        description: form.description,
+        status: form.status,
+        priority: form.priority,
+        tags: form.tagsText,
+        environment_id: form.environment_id,
+      }
+      break
+    case 'variables':
+      state = {
+        mode: form.requestVariablesMode,
+        rows: form.requestVariables,
+        json: form.requestVariablesJson,
+      }
+      break
+    case 'content':
+      state = {
+        case_type: form.case_type,
+        query: form.query,
+        expected_answer: form.expected_answer,
+        turns: form.turns,
+        session: sessionExpectedText.value,
+        fail_fast: form.failFast,
+        user_goal: form.userGoal,
+        initial_query: form.initialQuery,
+        persona: form.persona,
+        max_turns: form.maxTurns,
+        hidden: form.hidden,
+        terminate: form.terminateKeywordsText,
+      }
+      break
+    case 'grading':
+      state = {
+        grading_mode: form.gradingMode,
+        input_type: form.inputType,
+        as_of: form.asOf,
+        extras: form.extrasPolicy,
+        risk: form.riskLevel,
+        owner: form.owner,
+        snapshot: form.snapshotId,
+        must_facts: form.mustFacts,
+        may_facts: form.mayFacts,
+        must_not: form.mustNotText,
+        forbidden: form.forbiddenPhrasesText,
+        allow_clarify: form.allowClarify,
+        allow_assumption: form.allowAssumption,
+        allow_partial: form.allowPartial,
+        allow_refuse: form.allowRefuse,
+        clarify_slots: form.clarifySlotsText,
+        assumption: form.assumptionText,
+        assumption_amount: form.assumptionAmount,
+        partial_facts: form.partialFactsText,
+        plan_capabilities: form.planCapabilitiesText,
+        max_tool_calls: form.maxToolCalls,
+      }
+      break
+    case 'rules':
+      state = {
+        amounts: form.amounts,
+        counts: form.counts,
+        dates: form.datesText,
+        must_contain: form.mustContainText,
+        must_not_contain: form.mustNotContainText,
+      }
+      break
+    case 'prompt':
+      state = {
+        simulator_id: form.simulator_template_id,
+        simulator_strategy: form.simulatorStrategy,
+        // LATEST 策略下具体版本号由系统决定，不作为"已修改"依据
+        simulator_version: form.simulatorStrategy === 'PINNED' ? form.simulatorVersion : null,
+        judge_id: form.judge_template_id,
+        judge_strategy_mode: form.judgeTemplateStrategy,
+        judge_version: form.judgeTemplateStrategy === 'PINNED' ? form.judgeVersion : null,
+        judge_models: form.judge_model_ids,
+        judge_strategy: form.judgeStrategy,
+        threshold: form.pass_threshold,
+      }
+      break
+    default:
+      state = { change_summary: form.change_summary }
+  }
+  return JSON.stringify(state)
+}
+
+function captureInitialSections(): void {
+  const keys = ['basic', 'variables', 'content', 'grading', 'rules', 'prompt', 'summary'] as const
+  initialSections.value = Object.fromEntries(keys.map((key) => [key, sectionSignature(key)]))
+}
+
+function isSectionDirty(key: string): boolean {
+  return Boolean(
+    props.embedded && initialSections.value[key] && initialSections.value[key] !== sectionSignature(key),
+  )
+}
+
 function splitList(text: string): string[] {
   return text
     .split(/[,，\n]/)
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+/**
+ * 逗号分隔文本与源列表完全一致时直接复用源数组：
+ * 避免列表条目本身含逗号（如话术、must_not 多值）被拆成多项造成数据变形。
+ */
+function reuseListIfUnchanged(
+  sourceList: string[] | null | undefined,
+  text: string,
+): string[] {
+  const original = sourceList ?? []
+  return original.join(', ') === text.trim() ? [...original] : splitList(text)
 }
 
 function rulesFromCase(rules: RuleConfig | null | undefined): void {
@@ -295,13 +488,18 @@ function rulesFromCase(rules: RuleConfig | null | undefined): void {
 }
 
 function buildRules(): RuleConfig | null {
+  const sourceAmounts = copySource.value?.expected_rules?.amounts ?? []
+  const sourceCounts = copySource.value?.expected_rules?.counts ?? []
   const amounts = form.amounts
     .filter((item) => item.label.trim() && item.value !== null && Number.isFinite(item.value))
     .map((item) => ({
       label: item.label.trim(),
       value: Number(item.value),
       tolerance: Number(item.tolerance) || 0,
-      aliases: splitList(item.aliasesText),
+      aliases: reuseListIfUnchanged(
+        sourceAmounts.find((source) => source.label === item.label.trim())?.aliases,
+        item.aliasesText,
+      ),
       require_name: item.requireName,
     }))
   const counts = form.counts
@@ -310,12 +508,21 @@ function buildRules(): RuleConfig | null {
       label: item.label.trim(),
       value: Number(item.value),
       tolerance: Number(item.tolerance) || 0,
-      aliases: splitList(item.aliasesText),
+      aliases: reuseListIfUnchanged(
+        sourceCounts.find((source) => source.label === item.label.trim())?.aliases,
+        item.aliasesText,
+      ),
       require_name: item.requireName,
     }))
-  const dates = splitList(form.datesText)
-  const must = splitList(form.mustContainText)
-  const mustNot = splitList(form.mustNotContainText)
+  const dates = reuseListIfUnchanged(copySource.value?.expected_rules?.dates, form.datesText)
+  const must = reuseListIfUnchanged(
+    copySource.value?.expected_rules?.must_contain,
+    form.mustContainText,
+  )
+  const mustNot = reuseListIfUnchanged(
+    copySource.value?.expected_rules?.must_not_contain,
+    form.mustNotContainText,
+  )
   if (!amounts.length && !counts.length && !dates.length && !must.length && !mustNot.length) {
     return null
   }
@@ -365,9 +572,10 @@ function factContentKey(fact: {
     (fact.label ?? '').trim(),
     fact.kind ?? null,
     fact.value ?? null,
-    fact.values ?? null,
-    fact.keywords ?? null,
-    fact.aliases ?? null,
+    // 空数组与 undefined 视为同一语义，避免未改动的已取证事实被误判为「内容变化」。
+    fact.values ?? [],
+    fact.keywords ?? [],
+    fact.aliases ?? [],
     Boolean(fact.require_name),
     fact.unit ?? null,
     Number(fact.tolerance ?? 0),
@@ -401,7 +609,7 @@ function buildFacts(
       kind: row.kind,
       unit: row.unit.trim() || null,
       tolerance: Number(row.tolerance) || 0,
-      aliases: splitList(row.aliasesText),
+      aliases: reuseListIfUnchanged(original?.aliases, row.aliasesText),
       require_name: row.requireName,
       evidence_required: original?.evidence_required ?? true,
     }
@@ -420,29 +628,36 @@ function buildFacts(
         value,
         unit: row.unit.trim() || null,
         tolerance: Number(row.tolerance) || 0,
+        keywords: reuseListIfUnchanged(original?.keywords, row.keywordsText),
       }
     } else if (row.kind === 'date') {
       if (!rawValue.trim()) {
         toast.error(`「${label}」需要填写日期`)
         return null
       }
-      content = { value: rawValue.trim() }
+      content = {
+        value: rawValue.trim(),
+        keywords: reuseListIfUnchanged(original?.keywords, row.keywordsText),
+      }
     } else if (row.kind === 'set' || row.kind === 'topk') {
-      const values = splitList(row.valuesText)
+      const values = reuseListIfUnchanged(original?.values, row.valuesText)
       if (!values.length) {
         toast.error(`「${label}」需要至少一个候选值`)
         return null
       }
-      content = { values }
+      content = {
+        values,
+        keywords: reuseListIfUnchanged(original?.keywords, row.keywordsText),
+      }
     } else if (row.kind === 'boolean') {
       content = {
         value: ['true', '是', '1', 'yes'].includes(rawValue.trim().toLowerCase()),
-        keywords: splitList(row.keywordsText),
+        keywords: reuseListIfUnchanged(original?.keywords, row.keywordsText),
       }
     } else {
       content = {
         value: rawValue.trim() || null,
-        keywords: splitList(row.keywordsText),
+        keywords: reuseListIfUnchanged(original?.keywords, row.keywordsText),
       }
     }
 
@@ -486,32 +701,45 @@ function buildEnvelope(): AnswerEnvelope | null {
     return null
   }
   const originalMustNot = originalEnvelope.value?.must_not ?? []
-  const usedIds = new Set<string>()
-  const mustNot = splitList(form.mustNotText).map((value, index) => {
-    const original = originalMustNot.find(
-      (fact) => String(fact.value ?? (fact.values ?? []).join(', ')) === value,
-    )
-    if (original?.id) {
-      usedIds.add(original.id)
-      return { ...original }
-    }
-    let id = `must-not-${index + 1}`
-    while (usedIds.has(id)) id = `${id}x`
-    usedIds.add(id)
-    return { id, kind: 'text' as const, value }
-  })
+  const originalMustNotText = originalMustNot
+    .map((fact) => String(fact.value ?? (fact.values ?? []).join(', ')))
+    .join(', ')
+  let mustNot: FactAtom[]
+  if (originalMustNot.length && form.mustNotText.trim() === originalMustNotText) {
+    // 文本未变时整体复用源事实，保留 id / values / 取证等界面未暴露字段。
+    mustNot = originalMustNot.map((fact) => ({ ...fact }))
+  } else {
+    const usedIds = new Set<string>()
+    mustNot = splitList(form.mustNotText).map((value, index) => {
+      const original = originalMustNot.find(
+        (fact) => String(fact.value ?? (fact.values ?? []).join(', ')) === value,
+      )
+      if (original?.id) {
+        usedIds.add(original.id)
+        return { ...original }
+      }
+      let id = `must-not-${index + 1}`
+      while (usedIds.has(id)) id = `${id}x`
+      usedIds.add(id)
+      return { id, kind: 'text' as const, value }
+    })
+  }
   return {
     ...(originalEnvelope.value ?? {}),
     must,
     may,
     must_not: mustNot,
-    forbidden_phrases: splitList(form.forbiddenPhrasesText),
+    forbidden_phrases: reuseListIfUnchanged(
+      originalEnvelope.value?.forbidden_phrases,
+      form.forbiddenPhrasesText,
+    ),
     extras_policy: form.extrasPolicy,
   }
 }
 
 function buildContract(mustFacts: FactAtom[]): ResponseContract | null {
   if (form.inputType === 'CLEAR') return null
+  const original = originalContract.value
   const allowed: ResponseContract['allowed'] = []
   if (form.allowClarify) allowed.push('clarify')
   if (form.allowAssumption) allowed.push('answer_with_assumption')
@@ -521,29 +749,42 @@ function buildContract(mustFacts: FactAtom[]): ResponseContract | null {
     toast.error('非清晰输入至少需要两种可接受行为')
     return null
   }
-  const contract: ResponseContract = { allowed }
+  // 以源契约为底再覆盖表单字段，保留界面未暴露的子配置（多场景、额外断言等）。
+  const contract: ResponseContract = { ...(original ?? {}), allowed }
   if (form.allowClarify) {
+    const clarifySlots = reuseListIfUnchanged(
+      original?.clarify?.must_ask_slot,
+      form.clarifySlotsText,
+    )
     contract.clarify = {
-      must_ask_slot: splitList(form.clarifySlotsText).length
-        ? splitList(form.clarifySlotsText)
-        : ['time_range'],
-      must_not_assert: ['amount'],
+      ...(original?.clarify ?? {}),
+      must_ask_slot: clarifySlots.length ? clarifySlots : ['time_range'],
+      must_not_assert: original?.clarify?.must_not_assert ?? ['amount'],
     }
+  } else {
+    delete contract.clarify
   }
   if (form.allowAssumption) {
     if (!form.assumptionAmount.trim()) {
       toast.error('请填写「带假设作答」场景下的期望值')
       return null
     }
-    contract.answer_with_assumption = {
-      must_state_assumption: true,
-      scenarios: [
-        {
-          assumption: form.assumptionText.trim() || '按当前账期',
-          must: { amount: form.assumptionAmount.trim() },
-        },
-      ],
+    const scenarios = [...(original?.answer_with_assumption?.scenarios ?? [])]
+    const first = scenarios[0] ?? {}
+    const merged = {
+      ...first,
+      assumption: form.assumptionText.trim() || '按当前账期',
+      must: { ...(first.must ?? {}), amount: form.assumptionAmount.trim() },
     }
+    if (scenarios.length) scenarios[0] = merged
+    else scenarios.push(merged)
+    contract.answer_with_assumption = {
+      ...(original?.answer_with_assumption ?? {}),
+      must_state_assumption: original?.answer_with_assumption?.must_state_assumption ?? true,
+      scenarios,
+    }
+  } else {
+    delete contract.answer_with_assumption
   }
   if (form.allowPartial) {
     const labels = splitList(form.partialFactsText)
@@ -552,14 +793,30 @@ function buildContract(mustFacts: FactAtom[]): ResponseContract | null {
           .filter((fact) => labels.includes(fact.label ?? ''))
           .map((fact) => String(fact.id))
       : mustFacts.slice(0, 1).map((fact) => String(fact.id))
-    contract.partial = { must_disclose: true, required_facts: required }
+    contract.partial = {
+      ...(original?.partial ?? {}),
+      must_disclose: original?.partial?.must_disclose ?? true,
+      required_facts: required,
+    }
+  } else {
+    delete contract.partial
   }
-  if (form.allowRefuse) contract.refuse = { must_reason: true }
+  if (form.allowRefuse) {
+    contract.refuse = {
+      ...(original?.refuse ?? {}),
+      must_reason: original?.refuse?.must_reason ?? true,
+    }
+  } else {
+    delete contract.refuse
+  }
   return contract
 }
 
 function buildPlan(): PlanSpec | null {
-  const capabilities = splitList(form.planCapabilitiesText)
+  const capabilities = reuseListIfUnchanged(
+    originalPlan.value?.required_capabilities,
+    form.planCapabilitiesText,
+  )
   const original = originalPlan.value
   if (!capabilities.length && !form.maxToolCalls && !original?.alternatives) return null
   return {
@@ -620,7 +877,7 @@ const envPlaceholders = computed(() => {
 const requestVariableKeys = computed(() => {
   if (form.requestVariablesMode === 'json') {
     try {
-      const parsed = JSON.parse(form.requestVariablesJson || '{}')
+      const parsed = parseJsonPreservingNumbers(form.requestVariablesJson || '{}')
       return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? Object.keys(parsed as Record<string, unknown>)
         : []
@@ -637,11 +894,55 @@ const missingEnvPlaceholders = computed(() =>
   ),
 )
 
+const JSON_NUMBER_LITERAL = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
+
+/**
+ * 把 JSON 中的数字字面量包成字符串后再解析，避免长数字（手机号、订单号等）
+ * 被转成 number 后丢失精度，或序列化成科学计数法。只扫描字符串外的字符，
+ * 不会影响 key 与文本内容。
+ */
+function quoteJsonNumbers(text: string): string {
+  let out = ''
+  let inString = false
+  let escaped = false
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (inString) {
+      out += char
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      out += char
+      continue
+    }
+    if (char === '-' || (char >= '0' && char <= '9')) {
+      let end = index
+      if (text[end] === '-') end += 1
+      while (end < text.length && /[0-9.eE+-]/.test(text[end])) end += 1
+      out += `"${text.slice(index, end)}"`
+      index = end - 1
+      continue
+    }
+    out += char
+  }
+  return out
+}
+
+function parseJsonPreservingNumbers(text: string): unknown {
+  return JSON.parse(quoteJsonNumbers(text))
+}
+
 function parseRequestVariableValue(raw: string): unknown {
   const text = raw.trim()
   if (!text) return ''
+  // 纯数字一律按原文保存为字符串，保证长数字不被 number 化
+  if (JSON_NUMBER_LITERAL.test(text)) return text
   try {
-    return JSON.parse(text)
+    return parseJsonPreservingNumbers(text)
   } catch {
     return raw
   }
@@ -731,7 +1032,7 @@ function switchRequestVariablesMode(mode: 'rows' | 'json'): void {
   let data: Record<string, unknown> = {}
   if (text) {
     try {
-      const parsed = JSON.parse(text)
+      const parsed = parseJsonPreservingNumbers(text)
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         data = parsed as Record<string, unknown>
       } else {
@@ -750,8 +1051,20 @@ function switchRequestVariablesMode(mode: 'rows' | 'json'): void {
   form.requestVariablesMode = 'rows'
 }
 
+function suggestCopyCode(code: string): string {
+  const suffix = '-COPY'
+  const base = (code || 'CASE').trim() || 'CASE'
+  return base.length + suffix.length > 64 ? `${base.slice(0, 64 - suffix.length)}${suffix}` : `${base}${suffix}`
+}
+
+function suggestCopyName(name: string): string {
+  const suffix = '（副本）'
+  const base = (name || '').trim() || '未命名用例'
+  return base.length + suffix.length > 200 ? `${base.slice(0, 200 - suffix.length)}${suffix}` : `${base}${suffix}`
+}
+
 function resetForm(): void {
-  const source = props.caseData
+  const source = copySource.value
   form.code = source?.code ?? ''
   form.name = source?.name ?? ''
   form.description = source?.description ?? ''
@@ -759,7 +1072,9 @@ function resetForm(): void {
   form.status = source?.status ?? 'ACTIVE'
   form.priority = source?.priority ?? 'P1'
   form.tagsText = (source?.tags ?? []).join(', ')
-  form.environment_id = source?.environment_id ?? props.environments[0]?.id ?? null
+  form.environment_id = source
+    ? source.environment_id ?? null
+    : props.environments[0]?.id ?? null
   form.query = source?.query ?? ''
   form.expected_answer = source?.expected_answer ?? ''
   rulesFromCase(source?.expected_rules)
@@ -788,36 +1103,49 @@ function resetForm(): void {
   if (form.hidden.length === 0) form.hidden = [{ key: '', content: '', release_hint: '' }]
   const keywords = (source?.terminate_conditions?.keywords ?? []) as unknown
   form.terminateKeywordsText = Array.isArray(keywords) ? keywords.map(String).join(', ') : ''
-  form.simulator_template_id =
-    source?.simulator_template_id ?? simulatorTemplates.value[0]?.id ?? null
+  form.simulator_template_id = source
+    ? source.simulator_template_id ?? null
+    : simulatorTemplates.value[0]?.id ?? null
   form.simulatorStrategy = (source?.simulator_template_strategy as TemplateStrategy) ?? 'LATEST'
   form.simulatorVersion = source?.simulator_template_version ?? null
-  form.judge_template_id = source?.judge_template_id ?? judgeTemplates.value[0]?.id ?? null
+  form.judge_template_id = source
+    ? source.judge_template_id ?? null
+    : judgeTemplates.value[0]?.id ?? null
   form.judgeTemplateStrategy = (source?.judge_template_strategy as TemplateStrategy) ?? 'LATEST'
   form.judgeVersion = source?.judge_template_version ?? null
-  form.judge_model_ids = source?.judge_model_ids ?? judgeModels.value.map((item) => item.id)
+  form.judge_model_ids = source
+    ? [...(source.judge_model_ids ?? [])]
+    : judgeModels.value.map((item) => item.id)
   form.judgeStrategy = (source?.judge_strategy as JudgeStrategy) ?? 'AVG'
-  form.pass_threshold = source?.pass_threshold ?? 60
+  form.pass_threshold = source ? source.pass_threshold ?? null : 60
   form.riskLevel = (source?.risk_level as 'LOW' | 'HIGH') ?? 'LOW'
   form.owner = source?.owner ?? ''
   form.snapshotId = source?.snapshot_id ?? ''
   form.requestVariables = Object.entries(source?.request_variables ?? {}).map(([key, value]) => ({
     key,
-    value: typeof value === 'string' ? value : JSON.stringify(value),
+    value: requestVariableValueText(value),
   }))
+  originalRequestVariables.value = source?.request_variables ?? null
   form.requestVariablesJson = form.requestVariables.length
     ? JSON.stringify(source?.request_variables ?? {}, null, 2)
     : ''
   form.requestVariablesMode = 'rows'
   resetContractForm(source)
   form.change_summary = ''
+  if (isCopy.value && source) {
+    // 复制：编号/名称给默认建议但不落库，其余内容全部照搬源用例。
+    form.code = suggestCopyCode(source.code)
+    form.name = suggestCopyName(source.name)
+  }
   void loadVersions('simulator')
   void loadVersions('judge')
+  captureInitialSections()
 }
 
 function resetContractForm(source: TestCase | null): void {
   originalEnvelope.value = source?.answer_envelope ?? null
   originalPlan.value = source?.plan_spec ?? null
+  originalContract.value = source?.response_contract ?? null
   form.gradingMode = (source?.grading_mode as GradingMode) ?? 'LEGACY'
   form.inputType = (source?.input_type as InputType) ?? 'CLEAR'
   form.asOf = source?.as_of ?? ''
@@ -911,14 +1239,14 @@ const aiRestoredApplied = ref(false)
 const drawerBody = ref<HTMLElement | null>(null)
 
 watch(
-  () => [props.modelValue, props.caseData] as const,
+  () => [props.modelValue, props.caseData, props.copyFrom] as const,
   ([open]) => {
     if (open) {
       resetForm()
       resetAiState()
       restoreAiDraft()
-      document.body.style.overflow = 'hidden'
-    } else {
+      if (!props.embedded) document.body.style.overflow = 'hidden'
+    } else if (!props.embedded) {
       document.body.style.overflow = ''
     }
   },
@@ -1003,9 +1331,14 @@ function buildRequestVariables(): Record<string, unknown> | null {
   if (form.requestVariablesMode === 'json') {
     const text = form.requestVariablesJson.trim()
     if (!text) return {}
+    // 文本与源值完全一致时直接复用源对象，避免数字被重新解析成字符串等类型漂移。
+    const sourceVariables = originalRequestVariables.value
+    if (sourceVariables && text === JSON.stringify(sourceVariables, null, 2).trim()) {
+      return { ...sourceVariables }
+    }
     let parsed: unknown
     try {
-      parsed = JSON.parse(text)
+      parsed = parseJsonPreservingNumbers(text)
     } catch (exc) {
       toast.error(`请求变量 JSON 格式不正确：${(exc as Error).message}`)
       return null
@@ -1047,7 +1380,17 @@ function buildRequestVariables(): Record<string, unknown> | null {
       toast.error(`请求变量「${key}」重复`)
       return null
     }
-    result[key] = parseRequestVariableValue(row.value)
+    // 行内文本未变时保留源值原始类型（数字 / 布尔 / 对象），
+    // 只有用户实际修改过的变量才按当前输入规则重新解析。
+    const sourceVariables = originalRequestVariables.value
+    const originalValue =
+      sourceVariables && Object.prototype.hasOwnProperty.call(sourceVariables, key)
+        ? sourceVariables[key]
+        : undefined
+    const unchanged =
+      originalValue !== undefined &&
+      requestVariableValueText(originalValue) === row.value
+    result[key] = unchanged ? originalValue : parseRequestVariableValue(row.value)
   }
   return result
 }
@@ -1083,21 +1426,33 @@ function buildPayload(): CasePayload | null {
     case_type: form.case_type,
     status: form.status,
     priority: form.priority,
-    tags: splitList(form.tagsText),
+    tags: reuseListIfUnchanged(copySource.value?.tags, form.tagsText),
     environment_id: form.environment_id,
     request_variables: requestVariables,
     max_turns: form.maxTurns,
     simulator_template_id: form.simulator_template_id,
     simulator_template_strategy: form.simulatorStrategy,
     simulator_template_version:
-      form.simulatorStrategy === 'PINNED' ? form.simulatorVersion : null,
+      form.simulatorStrategy === 'PINNED'
+        ? form.simulatorVersion
+        : isCopy.value
+          ? copySource.value?.simulator_template_version ?? null
+          : null,
     judge_template_id: form.judge_template_id,
     judge_template_strategy: form.judgeTemplateStrategy,
-    judge_template_version: form.judgeTemplateStrategy === 'PINNED' ? form.judgeVersion : null,
+    judge_template_version:
+      form.judgeTemplateStrategy === 'PINNED'
+        ? form.judgeVersion
+        : isCopy.value
+          ? copySource.value?.judge_template_version ?? null
+          : null,
     judge_model_ids: [...form.judge_model_ids],
     judge_strategy: form.judgeStrategy,
-    pass_threshold: form.pass_threshold,
-    prompt_overrides: props.caseData?.prompt_overrides ?? null,
+    pass_threshold:
+      typeof form.pass_threshold === 'number' && Number.isFinite(form.pass_threshold)
+        ? form.pass_threshold
+        : null,
+    prompt_overrides: copySource.value?.prompt_overrides ?? null,
     change_summary: form.change_summary.trim() || null,
   }
 
@@ -1119,6 +1474,9 @@ function buildPayload(): CasePayload | null {
     payload.grading_mode = 'LEGACY'
     payload.input_type = 'CLEAR'
     payload.as_of = form.asOf.trim() || null
+    payload.snapshot_id = form.snapshotId.trim() || null
+    payload.risk_level = form.riskLevel
+    payload.owner = form.owner.trim() || null
     payload.answer_envelope = null
     payload.response_contract = null
     payload.plan_spec = null
@@ -1129,7 +1487,9 @@ function buildPayload(): CasePayload | null {
     payload.expected_answer = form.expected_answer.trim() || null
     payload.expected_rules = buildRules()
     payload.turns = null
-    payload.fail_fast = false
+    // 跨类型字段一并保留，避免复制/编辑时被默认值静默覆盖。
+    payload.session_expected = copySource.value?.session_expected ?? null
+    payload.fail_fast = copySource.value?.fail_fast ?? false
   } else if (form.case_type === 'STATIC_MULTI') {
     const turns: TurnItem[] = []
     for (let index = 0; index < form.turns.length; index += 1) {
@@ -1151,8 +1511,9 @@ function buildPayload(): CasePayload | null {
     payload.turns = turns
     payload.fail_fast = form.failFast
     payload.query = null
-    payload.expected_answer = null
-    payload.expected_rules = null
+    // 用例级规则通常为空，但源用例若显式配置过则原样保留。
+    payload.expected_answer = copySource.value?.expected_answer ?? null
+    payload.expected_rules = copySource.value?.expected_rules ?? null
     try {
       payload.session_expected = sessionExpectedText.value.trim()
         ? (JSON.parse(sessionExpectedText.value) as Record<string, unknown>)
@@ -1169,16 +1530,59 @@ function buildPayload(): CasePayload | null {
         content: item.content.trim(),
         release_hint: item.release_hint.trim() || null,
       }))
-    const keywords = splitList(form.terminateKeywordsText)
+    const keywords = reuseListIfUnchanged(
+      Array.isArray(copySource.value?.terminate_conditions?.keywords)
+        ? (copySource.value!.terminate_conditions!.keywords as unknown[]).map(String)
+        : undefined,
+      form.terminateKeywordsText,
+    )
+    // 保留源用例里界面未暴露的终止条件字段（例如自定义判定开关），避免复制/编辑时丢失。
+    const terminateRest: Record<string, unknown> = {
+      ...(copySource.value?.terminate_conditions ?? {}),
+    }
+    delete terminateRest.keywords
     payload.user_goal = form.userGoal.trim()
     payload.initial_query = form.initialQuery.trim() || null
     payload.persona_description = form.persona.trim() || null
     payload.hidden_context = hidden
-    payload.terminate_conditions = keywords.length ? { keywords } : null
+    payload.terminate_conditions = keywords.length
+      ? { ...terminateRest, keywords }
+      : Object.keys(terminateRest).length
+        ? terminateRest
+        : null
     payload.expected_answer = form.expected_answer.trim() || null
     payload.expected_rules = buildRules()
     payload.turns = null
     payload.query = null
+    payload.session_expected = copySource.value?.session_expected ?? null
+    payload.fail_fast = copySource.value?.fail_fast ?? false
+  }
+
+  // 复制模式兜底：当前类型分支未显式设置的字段，原样从源用例补入，
+  // 保证任何跨类型字段都不会因表单未暴露而被默认值覆盖。
+  if (isCopy.value && props.copyFrom) {
+    const source = props.copyFrom
+    if (payload.hidden_context === undefined) payload.hidden_context = source.hidden_context ?? null
+    if (payload.user_goal === undefined) payload.user_goal = source.user_goal ?? null
+    if (payload.initial_query === undefined) payload.initial_query = source.initial_query ?? null
+    if (payload.persona_description === undefined) {
+      payload.persona_description = source.persona_description ?? null
+    }
+    if (payload.terminate_conditions === undefined) {
+      payload.terminate_conditions = source.terminate_conditions ?? null
+    }
+    if (payload.session_expected === undefined) {
+      payload.session_expected = source.session_expected ?? null
+    }
+    if (payload.fail_fast === undefined) payload.fail_fast = source.fail_fast ?? false
+    if (payload.query === undefined) payload.query = source.query ?? null
+    if (payload.expected_answer === undefined) {
+      payload.expected_answer = source.expected_answer ?? null
+    }
+    if (payload.expected_rules === undefined) {
+      payload.expected_rules = source.expected_rules ?? null
+    }
+    if (payload.turns === undefined) payload.turns = source.turns ?? null
   }
 
   // 待补充项回写：已应用草稿里仍未补上依据的项，保存时写进用例描述，
@@ -1219,6 +1623,13 @@ function submit(): void {
   aiRestored.value = false
   aiRestoredApplied.value = false
   emit('submit', payload)
+}
+
+/** 工作台：用当前表单内容直接试跑，不落版本、不动评审状态 */
+function tryRun(): void {
+  const payload = buildPayload()
+  if (!payload) return
+  emit('try-run', payload)
 }
 
 // ------------------------------------------------------- AI 帮我填
@@ -1684,7 +2095,7 @@ function requestVariableValueText(value: unknown): string {
 function currentRequestVariables(): Record<string, unknown> {
   if (form.requestVariablesMode === 'json') {
     try {
-      const parsed = JSON.parse(form.requestVariablesJson || '{}')
+      const parsed = parseJsonPreservingNumbers(form.requestVariablesJson || '{}')
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>
       }
@@ -2266,6 +2677,7 @@ function aiDraftScope(): string {
   const current = props.caseData
   if (current?.id) return `edit:${current.id}`
   if (current?.code) return `edit:${current.code}`
+  if (isCopy.value && props.copyFrom?.id) return `copy:${props.copyFrom.id}`
   return 'create'
 }
 
@@ -3272,21 +3684,33 @@ function openDraftResult(): void {
 </script>
 
 <template>
-  <Teleport to="body">
-    <Transition name="drawer">
+  <Teleport to="body" :disabled="embedded">
+    <Transition :name="embedded ? 'none' : 'drawer'">
       <div
         v-if="modelValue"
-        class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm"
-        @click.self="close"
+        :class="
+          embedded
+            ? 'flex h-full min-h-0 w-full'
+            : 'fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm'
+        "
+        @click.self="!embedded && close()"
       >
         <aside
-          class="absolute right-0 top-0 flex h-full w-full max-w-3xl flex-col overflow-hidden rounded-l-tile border-l border-line bg-white shadow-tile-lift"
+          :class="
+            embedded
+              ? 'flex h-full min-h-0 w-full flex-col overflow-hidden bg-white'
+              : 'absolute right-0 top-0 flex h-full w-full max-w-3xl flex-col overflow-hidden rounded-l-tile border-l border-line bg-white shadow-tile-lift'
+          "
         >
           <header class="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
             <div class="min-w-0">
               <h2 class="text-base font-semibold text-slate-900">{{ title }}</h2>
               <p class="mt-1 text-xs text-slate-500">
-                保存后自动生成版本快照，可用于 Diff 对比与一键回滚
+                {{
+                  embedded
+                    ? '试运行只生成执行记录、不产生版本；保存后才生成新版本'
+                    : '保存后自动生成版本快照，可用于 Diff 对比与一键回滚'
+                }}
               </p>
             </div>
             <div class="flex shrink-0 items-center gap-2">
@@ -3769,7 +4193,17 @@ function openDraftResult(): void {
               </div>
             </div>
             <section class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">基础信息</h3>
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
+                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                @click="toggleSection('basic')"
+              >
+                基础信息
+                <span v-if="embedded" class="section-summary">{{ basicSummary }}</span>
+                <span v-if="isSectionDirty('basic')" class="section-dirty" title="有未保存修改">●</span>
+                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('basic') ? '⌄' : '⌃' }}</span>
+              </h3>
+              <div v-show="!isSectionCollapsed('basic')" class="space-y-3">
               <div class="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label class="label">用例编号</label>
@@ -3819,12 +4253,22 @@ function openDraftResult(): void {
                   </option>
                 </select>
               </div>
+              </div>
             </section>
 
             <section id="ai-field-requestVariables" tabindex="-1" class="space-y-3">
               <div class="flex flex-wrap items-center justify-between gap-2">
-                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">请求变量</h3>
-                <div class="flex items-center gap-1">
+                <h3
+                  class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
+                  :class="embedded ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
+                  @click="toggleSection('variables')"
+                >
+                  请求变量
+                  <span v-if="embedded" class="section-summary">{{ variablesSummary }}</span>
+                  <span v-if="isSectionDirty('variables')" class="section-dirty" title="有未保存修改">●</span>
+                  <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('variables') ? '⌄' : '⌃' }}</span>
+                </h3>
+                <div v-if="!isSectionCollapsed('variables')" class="flex items-center gap-1">
                   <button
                     v-if="form.requestVariablesMode === 'rows'"
                     class="btn-ghost btn-xs"
@@ -3844,8 +4288,9 @@ function openDraftResult(): void {
                   </button>
                 </div>
               </div>
+              <div v-show="!isSectionCollapsed('variables')" class="space-y-3">
               <p class="text-[11px] text-slate-500">
-                渲染进环境请求头 / 请求体模板；值支持字符串、数字与 JSON。优先级：运行时 &gt; 用例变量 &gt;
+                渲染进环境请求头 / 请求体模板；数字按原文保存为字符串，避免长数字丢精度或变成科学计数法。优先级：运行时 &gt; 用例变量 &gt;
                 环境变量池。
               </p>
 
@@ -3902,10 +4347,20 @@ function openDraftResult(): void {
                   尚未提供取值：{{ missingEnvPlaceholders.join('、') }}
                 </p>
               </div>
+              </div>
             </section>
 
             <section class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">用例类型</h3>
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
+                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                @click="toggleSection('type')"
+              >
+                用例类型
+                <span v-if="embedded" class="section-summary">{{ CASE_TYPE_LABELS[form.case_type] ?? form.case_type }}</span>
+                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('type') ? '⌄' : '⌃' }}</span>
+              </h3>
+              <div v-show="!isSectionCollapsed('type')" class="space-y-3">
               <div class="flex flex-wrap gap-2">
                 <button
                   v-for="type in CASE_TYPES"
@@ -3925,10 +4380,21 @@ function openDraftResult(): void {
               <p class="text-[11px] text-slate-500">
                 用例类型创建后不可修改，如需切换请新建用例。
               </p>
+              </div>
             </section>
 
             <section v-if="form.case_type === 'SINGLE'" class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">单轮配置</h3>
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
+                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                @click="toggleSection('content')"
+              >
+                单轮配置
+                <span v-if="embedded" class="section-summary">{{ contentSummary }}</span>
+                <span v-if="isSectionDirty('content')" class="section-dirty" title="有未保存修改">●</span>
+                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('content') ? '⌄' : '⌃' }}</span>
+              </h3>
+              <div v-show="!isSectionCollapsed('content')" class="space-y-3">
               <div>
                 <label class="label">用户提问（query）</label>
                 <textarea v-model="form.query" class="input" :class="{ 'ai-fill': aiHighlight.has('query') }" rows="2" placeholder="帮我查一下订单 A2024001 的含税金额和明细笔数" />
@@ -3937,13 +4403,24 @@ function openDraftResult(): void {
                 <label class="label">预期答案</label>
                 <textarea v-model="form.expected_answer" class="input" :class="{ 'ai-fill': aiHighlight.has('expected_answer') }" rows="2" placeholder="订单 A2024001 含税金额为 ¥12,345.67，共 3 笔明细" />
               </div>
+              </div>
             </section>
 
             <section v-else-if="form.case_type === 'STATIC_MULTI'" id="ai-field-turns" tabindex="-1" class="space-y-3">
               <div class="flex items-center justify-between">
-                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">静态多轮脚本</h3>
-                <button class="btn-ghost btn-xs" @click="addTurn">添加一轮</button>
+                <h3
+                  class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
+                  :class="embedded ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
+                  @click="toggleSection('content')"
+                >
+                  静态多轮脚本
+                  <span v-if="embedded" class="section-summary">{{ contentSummary }}</span>
+                <span v-if="isSectionDirty('content')" class="section-dirty" title="有未保存修改">●</span>
+                  <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('content') ? '⌄' : '⌃' }}</span>
+                </h3>
+                <button v-if="!isSectionCollapsed('content')" class="btn-ghost btn-xs" @click="addTurn">添加一轮</button>
               </div>
+              <div v-show="!isSectionCollapsed('content')" class="space-y-3">
               <div
                 v-for="(turn, index) in form.turns"
                 :key="index"
@@ -3985,10 +4462,21 @@ function openDraftResult(): void {
                 <input v-model="form.failFast" type="checkbox" class="h-4 w-4 rounded border-slate-300 bg-white" />
                 任一规则失败即中止后续轮次（fail_fast）
               </label>
+              </div>
             </section>
 
             <section v-else class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">动态多轮配置</h3>
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
+                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                @click="toggleSection('content')"
+              >
+                动态多轮配置
+                <span v-if="embedded" class="section-summary">{{ contentSummary }}</span>
+                <span v-if="isSectionDirty('content')" class="section-dirty" title="有未保存修改">●</span>
+                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('content') ? '⌄' : '⌃' }}</span>
+              </h3>
+              <div v-show="!isSectionCollapsed('content')" class="space-y-3">
               <div>
                 <label class="label">用户目标（user_goal）</label>
                 <textarea v-model="form.userGoal" class="input" rows="2" placeholder="在不直接提供订单号的前提下，通过追问拿到订单 A2024001 的含税金额与明细笔数" />
@@ -4029,12 +4517,22 @@ function openDraftResult(): void {
                 <input v-model="item.release_hint" class="input" placeholder="释放提示" />
                 <button class="btn-danger btn-xs" @click="removeHiddenRow(index)">删除</button>
               </div>
+              </div>
             </section>
 
             <section class="space-y-3">
               <div class="flex flex-wrap items-center justify-between gap-2">
-                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">判分方式</h3>
-                <div class="flex gap-2">
+                <h3
+                  class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
+                  :class="embedded ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
+                  @click="toggleSection('grading')"
+                >
+                  判分方式
+                  <span v-if="embedded" class="section-summary">{{ gradingSummary }}</span>
+                  <span v-if="isSectionDirty('grading')" class="section-dirty" title="有未保存修改">●</span>
+                  <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('grading') ? '⌄' : '⌃' }}</span>
+                </h3>
+                <div v-if="!isSectionCollapsed('grading')" class="flex gap-2">
                   <button
                     class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
                     :class="
@@ -4059,6 +4557,7 @@ function openDraftResult(): void {
                   </button>
                 </div>
               </div>
+              <div v-show="!isSectionCollapsed('grading')" class="space-y-3">
               <p class="text-[11px] text-slate-500">
                 契约模式只看最终答案是否正确；工具调用轨迹只用于失败诊断，不参与通过与否。
                 录入时无需填写 Cypher / SQL，期望事实由后台能力模板自动取证。
@@ -4381,16 +4880,27 @@ function openDraftResult(): void {
                   </div>
                 </div>
               </div>
+              </div>
             </section>
 
             <section v-if="form.case_type !== 'STATIC_MULTI' && form.gradingMode !== 'ANSWER_CONTRACT'" id="ai-field-rules" tabindex="-1" class="space-y-3">
               <div class="flex items-center justify-between">
-                <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">规则硬校验</h3>
-                <div class="flex gap-2">
+                <h3
+                  class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
+                  :class="embedded ? 'flex flex-1 cursor-pointer select-none items-center gap-2' : ''"
+                  @click="toggleSection('rules')"
+                >
+                  规则硬校验
+                  <span v-if="embedded" class="section-summary">{{ rulesSummary }}</span>
+                  <span v-if="isSectionDirty('rules')" class="section-dirty" title="有未保存修改">●</span>
+                  <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('rules') ? '⌄' : '⌃' }}</span>
+                </h3>
+                <div v-if="!isSectionCollapsed('rules')" class="flex gap-2">
                   <button class="btn-ghost btn-xs" @click="addAmount">添加金额</button>
                   <button class="btn-ghost btn-xs" @click="addCount">添加笔数</button>
                 </div>
               </div>
+              <div v-show="!isSectionCollapsed('rules')" class="space-y-3">
               <div
                 v-for="(rule, index) in form.amounts"
                 :key="`amount-${index}`"
@@ -4471,10 +4981,21 @@ function openDraftResult(): void {
                   <input v-model="form.mustNotContainText" class="input" placeholder="系统异常" />
                 </div>
               </div>
+              </div>
             </section>
 
             <section class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">Prompt 与模型</h3>
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
+                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                @click="toggleSection('prompt')"
+              >
+                Prompt 与模型
+                <span v-if="embedded" class="section-summary">{{ promptSummary }}</span>
+                <span v-if="isSectionDirty('prompt')" class="section-dirty" title="有未保存修改">●</span>
+                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('prompt') ? '⌄' : '⌃' }}</span>
+              </h3>
+              <div v-show="!isSectionCollapsed('prompt')" class="space-y-3">
               <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <label class="label">用户模拟器模板（USER_SIMULATOR）</label>
                 <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_130px]">
@@ -4569,21 +5090,57 @@ function openDraftResult(): void {
                 <label class="label">通过分数线</label>
                 <input v-model.number="form.pass_threshold" class="input" type="number" min="0" max="100" />
               </div>
+              </div>
             </section>
 
             <section v-if="isEdit" class="space-y-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-indigo-600">变更说明</h3>
-              <input v-model="form.change_summary" class="input" placeholder="例如：调整预期金额与裁判阈值" />
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-indigo-600"
+                :class="embedded ? 'flex cursor-pointer select-none items-center gap-2' : ''"
+                @click="toggleSection('summary')"
+              >
+                变更说明
+                <span v-if="embedded" class="section-summary">保存新版本时写入版本记录</span>
+                <span v-if="isSectionDirty('summary')" class="section-dirty" title="有未保存修改">●</span>
+                <span v-if="embedded" class="section-chev">{{ isSectionCollapsed('summary') ? '⌄' : '⌃' }}</span>
+              </h3>
+              <div v-show="!isSectionCollapsed('summary')">
+                <input v-model="form.change_summary" class="input" placeholder="例如：调整预期金额与裁判阈值" />
+              </div>
             </section>
           </div>
 
           <footer class="flex items-center justify-between gap-2 border-t border-slate-200 px-5 py-3">
             <p class="text-[11px] text-slate-500">
-              {{ isEdit ? '保存会生成新版本快照' : '创建后版本号为 v1' }}
+              {{
+                embedded
+                  ? '试运行使用当前表单内容生成快照，不产生版本'
+                  : isEdit
+                    ? '保存会生成新版本快照'
+                    : '创建后版本号为 v1'
+              }}
             </p>
             <div class="flex gap-2">
-              <button class="btn-ghost" @click="close">取消</button>
-              <button class="btn-primary" :disabled="saving" @click="submit">
+              <button class="btn-ghost" @click="close">
+                {{ embedded ? '放弃修改' : '取消' }}
+              </button>
+              <button
+                v-if="embedded"
+                class="btn-ghost !border !border-line !bg-white"
+                :disabled="saving"
+                @click="submit"
+              >
+                {{ saving ? '保存中…' : '保存为新版本' }}
+              </button>
+              <button
+                v-if="embedded"
+                class="btn-primary"
+                :disabled="running || saving"
+                @click="tryRun"
+              >
+                {{ running ? '试运行中…' : '▶ 试运行（不保存）' }}
+              </button>
+              <button v-else class="btn-primary" :disabled="saving" @click="submit">
                 {{ saving ? '保存中…' : isEdit ? '保存新版本' : '创建用例' }}
               </button>
             </div>
@@ -4637,6 +5194,30 @@ section[id^='ai-field-']:focus {
   outline: 2px solid rgb(99 102 241 / 0.45);
   outline-offset: 4px;
   border-radius: 0.75rem;
+}
+
+/* 调试工作台内嵌：分组折叠摘要 */
+.section-summary {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #94a3b8;
+}
+.section-chev {
+  flex: none;
+  font-size: 10px;
+  color: #94a3b8;
+}
+.section-dirty {
+  flex: none;
+  font-size: 8px;
+  line-height: 1;
+  color: #f59e0b;
 }
 
 /* 减少动效偏好：把大幅位移换成一档小位移（16px）＋淡入，仍有"打开"的反馈 */

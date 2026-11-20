@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>设计稿 01 · 单条用例复制</title>
+<style>
+  :root{
+    --canvas:#f5f5f7; --line:#e8e8ed; --line-soft:#f0f0f4; --line-strong:#dcdfe6;
+    --ink:#111827; --ink-soft:#374151; --muted:#6b7280; --faint:#9ca3af;
+    --brand:#4f46e5; --brand-deep:#4338ca; --brand-soft:#eef2ff; --brand-edge:#e0e7ff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:"Inter","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    background:#eceef2; color:var(--ink); font-size:13px; -webkit-font-smoothing:antialiased;
+  }
+  .board{max-width:1400px;margin:0 auto;padding:28px 24px 40px}
+  .board-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}
+  .board-head .kicker{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--brand)}
+  .board-head h1{font-size:21px;letter-spacing:-.02em;margin-top:4px}
+  .board-head p{font-size:12px;color:var(--muted);margin-top:5px}
+  .tag-soft{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:11px;color:var(--muted)}
+  .tag-soft b{color:var(--brand)}
+
+  /* ============ App 框架 ============ */
+  .app{
+    position:relative; display:flex; min-height:760px; background:var(--canvas);
+    border:1px solid var(--line-strong); border-radius:24px; overflow:hidden;
+    box-shadow:0 40px 90px -50px rgba(17,24,39,.45);
+  }
+  /* 侧边栏 */
+  .sidebar{width:236px;flex:none;padding:16px 0 16px 16px}
+  .rail{
+    height:100%;display:flex;flex-direction:column;gap:12px;background:#fff;
+    border:1px solid var(--line);border-radius:20px;padding:18px 12px 12px;
+    box-shadow:0 1px 2px rgba(17,24,39,.04),0 24px 48px -34px rgba(17,24,39,.4);
+  }
+  .logo{display:flex;align-items:center;gap:10px;padding:0 6px}
+  .logo .mark{
+    width:32px;height:32px;border-radius:9px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:13px;
+    background:linear-gradient(135deg,#6366f1,#4f46e5);box-shadow:0 6px 14px -8px rgba(79,70,229,.9);
+  }
+  .logo p{font-size:13px;font-weight:600;letter-spacing:-.02em;line-height:1.15}
+  .logo span{font-size:8.5px;font-weight:600;letter-spacing:.12em;color:#64748b;text-transform:uppercase}
+  .nav-label{font-size:9px;font-weight:600;letter-spacing:.12em;color:#64748b;text-transform:uppercase;padding:8px 10px 2px}
+  .nav{display:flex;flex-direction:column;gap:3px;flex:1}
+  .nav a{
+    display:flex;align-items:center;gap:10px;height:38px;padding:0 10px;border-radius:11px;
+    font-size:12px;font-weight:500;color:#64748b;text-decoration:none;
+  }
+  .nav a svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8}
+  .nav a.on{background:var(--brand-soft);color:var(--brand)}
+  .rail-foot{border-top:1px solid var(--line-soft);padding-top:10px;display:flex;align-items:center;gap:9px}
+  .avatar{width:30px;height:30px;border-radius:999px;background:#f1f5f9;display:grid;place-items:center;font-size:11px;font-weight:600;color:#475569}
+  .rail-foot .who p{font-size:11.5px;font-weight:500;line-height:1.2}
+  .rail-foot .who span{font-size:9.5px;color:#64748b}
+
+  /* 主区 */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{height:58px;display:flex;align-items:center;gap:8px;padding:0 26px;font-size:11px;color:#64748b;border-bottom:1px solid rgba(232,232,237,.7)}
+  .topbar .sep{color:#cbd5e1}
+  .topbar .cur{color:var(--ink-soft);font-weight:500}
+  .topbar .spacer{flex:1}
+  .topbar .pill{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 10px;font-size:10px;color:#64748b}
+  .content{padding:18px 26px 30px;position:relative}
+
+  /* 页头 */
+  .page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
+  .eyebrow{font-size:9.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--brand)}
+  .page-head h2{font-size:20px;letter-spacing:-.02em;margin-top:4px}
+  .page-head .desc{font-size:11px;color:var(--muted);margin-top:5px;max-width:520px;line-height:1.6}
+  .actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+  .btn{border:1px solid var(--line);background:#fff;color:var(--ink-soft);border-radius:9px;padding:7px 13px;font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap}
+  .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 8px 18px -12px rgba(79,70,229,.8)}
+  .btn.xs{padding:3px 9px;font-size:10.5px;border-radius:7px}
+  .btn.ghost-brand{border-color:var(--brand-edge);color:var(--brand);background:var(--brand-soft)}
+
+  /* 筛选 */
+  .filter{display:flex;gap:9px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:16px;padding:11px 13px;margin-bottom:12px}
+  .field{display:flex;flex-direction:column;gap:3px}
+  .field label{font-size:9.5px;color:var(--muted);font-weight:500}
+  .inp,.sel{border:1px solid var(--line);border-radius:8px;background:#fff;padding:6px 9px;font-size:11.5px;color:var(--ink)}
+  .inp{width:190px}
+  .sel{min-width:92px;color:var(--ink-soft)}
+  .filter .spacer{flex:1}
+
+  /* 表格 */
+  .card{background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:0 1px 2px rgba(17,24,39,.04)}
+  .card-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line-soft)}
+  .card-bar .l{font-size:10.5px;color:#64748b}
+  .card-bar .r{display:flex;gap:6px}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:10px;font-weight:500;color:#94a3b8;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:11px 12px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+  tbody tr:last-child td{border-bottom:none}
+  .codepill{font-family:"JetBrains Mono",Consolas,monospace;font-size:11.5px;color:var(--brand)}
+  .badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:1px 7px;font-size:9.5px;font-weight:500;color:#475569;background:#fff;line-height:15px}
+  .badge.brand{background:var(--brand-soft);border-color:var(--brand-edge);color:var(--brand-deep)}
+  .badge.green{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
+  .badge.amber{background:#fffbeb;border-color:#fde68a;color:#b45309}
+  .badge.rose{background:#fff1f2;border-color:#fecdd3;color:#be123c}
+  .case-name{font-size:12px;color:var(--ink);font-weight:500;margin-top:3px}
+  .case-meta{font-size:9.5px;color:var(--faint);margin-top:2px;font-family:"JetBrains Mono",Consolas,monospace}
+  .conf{font-size:10px;color:#64748b;line-height:1.55}
+  .ops{display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}
+  .ops .highlight{border-color:var(--brand);color:var(--brand);font-weight:600;background:var(--brand-soft)}
+
+  /* 进度条 */
+  .prog{width:104px;height:5px;border-radius:999px;background:#eef2f7;overflow:hidden;margin:2px 0 3px}
+  .prog i{display:block;height:100%;border-radius:999px}
+
+  /* ============ 抽屉浮层 ============ */
+  .backdrop{position:absolute;inset:0;background:rgba(17,24,39,.28);backdrop-filter:blur(1.5px);z-index:20}
+  .drawer{
+    position:absolute;top:0;right:0;bottom:0;width:540px;z-index:30;background:#fff;
+    border-left:1px solid var(--line);box-shadow:-32px 0 80px -40px rgba(17,24,39,.5);
+    display:flex;flex-direction:column;
+  }
+  .drawer-head{padding:17px 20px 13px;border-bottom:1px solid var(--line-soft);display:flex;justify-content:space-between;gap:12px}
+  .drawer-head h3{font-size:14.5px;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+  .drawer-head .sub{font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.55}
+  .close{width:26px;height:26px;border:1px solid var(--line);border-radius:8px;background:#fff;color:#64748b;font-size:13px;cursor:pointer;flex:none}
+  .drawer-body{padding:4px 20px 18px;overflow:auto;flex:1}
+
+  .sec{font-size:11px;font-weight:600;color:var(--ink-soft);margin:15px 0 7px;display:flex;align-items:center;gap:7px}
+  .sec .hint{font-size:9.5px;font-weight:400;color:var(--faint)}
+  .sec::before{content:"";width:3px;height:11px;border-radius:2px;background:var(--brand)}
+  .lbl{display:block;font-size:10px;color:var(--muted);margin:8px 0 4px}
+  .control{width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:11.5px;color:var(--ink);background:#fff}
+  .control.filled{border-color:var(--brand-edge);background:#fbfbff;box-shadow:0 0 0 3px rgba(79,70,229,.07)}
+  .control code{font-family:Consolas,monospace}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .kv{display:flex;gap:7px;margin-bottom:6px}
+  .kv .control:first-child{flex:0 0 33%;background:#fafafa;color:#64748b}
+  .kv.edit .control:last-child{border-color:var(--brand-edge);background:#fffbeb;box-shadow:0 0 0 3px rgba(253,230,138,.35)}
+  .kv-note{font-size:9.5px;color:#b45309;margin:-1px 0 8px;line-height:1.6;display:flex;gap:5px}
+  .rule{border:1px solid var(--brand-edge);background:var(--brand-soft);border-radius:12px;padding:11px 13px;margin-top:13px;font-size:10px;line-height:1.85;color:#3730a3}
+  .rule b{font-weight:600}
+  .rule .row{display:flex;gap:6px}
+  .rule .row .k{flex:none;font-weight:700}
+  .drawer-foot{padding:12px 20px;border-top:1px solid var(--line-soft);display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fff}
+  .drawer-foot .tip{font-size:9.5px;color:var(--faint)}
+  .drawer-foot .btns{display:flex;gap:7px}
+
+  /* 标注 */
+  .anno{
+    display:inline-grid;place-items:center;width:16px;height:16px;border-radius:999px;
+    background:var(--brand);color:#fff;font-size:9.5px;font-weight:700;line-height:1;vertical-align:1px;flex:none;
+  }
+  .anno.gap{margin-left:5px}
+  .anno.amber{background:#f59e0b}
+  .legend{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}
+  .legend .item{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px 13px;display:flex;gap:9px;align-items:flex-start}
+  .legend .item p{font-size:11px;color:#475569;line-height:1.7}
+  .legend .item b{color:var(--ink)}
+  .legend .item code{font-family:Consolas,monospace;font-size:10px;background:var(--brand-soft);color:var(--brand-deep);border-radius:4px;padding:0 4px}
+</style>
+</head>
+<body>
+<div class="board">
+  <div class="board-head">
+    <div>
+      <div class="kicker">Design 01 · Case Duplicate</div>
+      <h1>单条用例复制</h1>
+      <p>用例资产列表 → 行内「复制」→ 右侧抽屉全量预填源用例，只改想变的输入后创建新用例</p>
+    </div>
+    <span class="tag-soft">交互：<b>预填抽屉 · 不落库</b></span>
+  </div>
+
+  <div class="app">
+    <!-- ================= 侧边栏 ================= -->
+    <aside class="sidebar">
+      <div class="rail">
+        <div class="logo">
+          <div class="mark">问</div>
+          <div><p>问账 QA</p><span>Billing QA</span></div>
+        </div>
+        <div class="nav-label">工作台</div>
+        <nav class="nav">
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>测试大盘</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>批量任务</a>
+          <a class="on" href="#"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg>用例资产</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="m8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14"/></svg>Prompt 资产</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V8M3 21h18"/></svg>运营后台</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm13 14v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>用户与权限</a>
+        </nav>
+        <div class="rail-foot">
+          <div class="avatar">A</div>
+          <div class="who"><p>admin</p><span>系统管理员</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ================= 主区 ================= -->
+    <div class="main">
+      <div class="topbar">
+        <span>问账 QA</span><span class="sep">/</span><span>用例资产</span><span class="sep">/</span><span class="cur">用例库</span>
+        <span class="spacer"></span><span class="pill">本地部署版</span>
+      </div>
+
+      <div class="content">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Assets · 用例库</div>
+            <h2>用例资产</h2>
+            <div class="desc">单轮 / 静态多轮 / 动态多轮三类用例，支持批量执行、版本快照、字段 Diff、回滚、导入导出与单条调试。</div>
+          </div>
+          <div class="actions">
+            <button class="btn">导入 JSON</button>
+            <button class="btn">导出 JSON</button>
+            <button class="btn">批量执行</button>
+            <button class="btn primary">＋ 新建用例</button>
+          </div>
+        </div>
+
+        <div class="filter">
+          <div class="field"><label>关键词</label><input class="inp" placeholder="搜索编号 / 名称 / 描述" /></div>
+          <div class="field"><label>用例类型</label><select class="sel"><option>全部类型</option></select></div>
+          <div class="field"><label>状态</label><select class="sel"><option>启用</option></select></div>
+          <div class="field"><label>判分方式</label><select class="sel"><option>全部</option></select></div>
+          <div class="field"><label>评审状态</label><select class="sel"><option>全部</option></select></div>
+          <span class="spacer"></span>
+          <button class="btn">查询</button><button class="btn">重置</button>
+        </div>
+
+        <div class="card">
+          <div class="card-bar">
+            <span class="l">当前页：单轮 24 · 静态 18 · 动态 15</span>
+            <span class="r"><button class="btn xs">全选筛选结果（跨页）</button><button class="btn xs">刷新</button></span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:30px"><input type="checkbox" /></th>
+                <th>用例</th><th>关联配置</th><th>更新时间</th><th style="text-align:right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><input type="checkbox" checked /></td>
+                <td>
+                  <span class="codepill">CASE-BILL-012</span>
+                  <span class="badge">单轮</span> <span class="badge brand">答案契约</span> <span class="badge green">已取证</span>
+                  <div class="case-name">11月账单总额查询</div>
+                  <div class="case-meta">userid=13800001234 · custid=C-8821</div>
+                </td>
+                <td class="conf">QA-MOCK-JSON<br/>模拟：SIM_DEFAULT_BILLING_USER<br/>裁判：JUDGE_ZERO_TOLERANCE</td>
+                <td class="conf">2026-11-18 14:22</td>
+                <td>
+                  <div class="ops">
+                    <button class="btn xs">详情</button>
+                    <button class="btn xs highlight">复制 <span class="anno">1</span></button>
+                    <button class="btn xs">调试</button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" /></td>
+                <td>
+                  <span class="codepill">CASE-BILL-013</span>
+                  <span class="badge">动态多轮</span> <span class="badge">4 维评分</span>
+                  <div class="case-name">超套费金额争议追问</div>
+                  <div class="case-meta">userid=13800005566 · custid=C-9102</div>
+                </td>
+                <td class="conf">QA-MOCK-JSON<br/>模拟：SIM_DEFAULT_BILLING_USER<br/>裁判：JUDGE_ZERO_TOLERANCE</td>
+                <td class="conf">2026-11-17 09:41</td>
+                <td>
+                  <div class="ops">
+                    <button class="btn xs">详情</button>
+                    <button class="btn xs highlight">复制 <span class="anno">1</span></button>
+                    <button class="btn xs">调试</button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" /></td>
+                <td>
+                  <span class="codepill">CASE-ROAM-003</span>
+                  <span class="badge">单轮</span> <span class="badge">4 维评分</span>
+                  <div class="case-name">国际漫游流量费说明</div>
+                  <div class="case-meta">userid=13800009901 · custid=C-7013</div>
+                </td>
+                <td class="conf">QA-MOCK-JSON<br/>模拟：SIM_DEFAULT_BILLING_USER<br/>裁判：JUDGE_ZERO_TOLERANCE</td>
+                <td class="conf">2026-11-16 18:05</td>
+                <td>
+                  <div class="ops">
+                    <button class="btn xs">详情</button>
+                    <button class="btn xs highlight">复制 <span class="anno">1</span></button>
+                    <button class="btn xs">调试</button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 复制抽屉 ================= -->
+    <div class="backdrop"></div>
+    <div class="drawer">
+      <div class="drawer-head">
+        <div>
+          <h3>复制用例 <span class="anno">2</span></h3>
+          <div class="sub">源用例 CASE-BILL-012 · 11月账单总额查询　｜　编号需唯一，其余配置已从源用例带入</div>
+        </div>
+        <button class="close">✕</button>
+      </div>
+
+      <div class="drawer-body">
+        <div class="sec">基本信息</div>
+        <label class="lbl">用例编号（默认生成，可修改）</label>
+        <input class="control filled" value="CASE-BILL-012-COPY" />
+        <span class="anno" style="display:none"></span>
+        <label class="lbl">用例名称</label>
+        <input class="control filled" value="11月账单总额查询（副本）" />
+        <div class="grid2" style="margin-top:8px">
+          <div>
+            <label class="lbl">用例类型</label>
+            <select class="control"><option>单轮问答 SINGLE</option></select>
+          </div>
+          <div>
+            <label class="lbl">优先级 / 状态</label>
+            <div style="display:flex;gap:7px">
+              <select class="control"><option>P1</option></select>
+              <select class="control"><option>启用</option></select>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec">请求变量 <span class="hint">照搬自源用例 · 行内直接改</span></div>
+        <div class="kv edit">
+          <input class="control" value="userid" readonly />
+          <input class="control" value="13800009999" />
+        </div>
+        <div class="kv-note">✎ 典型用法：只把 userid 从 13800001234 换成 13800009999，其余请求参数与执行目标全部一致 <span class="anno">3</span></div>
+        <div class="kv">
+          <input class="control" value="custid" readonly />
+          <input class="control" value="C-8821" />
+        </div>
+
+        <div class="sec">关联配置 <span class="hint">原样继承</span></div>
+        <div class="grid2">
+          <div><label class="lbl">执行环境</label><select class="control"><option>QA-MOCK-JSON</option></select></div>
+          <div><label class="lbl">判分方式</label><select class="control"><option>答案契约</option></select></div>
+          <div><label class="lbl">模拟器模板</label><select class="control"><option>SIM_DEFAULT_BILLING_USER</option></select></div>
+          <div><label class="lbl">裁判模板</label><select class="control"><option>JUDGE_ZERO_TOLERANCE</option></select></div>
+        </div>
+
+        <div class="sec">契约与事实 <span class="hint">内容照搬 · 取证状态保留</span></div>
+        <div class="chips">
+          <span class="badge brand">Must ×2</span>
+          <span class="badge">May ×1</span>
+          <span class="badge">MustNot ×1</span>
+          <span class="badge green">已取证 2/2</span>
+          <span class="badge">账期 2026-11</span>
+          <span class="badge">输入清晰 CLEAR</span>
+        </div>
+
+        <div class="rule">
+          <div class="row"><span class="k">✔ 照搬</span><span>类型 / 判分方式 / 事实包络（<b>取证状态保留</b>）/ 响应契约 / 取数计划 / 请求变量 / 模板与裁判模型 / 环境 / 标签</span></div>
+          <div class="row"><span class="k">↺ 重置</span><span>编号默认 <code>-COPY</code> 后缀（可改，重复由后端 409 兜底）· 名称加「（副本）」· 评审状态回到默认（不继承旧审批）· 数据集版本清空</span></div>
+          <div class="row"><span class="k">✎ 不复制</span><span>历史版本与执行记录，新用例从 v1 开始</span></div>
+        </div>
+      </div>
+
+      <div class="drawer-foot">
+        <span class="tip">创建后可直接调试或批量执行</span>
+        <span class="btns">
+          <button class="btn">取消</button>
+          <button class="btn primary">创建用例 <span class="anno">4</span></button>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 标注说明 ================= -->
+  <div class="legend">
+    <div class="item"><span class="anno">1</span><p><b>复制入口</b><br/>用例资产行内操作列新增「复制」，用例详情页头部操作区同步提供。</p></div>
+    <div class="item"><span class="anno">2</span><p><b>全量预填</b><br/>抽屉复用编辑表单，按源用例回填全部字段；打开不写库，列表行数据已够用，无需额外请求。</p></div>
+    <div class="item"><span class="anno">3</span><p><b>只改一个输入</b><br/>请求变量行内编辑，其余保持不变；适合“换用户 / 换号码”的批量造例场景。</p></div>
+    <div class="item"><span class="anno">4</span><p><b>创建新用例</b><br/>提交走现有 <code>POST /cases</code>，生成 v1 与创建快照；code 冲突时返回 409 并给出可读提示。</p></div>
+    <div class="item"><span class="anno amber">!</span><p><b>评审与冻结</b><br/>副本不继承 APPROVED；契约用例照常走「评审 → 冻结」两步入数据集。</p></div>
+    <div class="item"><span class="anno amber">!</span><p><b>取证保留</b><br/>事实值与取证结论一起复制；若改了事实值，建议在事实验收中重置对应取证状态。</p></div>
+  </div>
+</div>
+</body>
+</html>

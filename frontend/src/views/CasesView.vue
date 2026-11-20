@@ -66,6 +66,7 @@ const templates = ref<PromptListItem[]>([])
 const models = ref<ModelConfig[]>([])
 
 const drawerOpen = ref(false)
+const copySource = ref<TestCase | null>(null)
 const saving = ref(false)
 const importInput = ref<HTMLInputElement | null>(null)
 const importOpen = ref(false)
@@ -222,6 +223,12 @@ function resetFilters(): void {
 }
 
 function openCreate(): void {
+  copySource.value = null
+  drawerOpen.value = true
+}
+
+function openCopy(item: TestCase): void {
+  copySource.value = item
   drawerOpen.value = true
 }
 
@@ -235,6 +242,7 @@ async function submitCase(payload: CasePayload): Promise<void> {
     const created = await api.cases.create(payload)
     toast.success(`用例 ${created.code} 已创建`)
     drawerOpen.value = false
+    copySource.value = null
     await loadCases()
   } catch (exc) {
     toast.error(errorMessage(exc))
@@ -678,6 +686,7 @@ onMounted(() => {
               <td class="td sticky right-0 z-10 bg-white">
                 <div class="flex flex-wrap justify-end gap-1">
                   <button class="btn-ghost btn-xs" @click="openDetail(item)">详情</button>
+                  <button class="btn-ghost btn-xs" @click="openCopy(item)">复制</button>
                   <button
                     class="btn-ghost btn-xs"
                     :disabled="debugStore.isRunning(item.id)"
@@ -991,6 +1000,7 @@ onMounted(() => {
     <TestCaseDrawer
       v-model="drawerOpen"
       :case-data="null"
+      :copy-from="copySource"
       :environments="environments"
       :templates="templates"
       :models="models"

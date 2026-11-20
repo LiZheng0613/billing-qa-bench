@@ -9,6 +9,7 @@ import MetricCard from '../components/MetricCard.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import BatchMonitor from './components/BatchMonitor.vue'
+import TaskCreateModal from './components/TaskCreateModal.vue'
 import type {
   BatchTask,
   CaseExecutionItem,
@@ -49,6 +50,7 @@ const executionMinScore = ref<number | null>(null)
 const executionMaxScore = ref<number | null>(null)
 const executionSort = ref<'' | 'score_desc' | 'score_asc'>('')
 const live = ref(false)
+const showCopy = ref(false)
 const loading = ref(true)
 const notFound = ref(false)
 const exporting = ref(false)
@@ -419,6 +421,15 @@ async function loadExecutions(id: number): Promise<void> {
 }
 
 // ---------------------------------------------------------- 交互
+function openCopy(): void {
+  if (!task.value) return
+  showCopy.value = true
+}
+
+function onCopied(created: BatchTask): void {
+  void router.push({ name: 'task-detail', params: { id: String(created.id) } })
+}
+
 async function refresh(): Promise<void> {
   if (plan.value) {
     try {
@@ -731,6 +742,7 @@ onBeforeUnmount(() => {
     >
       <template #actions>
         <button class="btn-ghost" :disabled="!plan && !task" @click="refresh">刷新</button>
+        <button class="btn-ghost" :disabled="!task" @click="openCopy">复制</button>
       </template>
     </PageHeader>
 
@@ -1038,4 +1050,6 @@ onBeforeUnmount(() => {
       />
     </template>
   </div>
+
+  <TaskCreateModal v-model="showCopy" :copy-from="task" @created="onCopied" />
 </template>

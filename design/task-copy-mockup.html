@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>设计稿 02 · 批量任务复制（复用新建任务界面）</title>
+<style>
+  :root{
+    --canvas:#f5f5f7; --line:#e8e8ed; --line-soft:#f0f0f4; --line-strong:#dcdfe6;
+    --ink:#111827; --ink-soft:#374151; --muted:#6b7280; --faint:#9ca3af;
+    --brand:#4f46e5; --brand-deep:#4338ca; --brand-soft:#eef2ff; --brand-edge:#e0e7ff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:"Inter","PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:#eceef2;color:var(--ink);font-size:13px;-webkit-font-smoothing:antialiased}
+  .board{max-width:1400px;margin:0 auto;padding:28px 24px 40px}
+  .board-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}
+  .board-head .kicker{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--brand)}
+  .board-head h1{font-size:21px;letter-spacing:-.02em;margin-top:4px}
+  .board-head p{font-size:12px;color:var(--muted);margin-top:5px}
+  .tag-soft{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:11px;color:var(--muted)}
+  .tag-soft b{color:var(--brand)}
+
+  /* ===== App 框架（背景页） ===== */
+  .app{position:relative;display:flex;min-height:1020px;background:var(--canvas);border:1px solid var(--line-strong);border-radius:24px;overflow:hidden;box-shadow:0 40px 90px -50px rgba(17,24,39,.45)}
+  .sidebar{width:236px;flex:none;padding:16px 0 16px 16px}
+  .rail{height:100%;display:flex;flex-direction:column;gap:12px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:18px 12px 12px;box-shadow:0 1px 2px rgba(17,24,39,.04),0 24px 48px -34px rgba(17,24,39,.4)}
+  .logo{display:flex;align-items:center;gap:10px;padding:0 6px}
+  .logo .mark{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:13px;background:linear-gradient(135deg,#6366f1,#4f46e5);box-shadow:0 6px 14px -8px rgba(79,70,229,.9)}
+  .logo p{font-size:13px;font-weight:600;letter-spacing:-.02em;line-height:1.15}
+  .logo span{font-size:8.5px;font-weight:600;letter-spacing:.12em;color:#64748b;text-transform:uppercase}
+  .nav-label{font-size:9px;font-weight:600;letter-spacing:.12em;color:#64748b;text-transform:uppercase;padding:8px 10px 2px}
+  .nav{display:flex;flex-direction:column;gap:3px;flex:1}
+  .nav a{display:flex;align-items:center;gap:10px;height:38px;padding:0 10px;border-radius:11px;font-size:12px;font-weight:500;color:#64748b;text-decoration:none}
+  .nav a svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8}
+  .nav a.on{background:var(--brand-soft);color:var(--brand)}
+  .rail-foot{border-top:1px solid var(--line-soft);padding-top:10px;display:flex;align-items:center;gap:9px}
+  .avatar{width:30px;height:30px;border-radius:999px;background:#f1f5f9;display:grid;place-items:center;font-size:11px;font-weight:600;color:#475569}
+  .rail-foot .who p{font-size:11.5px;font-weight:500;line-height:1.2}
+  .rail-foot .who span{font-size:9.5px;color:#64748b}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{height:58px;display:flex;align-items:center;gap:8px;padding:0 26px;font-size:11px;color:#64748b;border-bottom:1px solid rgba(232,232,237,.7)}
+  .topbar .sep{color:#cbd5e1}
+  .topbar .cur{color:var(--ink-soft);font-weight:500}
+  .topbar .spacer{flex:1}
+  .topbar .pill{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 10px;font-size:10px;color:#64748b}
+  .content{padding:18px 26px 30px;position:relative}
+
+  .page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
+  .eyebrow{font-size:9.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--brand)}
+  .page-head h2{font-size:20px;letter-spacing:-.02em;margin-top:4px}
+  .page-head .desc{font-size:11px;color:var(--muted);margin-top:5px;max-width:540px;line-height:1.6}
+  .actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+  .btn{border:1px solid var(--line);background:#fff;color:var(--ink-soft);border-radius:9px;padding:7px 13px;font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap}
+  .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 8px 18px -12px rgba(79,70,229,.8)}
+  .btn.xs{padding:3px 9px;font-size:10.5px;border-radius:7px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:0 1px 2px rgba(17,24,39,.04)}
+  .card-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line-soft)}
+  .card-bar .l{font-size:10.5px;color:#64748b}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:10px;font-weight:500;color:#94a3b8;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:11px 12px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+  tbody tr:last-child td{border-bottom:none}
+  .codepill{font-family:"JetBrains Mono",Consolas,monospace;font-size:11.5px;color:var(--brand)}
+  .task-name{font-size:12px;font-weight:500;margin-top:3px}
+  .task-meta{font-size:9.5px;color:var(--faint);margin-top:2px;font-family:"JetBrains Mono",Consolas,monospace}
+  .badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:1px 7px;font-size:9.5px;font-weight:500;color:#475569;background:#fff;line-height:15px}
+  .badge.brand{background:var(--brand-soft);border-color:var(--brand-edge);color:var(--brand-deep)}
+  .badge.green{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
+  .badge.amber{background:#fffbeb;border-color:#fde68a;color:#b45309}
+  .conf{font-size:10px;color:#64748b;line-height:1.55}
+  .ops{display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}
+
+  /* ===== 弹窗遮罩 ===== */
+  .backdrop{position:absolute;inset:0;background:rgba(15,23,42,.4);backdrop-filter:blur(4px);z-index:20}
+  .modal-layer{position:absolute;inset:0;z-index:30;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow:auto}
+  .modal{width:min(1152px,100%);background:#fff;border:1px solid var(--line);border-radius:20px;box-shadow:0 40px 100px -40px rgba(17,24,39,.6);overflow:hidden}
+  .modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border-bottom:1px solid #e2e8f0;padding:16px 20px}
+  .modal-head h3{font-size:16px;font-weight:600;color:#0f172a;display:flex;align-items:center;gap:9px}
+  .modal-head .sub{font-size:12px;color:#64748b;margin-top:4px;line-height:1.55}
+  .close{width:30px;height:30px;border:none;background:transparent;border-radius:8px;color:#64748b;font-size:16px;cursor:pointer;flex:none}
+  .modal-body{padding:16px 20px}
+
+  /* 两栏：左侧参数 1fr + 右侧 320px 执行范围 */
+  .task-grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;align-items:start}
+  .form-col{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+  .label{display:block;margin-bottom:4px;font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#64748b}
+  .input{width:100%;border:1px solid var(--line);border-radius:12px;background:#fff;padding:8px 12px;font-size:13px;color:var(--ink);outline:none;font-family:inherit}
+  .input.filled{border-color:#c7d2fe;background:#fdfdff;box-shadow:0 0 0 3px rgba(99,102,241,.09)}
+  textarea.input{resize:none;line-height:1.6}
+  select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:14px;padding-right:34px}
+  .hint{font-size:10.5px;color:#64748b;margin-top:5px;line-height:1.6}
+
+  /* 执行方式（ScheduleField 复刻） */
+  .schedule{border:1px solid #e2e8f0;border-radius:12px;background:rgba(248,250,252,.7);padding:12px;display:flex;flex-direction:column;gap:12px}
+  .schedule .head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .schedule .head p{font-size:12px;font-weight:500;color:#334155;display:flex;align-items:center;gap:7px}
+  .schedule .head span{font-size:11px;color:#64748b}
+  .sched-modes{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .sched-mode{border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:8px 10px;text-align:left;cursor:pointer}
+  .sched-mode .t{display:block;font-size:12px;font-weight:500;color:#334155}
+  .sched-mode .d{display:block;font-size:10px;color:#64748b;margin-top:2px}
+  .sched-mode.on{border-color:#a5b4fc;background:var(--brand-soft);color:#3730a3;box-shadow:0 0 0 1px #c7d2fe}
+  .sched-mode.on .t{color:#3730a3}
+  .sched-mode.on .d{color:#6366f1}
+  .rounds{max-width:320px}
+  .rounds .row{display:flex;align-items:center;gap:8px}
+  .rounds input{width:96px;text-align:center;font-variant-numeric:tabular-nums}
+  .rounds .unit{font-size:11px;color:#64748b}
+  .sched-summary{border:1px solid #c7d2fe;background:var(--brand-soft);border-radius:8px;padding:8px 12px;font-size:11px;color:#3730a3}
+
+  /* 重试卡片 */
+  .retry-box{border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc;padding:12px;display:flex;flex-direction:column;gap:12px}
+  .check{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:#334155;line-height:1.35}
+  .check input{margin-top:2px;width:15px;height:15px;accent-color:var(--brand);flex:none}
+  .check .sub{display:block;font-size:11px;color:#64748b;margin-top:3px;line-height:1.55}
+  .note{font-size:11px;color:#64748b;line-height:1.6}
+
+  /* 右侧执行范围 */
+  .scope-col{border:1px solid #e2e8f0;border-radius:12px;background:rgba(248,250,252,.8);display:flex;flex-direction:column;overflow:hidden}
+  .scope-head{border-bottom:1px solid #e2e8f0;padding:12px;display:flex;flex-direction:column;gap:8px}
+  .scope-title{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .scope-title .t{font-size:12px;font-weight:500;color:#334155;display:flex;align-items:center;gap:6px}
+  .scope-title .c{font-size:11px;color:#64748b;white-space:nowrap}
+  .radio-card{display:flex;align-items:flex-start;gap:8px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:8px;cursor:pointer}
+  .radio-card.on{border-color:#c7d2fe;background:var(--brand-soft)}
+  .radio-card input{margin-top:2px;width:15px;height:15px;accent-color:var(--brand);flex:none}
+  .radio-card .t{font-size:12px;color:#1e293b;display:block}
+  .radio-card .d{font-size:10px;color:#475569;display:block;margin-top:2px;line-height:1.5}
+  .scope-search{padding:0 12px}
+  .scope-search .input{padding:6px 10px;font-size:11.5px;border-radius:10px}
+  .scope-tools{display:flex;gap:8px;margin-top:8px}
+  .btn-ghost-xs{border:1px solid var(--line);background:#fff;color:var(--ink-soft);border-radius:8px;padding:3px 9px;font-size:10.5px;cursor:pointer;white-space:nowrap}
+  .scope-list{max-height:322px;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:1px}
+  .case-item{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:8px}
+  .case-item:hover{background:#f1f5f9}
+  .case-item input{margin-top:3px;width:14px;height:14px;accent-color:var(--brand);flex:none}
+  .case-item .code{display:block;font-family:"JetBrains Mono",Consolas,monospace;font-size:10.5px;color:#334155}
+  .case-item .name{display:block;font-size:11px;color:#475569;margin-top:1px}
+  .case-item .meta{display:block;font-size:9.5px;color:#64748b;margin-top:2px}
+
+  .modal-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;border-top:1px solid #e2e8f0;padding:12px 20px}
+  .btn-modal{border:1px solid var(--line);background:#fff;color:var(--ink-soft);border-radius:12px;padding:8px 14px;font-size:13px;font-weight:500;cursor:pointer}
+  .btn-modal.primary{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 10px 24px -16px rgba(79,70,229,.9)}
+
+  /* 标注 */
+  .anno{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:999px;background:var(--brand);color:#fff;font-size:9.5px;font-weight:700;line-height:1;vertical-align:1px;flex:none}
+  .anno.amber{background:#f59e0b}
+  .legend{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}
+  .legend .item{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px 13px;display:flex;gap:9px;align-items:flex-start}
+  .legend .item p{font-size:11px;color:#475569;line-height:1.7}
+  .legend .item b{color:var(--ink)}
+  .legend .item code{font-family:Consolas,monospace;font-size:10px;background:var(--brand-soft);color:var(--brand-deep);border-radius:4px;padding:0 4px}
+</style>
+</head>
+<body>
+<div class="board">
+  <div class="board-head">
+    <div>
+      <div class="kicker">Design 02 · Task Duplicate</div>
+      <h1>批量任务复制</h1>
+      <p>完全复用「新建批量任务」弹窗：左侧参数表单 + 右侧执行范围勾选；仅预填原任务内容，名称默认加 -副本</p>
+    </div>
+    <span class="tag-soft">界面：<b>与新建批量任务一致</b></span>
+  </div>
+
+  <div class="app">
+    <!-- ================= 背景页：批量任务列表 ================= -->
+    <aside class="sidebar">
+      <div class="rail">
+        <div class="logo"><div class="mark">问</div><div><p>问账 QA</p><span>Billing QA</span></div></div>
+        <div class="nav-label">工作台</div>
+        <nav class="nav">
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>测试大盘</a>
+          <a class="on" href="#"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>批量任务</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg>用例资产</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="m8 9-3 3 3 3m8-6 3 3-3 3M14 5l-4 14"/></svg>Prompt 资产</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V8M3 21h18"/></svg>运营后台</a>
+          <a href="#"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm13 14v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>用户与权限</a>
+        </nav>
+        <div class="rail-foot"><div class="avatar">A</div><div class="who"><p>admin</p><span>系统管理员</span></div></div>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div class="topbar">
+        <span>问账 QA</span><span class="sep">/</span><span>批量任务</span><span class="sep">/</span><span class="cur">任务列表</span>
+        <span class="spacer"></span><span class="pill">本地部署版</span>
+      </div>
+
+      <div class="content">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Runs · 批量执行</div>
+            <h2>批量任务管理</h2>
+            <div class="desc">批量执行与定时计划、并发 / QPS 限流、执行异常自动重试、终止后续做与失败断点重跑。</div>
+          </div>
+          <div class="actions">
+            <button class="btn">刷新</button>
+            <button class="btn primary">＋ 新建批量任务</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-bar"><span class="l">共 12 条任务 · 第 1 / 1 页</span><span><button class="btn xs">刷新</button></span></div>
+          <table>
+            <thead><tr><th>任务</th><th>执行方式</th><th>状态</th><th>进度</th><th>触发 / 执行时间</th><th style="text-align:right">操作</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>
+                  <span class="codepill">BATCH-2026-1118-01</span>
+                  <div class="task-name">全量回归 11/18</div>
+                  <div class="task-meta">QA-MOCK-JSON · 57 条 · 并发 3 · QPS 5</div>
+                </td>
+                <td><span class="badge brand">立即执行</span></td>
+                <td><span class="badge green">已完成</span></td>
+                <td class="conf">57 / 57 · 100%</td>
+                <td class="conf">2026-11-18 14:00</td>
+                <td><div class="ops"><button class="btn xs">详情</button><button class="btn xs" style="border-color:#c7d2fe;color:#4f46e5">复制</button><button class="btn xs">失败重跑</button></div></td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="codepill">BATCH-2026-1117-02</span>
+                  <div class="task-name">契约用例专项</div>
+                  <div class="task-meta">QA-MOCK-JSON · 25 条 · 每天 09:00</div>
+                </td>
+                <td><span class="badge brand">每天</span></td>
+                <td><span class="badge amber">执行中</span></td>
+                <td class="conf">16 / 25 · 64%</td>
+                <td class="conf">2026-11-20 09:00</td>
+                <td><div class="ops"><button class="btn xs">详情</button><button class="btn xs" style="border-color:#c7d2fe;color:#4f46e5">复制</button><button class="btn xs">终止</button></div></td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="codepill">BATCH-2026-1116-03</span>
+                  <div class="task-name">动态多轮专项</div>
+                  <div class="task-meta">QA-MOCK-JSON · 12 条 · 并发 2 · QPS 3</div>
+                </td>
+                <td><span class="badge brand">立即执行</span></td>
+                <td><span class="badge">已终止</span></td>
+                <td class="conf">9 / 12 · 75%</td>
+                <td class="conf">2026-11-16 20:30</td>
+                <td><div class="ops"><button class="btn xs">详情</button><button class="btn xs" style="border-color:#c7d2fe;color:#4f46e5">复制</button><button class="btn xs">继续执行</button></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 复制弹窗（与新建批量任务同一套表单） ================= -->
+    <div class="backdrop"></div>
+    <div class="modal-layer">
+      <div class="modal">
+        <div class="modal-head">
+          <div>
+            <h3>复制批量任务 <span class="anno">1</span></h3>
+            <div class="sub">基于「全量回归 11/18」创建副本：用例范围、执行环境与全部参数已带入，可直接创建</div>
+          </div>
+          <button class="close">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="task-grid">
+
+            <!-- ---------- 左列：与新建批量任务完全一致 ---------- -->
+            <div class="form-col">
+              <div class="grid2">
+                <div>
+                  <label class="label">任务名称 <span class="anno">2</span></label>
+                  <input class="input filled" value="全量回归 11/18-副本" />
+                </div>
+                <div>
+                  <label class="label">执行环境</label>
+                  <select class="input filled"><option>QA-MOCK-JSON（Agent 报文）</option></select>
+                </div>
+              </div>
+
+              <div>
+                <label class="label">任务描述</label>
+                <textarea class="input" rows="2">电信计费问账全量回归：单轮 / 静态多轮 / 动态多轮混合基线</textarea>
+              </div>
+
+              <!-- 执行方式（ScheduleField） -->
+              <div class="schedule">
+                <div class="head">
+                  <p>执行方式 <span class="anno">3</span></p>
+                  <span>按服务器本地时间</span>
+                </div>
+                <div class="sched-modes">
+                  <button class="sched-mode on"><span class="t">立即执行</span><span class="d">创建后马上开跑</span></button>
+                  <button class="sched-mode"><span class="t">指定时间</span><span class="d">到点执行一次</span></button>
+                  <button class="sched-mode"><span class="t">每天定时</span><span class="d">每天同一时刻</span></button>
+                  <button class="sched-mode"><span class="t">每周定时</span><span class="d">每周固定几天</span></button>
+                </div>
+                <div class="rounds">
+                  <label class="label" style="margin-bottom:6px">连续轮次</label>
+                  <div class="row"><input class="input" value="1" /><span class="unit">轮（含第一轮）</span></div>
+                  <p class="hint">1 轮表示只执行一次；大于 1 时按轮次串行连续执行</p>
+                </div>
+                <div class="sched-summary">创建后立即开始执行</div>
+              </div>
+
+              <div class="grid2">
+                <div>
+                  <label class="label">并发数</label>
+                  <input class="input" value="3" />
+                </div>
+                <div>
+                  <label class="label">QPS 上限</label>
+                  <input class="input" value="5" />
+                </div>
+              </div>
+
+              <div class="retry-box">
+                <label class="check">
+                  <input type="checkbox" checked />
+                  <span>
+                    异常失败自动重试
+                    <span class="sub">仅重试环境故障、模型调用 / 裁决异常等执行异常；规则判定失败、轮次超限、配置或模板错误不会重试。</span>
+                  </span>
+                </label>
+                <div class="grid2">
+                  <div><label class="label">最大重试次数</label><input class="input" value="2" /></div>
+                  <div><label class="label">基础退避（秒）</label><input class="input" value="3" /></div>
+                </div>
+                <p class="note">第 n 次重试前等待 = 基础退避 × 2^(n-1)，重试同样受并发数与 QPS 限制，终止会立即生效。</p>
+              </div>
+
+              <label class="check">
+                <input type="checkbox" />
+                <span>
+                  失败追问自检
+                  <span class="sub">LLM 裁决判失败的用例，会在同一会话内追加一轮追问，让被测 Agent 自查错误原因并留存自检结论；通过、异常与被终止的用例不受影响。</span>
+                </span>
+              </label>
+
+              <label class="check">
+                <input type="checkbox" checked />
+                <span>创建后立即启动</span>
+              </label>
+            </div>
+
+            <!-- ---------- 右列：执行范围（原样还原，预勾选 57 条） ---------- -->
+            <div class="scope-col">
+              <div class="scope-head">
+                <div class="scope-title">
+                  <span class="t">执行范围 <span class="anno">4</span></span>
+                  <span class="c">本次 57 条 / 库内启用 59 条</span>
+                </div>
+                <label class="radio-card on">
+                  <input type="radio" checked />
+                  <span>
+                    <span class="t">已选用例（57 条）</span>
+                    <span class="d">下方逐条勾选后执行。</span>
+                  </span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" />
+                  <span>
+                    <span class="t">全部启用用例（59 条，跨分页）</span>
+                    <span class="d">自动执行用例库全部启用用例，不受勾选与分页限制。</span>
+                  </span>
+                </label>
+                <div class="scope-search">
+                  <input class="input" placeholder="搜索编号 / 名称 / 标签（分号分隔多词）" />
+                  <div class="scope-tools">
+                    <button class="btn-ghost-xs">全选筛选结果（59）</button>
+                    <button class="btn-ghost-xs">清空</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="scope-list">
+                <label class="case-item">
+                  <input type="checkbox" checked />
+                  <span><span class="code">CASE-BILL-012</span><span class="name">11月账单总额查询</span><span class="meta">单轮 · v3</span></span>
+                </label>
+                <label class="case-item">
+                  <input type="checkbox" checked />
+                  <span><span class="code">CASE-BILL-013</span><span class="name">超套费金额争议追问</span><span class="meta">动态多轮 · v5</span></span>
+                </label>
+                <label class="case-item">
+                  <input type="checkbox" checked />
+                  <span><span class="code">CASE-ROAM-003</span><span class="name">国际漫游流量费说明</span><span class="meta">单轮 · v2</span></span>
+                </label>
+                <label class="case-item">
+                  <input type="checkbox" checked />
+                  <span><span class="code">CASE-PKG-007</span><span class="name">套餐月费与合约查询</span><span class="meta">静态多轮 · v4</span></span>
+                </label>
+                <label class="case-item">
+                  <input type="checkbox" checked />
+                  <span><span class="code">CASE-BAL-002</span><span class="name">账户余额与可用额度</span><span class="meta">单轮 · v1</span></span>
+                </label>
+                <label class="case-item">
+                  <input type="checkbox" checked />
+                  <span><span class="code">CASE-DEBT-004</span><span class="name">欠费停机状态说明</span><span class="meta">单轮 · v2</span></span>
+                </label>
+                <label class="case-item">
+                  <input type="checkbox" />
+                  <span><span class="code">CASE-IPTV-001</span><span class="name">融合宽带 / IPTV 计费</span><span class="meta">单轮 · v1</span></span>
+                </label>
+                <label class="case-item">
+                  <input type="checkbox" />
+                  <span><span class="code">CASE-OFFER-009</span><span class="name">offer 订购与退订</span><span class="meta">单轮 · v3</span></span>
+                </label>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <button class="btn-modal">取消</button>
+          <button class="btn-modal primary">创建并执行（57 条） <span class="anno">5</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 标注说明 ================= -->
+  <div class="legend">
+    <div class="item"><span class="anno">1</span><p><b>入口与标题</b><br/>批量任务列表行内「复制」（任务详情页同步）；打开即此弹窗，<b>界面与新建批量任务完全一致</b>，仅标题改为「复制批量任务」。</p></div>
+    <div class="item"><span class="anno">2</span><p><b>名称自动加 -副本</b><br/>任务名称默认 <code>原名-副本</code>，用户可改；任务编号由后端新生成，不沿用源任务。</p></div>
+    <div class="item"><span class="anno">3</span><p><b>参数原样照搬</b><br/>执行环境、任务描述、执行方式、连续轮次、并发数、QPS、重试策略、失败追问自检全部取原任务配置。</p></div>
+    <div class="item"><span class="anno">4</span><p><b>范围自动勾选</b><br/>右侧用例列表按原任务的 <code>case_ids</code> 自动选中（本例 57 条），可继续增删或切「全部启用用例」。</p></div>
+    <div class="item"><span class="anno">5</span><p><b>提交</b><br/>沿用同一 <code>POST /tasks</code> 创建流程；新任务从 0 开始跑，源任务的历史记录与进度不复制。</p></div>
+    <div class="item"><span class="anno amber">!</span><p><b>与源任务的差异</b><br/>只预填配置，不复制执行记录、轮次轨迹与裁判明细；源任务若为定时计划，执行方式也按原样带入，可在弹窗内改。</p></div>
+  </div>
+</div>
+</body>
+</html>

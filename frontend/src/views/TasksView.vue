@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from '../composables/useConfirm'
 import { useTaskEventStream } from '../composables/useTaskEventStream'
@@ -66,6 +66,7 @@ const scheduleFilter = ref<'' | TaskScheduleType>(
 )
 const busyId = ref<number | null>(null)
 const showCreate = ref(false)
+const copySource = ref<BatchTask | null>(null)
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 const hasFilter = computed(() =>
@@ -277,8 +278,18 @@ function openDetail(task: BatchTask): void {
 }
 
 function openCreate(): void {
+  copySource.value = null
   showCreate.value = true
 }
+
+function openCopy(task: BatchTask): void {
+  copySource.value = task
+  showCreate.value = true
+}
+
+watch(showCreate, (open) => {
+  if (!open) copySource.value = null
+})
 
 async function onCreated(task: BatchTask): Promise<void> {
   await load()
@@ -581,6 +592,7 @@ onBeforeUnmount(() => {
               <td class="td whitespace-nowrap text-right">
                 <div class="flex flex-nowrap items-center justify-end gap-1" @click.stop>
                   <button class="btn-ghost btn-xs" @click="openDetail(item)">详情</button>
+                  <button class="btn-ghost btn-xs" @click="openCopy(item)">复制</button>
                   <button
                     v-if="planWaiting(item) && planActive(item)"
                     class="btn-primary btn-xs"
@@ -676,6 +688,6 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <TaskCreateModal v-model="showCreate" @created="onCreated" />
+    <TaskCreateModal v-model="showCreate" :copy-from="copySource" @created="onCreated" />
   </div>
 </template>

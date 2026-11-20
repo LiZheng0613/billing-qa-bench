@@ -77,6 +77,7 @@ const loadError = ref('')
 const saving = ref(false)
 
 const drawerOpen = ref(false)
+const copying = ref(false)
 const revisionOpen = ref(false)
 const trendOpen = ref(false)
 const compareOpen = ref(false)
@@ -345,6 +346,7 @@ async function refresh(): Promise<void> {
       executionTotal.value = 0
     }
     revisions.value = revisionResult.status === 'fulfilled' ? revisionResult.value : []
+    applyRouteAction()
   } catch (exc) {
     item.value = null
     executions.value = []
@@ -373,13 +375,49 @@ function onDocumentClick(event: MouseEvent): void {
 
 function openEdit(): void {
   if (!item.value) return
+  copying.value = false
   drawerOpen.value = true
 }
+
+function openWorkbench(): void {
+  if (!item.value) return
+  void router.push({ name: 'case-debug', params: { id: String(item.value.id) } })
+}
+
+function applyRouteAction(): void {
+  const action = route.query.action
+  if (action !== 'review' && action !== 'freeze') return
+  if (!item.value) return
+  const nextQuery = { ...route.query }
+  delete nextQuery.action
+  void router.replace({ query: nextQuery })
+  if (action === 'review' && canReview(item.value)) openReview()
+  else if (action === 'freeze' && canFreeze.value) openFreeze()
+}
+
+function openCopy(): void {
+  if (!item.value) return
+  copying.value = true
+  drawerOpen.value = true
+}
+
+watch(drawerOpen, (open) => {
+  if (!open) copying.value = false
+})
 
 async function submitCase(payload: CasePayload): Promise<void> {
   if (!item.value) return
   saving.value = true
   try {
+    if (copying.value) {
+      // 复制模式：所有内容来自源用例，走创建接口，成功后跳转到新用例。
+      const created = await api.cases.create(payload)
+      toast.success(`用例 ${created.code} 已创建`)
+      drawerOpen.value = false
+      copying.value = false
+      void router.push({ name: 'case-detail', params: { id: String(created.id) } })
+      return
+    }
     const body: Partial<CasePayload> = { ...payload }
     body.code = undefined
     body.case_type = undefined
@@ -647,6 +685,8 @@ onBeforeUnmount(() => {
       <template #actions>
         <button class="btn-ghost" :disabled="!item" @click="refreshFromButton">刷新</button>
         <button class="btn-ghost" :disabled="!item" @click="openEdit">编辑</button>
+        <button class="btn-ghost" :disabled="!item" @click="openCopy">复制</button>
+        <button class="btn-primary" :disabled="!item" @click="openWorkbench">调试工作台</button>
         <div
           class="relative inline-flex"
           @mouseenter="debugMenuOpen = true"
@@ -655,7 +695,7 @@ onBeforeUnmount(() => {
           @focusout="closeDebugMenuOnBlur"
         >
           <button
-            class="btn-primary"
+            class="btn-ghost"
             :disabled="!item || debugStore.isRunning(caseId)"
             @click="debugMenuOpen = false; debugCase()"
           >
@@ -1019,8 +1059,19 @@ onBeforeUnmount(() => {
                       </span>
                       <span v-else class="text-xs text-slate-300">—</span>
                     </td>
-                    <td class="td font-mono text-xs text-slate-600">v{{ run.case_version }}</td>
-                    <td class="td text-xs text-slate-600">{{ sourceLabel(run.source) }}</td>
+                    <td class="td font-mono text-xs text-slate-600">
+                      v{{ run.case_version }}
+                      <span v-if="run.source === 'SANDBOX'" class="ml-1 text-[10px] text-amber-600">草稿</span>
+                    </td>
+                    <td class="td text-xs text-slate-600">
+                      <span
+                        v-if="run.source === 'SANDBOX'"
+                        class="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700"
+                      >
+                        草稿试跑
+                      </span>
+                      <span v-else>{{ sourceLabel(run.source) }}</span>
+                    </td>
                     <td class="td text-xs text-slate-600">{{ formatMs(run.latency_ms) }}</td>
                     <td class="td text-xs text-slate-500">{{ formatDateTime(run.started_at) }}</td>
                     <td class="td text-right">
@@ -1059,7 +1110,7 @@ onBeforeUnmount(() => {
               v-if="executions.length === 0"
               compact
               title="还没有执行记录"
-              description="点击右上角「单条调试」运行一次，结果会出现在这里。"
+              description="点击右上角「调试工作台」试运行一次，结果会出现在这里。"
             />
           </section>
 
@@ -1275,7 +1326,8 @@ onBeforeUnmount(() => {
 
     <TestCaseDrawer
       v-model="drawerOpen"
-      :case-data="item"
+      :case-data="copying ? null : item"
+      :copy-from="copying ? item : null"
       :environments="environments"
       :templates="templates"
       :models="models"
