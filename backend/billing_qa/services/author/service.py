@@ -895,11 +895,11 @@ def _normalize_request_variables(
     if not result:
         return None
     try:
-        validate_request_variables(result)
+        normalized = validate_request_variables(result)
     except ValueError as exc:
         warnings.append(f"请求变量未通过校验，已忽略：{exc}")
         return None
-    return result
+    return normalized
 
 
 def _normalize_numeric_expectations(

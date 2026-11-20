@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -34,8 +36,45 @@ _RESERVED_REQUEST_VARIABLES = {"query", "history", "history_text", "turn", "time
 _REQUEST_VARIABLES_LIMIT = 16 * 1024
 
 
+def _number_to_text(value: Any) -> str:
+    """把数字转成不带科学计数法的字符串，避免长号码丢精度或变形。"""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if not math.isfinite(value):
+        return str(value)
+    # 用 Decimal(repr(float)) 保留可逆的十进制表示，再以定点格式输出。
+    text = format(Decimal(repr(value)), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _normalize_request_variable_value(value: Any) -> Any:
+    """递归把请求变量里的数字统一成字符串；布尔值保持布尔，便于模板按 JSON 渲染。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return _number_to_text(value)
+    if isinstance(value, dict):
+        return {str(key): _normalize_request_variable_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_request_variable_value(item) for item in value]
+    return value
+
+
+def normalize_request_variables(value: Any) -> dict[str, Any] | None:
+    """只做类型归一化（数字 -> 字符串），不校验变量名，供读取/回滚等兼容旧数据路径使用。"""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return value
+    return {str(key): _normalize_request_variable_value(item) for key, item in value.items()}
+
+
 def validate_request_variables(value: dict[str, Any] | None) -> dict[str, Any] | None:
-    """校验用例级请求变量：命名合法、避开运行时保留字、体积可控。"""
+    """校验用例级请求变量：命名合法、避开运行时保留字、体积可控，并把数字归一化为字符串。"""
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -47,10 +86,11 @@ def validate_request_variables(value: dict[str, Any] | None) -> dict[str, Any] |
             raise ValueError(
                 f"请求变量名 {key} 由执行器运行时注入，请勿自定义（可用运行时变量清单见帮助）"
             )
-    serialized = json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")
+    normalized = normalize_request_variables(value) or {}
+    serialized = json.dumps(normalized, ensure_ascii=False, default=str).encode("utf-8")
     if len(serialized) > _REQUEST_VARIABLES_LIMIT:
         raise ValueError("请求变量体积超过 16KB，请精简取值")
-    return value
+    return normalized
 
 
 class NumericExpectation(BaseModel):
@@ -471,6 +511,12 @@ class CaseOut(ORMModel):
     simulator_template_name: str | None = None
     judge_template_name: str | None = None
     environment_name: str | None = None
+
+    @field_validator("request_variables")
+    @classmethod
+    def _normalize_request_variables_out(cls, value: dict | None) -> dict | None:
+        """读取旧数据时也把数字归一化成字符串，避免前端再次按数字保存。"""
+        return normalize_request_variables(value)
 
 
 class RevisionOut(ORMModel):

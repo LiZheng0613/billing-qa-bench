@@ -20,7 +20,7 @@ def _export_row() -> dict[str, object]:
         "priority": "P0",
         "tags": ["导入导出", "字段对齐"],
         "environment_code": "QA-MOCK",
-        "request_variables": {"userid": "13800138000", "segment": 7},
+        "request_variables": {"userid": "13800138000", "segment": "7"},
         "query": "本期账单是多少？",
         "expected_answer": "账单合计 100 元",
         "fail_fast": True,
@@ -72,7 +72,7 @@ def test_excel_columns_cover_final_case_fields() -> None:
     }
     assert row["用例状态(ACTIVE/DISABLED/DRAFT)"] == "DRAFT"
     assert row["请求变量(JSON)"] == json.dumps(
-        {"userid": "13800138000", "segment": 7}, ensure_ascii=False
+        {"userid": "13800138000", "segment": "7"}, ensure_ascii=False
     )
     assert row["裁判模型编码(逗号分隔)"] == json.dumps(
         ["judge-a", "judge-b"], ensure_ascii=False
@@ -93,7 +93,7 @@ def test_parse_excel_reads_final_structured_fields() -> None:
     parsed = records[0]
     assert parsed["status"] == "DRAFT"
     assert parsed["description"] == "覆盖最终实现新增字段"
-    assert parsed["request_variables"] == {"userid": "13800138000", "segment": 7}
+    assert parsed["request_variables"] == {"userid": "13800138000", "segment": "7"}
     assert parsed["prompt_overrides"] == {"judge": "只关注金额", "simulator": "保持简洁"}
     assert parsed["judge_model_codes"] == ["judge-a", "judge-b"]
     assert parsed["fail_fast"] is True

@@ -23,6 +23,7 @@ from billing_qa.db.session import get_db
 from billing_qa.models.environment import Environment, EnvironmentVariable
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
+from billing_qa.schemas.case import normalize_request_variables
 from billing_qa.schemas.common import MessageResponse, Page
 from billing_qa.schemas.environment import (
     DEFAULT_BODY_TEMPLATE,
@@ -462,7 +463,7 @@ async def preview_request(
         raise NotFoundError("示例用例不存在或已删除")
 
     ctx = EnvContext.from_orm(env)
-    case_vars = case.request_variables or {}
+    case_vars = normalize_request_variables(case.request_variables) or {}
     mode = resolve_session_mode(ctx.session_mode)
     query = _preview_query(case)
     session_id = init_session_id(mode, None)
@@ -505,7 +506,7 @@ async def debug_chat(
         raise NotFoundError("调试用例不存在或已删除")
 
     ctx = EnvContext.from_orm(env)
-    case_vars = case.request_variables or {}
+    case_vars = normalize_request_variables(case.request_variables) or {}
     mode = resolve_session_mode(ctx.session_mode)
     query = (payload.query or "").strip() or _preview_query(case)
     if not query:

@@ -55,6 +55,7 @@ from billing_qa.schemas.case import (
     RunCompare,
     RunCompareSide,
     TrendPoint,
+    normalize_request_variables,
 )
 from billing_qa.schemas.case_ai import CaseAIDraftRequest, CaseAIDraftResponse
 from billing_qa.schemas.common import MessageResponse, Page
@@ -956,7 +957,11 @@ async def rollback_case(
     snapshot = target.snapshot or {}
     for field in SNAPSHOT_FIELDS:
         if field in snapshot:
-            setattr(case, field, snapshot[field])
+            value = snapshot[field]
+            if field == "request_variables":
+                # 历史版本可能把数字存成 JSON number，回滚时统一转回字符串。
+                value = normalize_request_variables(value)
+            setattr(case, field, value)
     case.updated_by = operator
     case.current_version += 1
     await db.flush()
@@ -1176,9 +1181,17 @@ async def debug_case(
             )
         )
     ).scalar_one_or_none()
-    snapshot = revision.snapshot if revision is not None else build_snapshot(case)
+    snapshot = dict(revision.snapshot) if revision is not None else build_snapshot(case)
+    if snapshot.get("request_variables") is not None:
+        snapshot["request_variables"] = normalize_request_variables(
+            snapshot.get("request_variables")
+        )
     if payload.case_snapshot_override:
         snapshot = {**snapshot, **payload.case_snapshot_override}
+        if snapshot.get("request_variables") is not None:
+            snapshot["request_variables"] = normalize_request_variables(
+                snapshot.get("request_variables")
+            )
     executor = CaseExecutor()
     # 先结束当前事务，避免旧快照看不到执行器新写入的记录
     await db.commit()

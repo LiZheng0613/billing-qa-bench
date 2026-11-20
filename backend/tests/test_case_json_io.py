@@ -322,7 +322,7 @@ async def test_excel_roundtrip_keeps_final_fields(client: httpx.AsyncClient) -> 
         assert detail["description"] == "覆盖嵌套字段与契约配置"
         assert detail["request_variables"] == {
             "userid": "13800138000",
-            "segment": 7,
+            "segment": "7",
         }
         assert detail["prompt_overrides"] == {
             "judge": "只关注金额",

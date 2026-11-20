@@ -174,6 +174,26 @@ test('草稿持久化：刷新后恢复，可手动清除', async ({ page }) => 
   await page.getByRole('button', { name: '取消', exact: true }).click()
 })
 
+test('快捷示例追加而不覆盖已有输入', async ({ page }) => {
+  await seedAuth(page)
+  await openCreateDrawer(page)
+  await openAiPanel(page)
+
+  const textarea = page.locator('.absolute.right-4 textarea').first()
+  await textarea.fill('已有描述：先保留我写的内容')
+  const example = page.getByRole('button', { name: '账单金额核对', exact: true })
+  await example.click()
+
+  await expect(textarea).toHaveValue(/已有描述/)
+  await expect(textarea).toHaveValue(/账单金额核对/)
+  // 重复点击同一个示例不应重复追加。
+  await example.click()
+  const value = await textarea.inputValue()
+  expect(value.split('账单金额核对').length - 1).toBe(1)
+
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+})
+
 test('编辑动态多轮：应用后 max_turns=8，取消不落库', async ({ page }) => {
   await seedAuth(page)
   await page.goto('/cases')

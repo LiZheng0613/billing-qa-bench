@@ -513,7 +513,7 @@ test('特殊值复制：数字/对象请求变量、含逗号话术、set 事实
       status: 'ACTIVE',
       priority: 'P1',
       tags: ['e2e', 'tag,with,comma'],
-      // 数字 / 布尔 / 对象类型的请求变量必须原样保留，不能被字符串化
+      // 数字 / 嵌套数字必须字符串化，布尔与对象结构保留
       request_variables: {
         userid: 13800001234,
         vip: true,
@@ -583,10 +583,12 @@ test('特殊值复制：数字/对象请求变量、含逗号话术、set 事实
 
     expectCaseCopied(source, copied)
 
-    // 请求变量类型必须原样保留
+    // 请求变量统一字符串化：数字不再以 JSON number 落库
     expect(copied.request_variables).toEqual(source.request_variables)
-    expect(typeof copied.request_variables.userid).toBe('number')
-    expect(copied.request_variables.profile).toEqual({ level: 3, channel: 'app' })
+    expect(typeof copied.request_variables.userid).toBe('string')
+    expect(copied.request_variables.amount).toBe('268.5')
+    expect(copied.request_variables.profile).toEqual({ level: '3', channel: 'app' })
+    expect(copied.request_variables.vip).toBe(true)
 
     // 含逗号的标签 / 话术 / 别名不能被拆成多项
     expect(copied.tags).toEqual(['e2e', 'tag,with,comma'])

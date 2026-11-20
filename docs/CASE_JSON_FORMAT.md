@@ -122,7 +122,7 @@
 | `hidden_context` | object[] | 隐藏信息释放表 `{key, content, release_hint}` |
 | `max_turns` | int | 1～20 |
 | `terminate_conditions` | object | 终止条件 |
-| `request_variables` | object | 用例级请求变量，渲染进环境请求头 / 请求体模板；值支持字符串、数字与 JSON |
+| `request_variables` | object | 用例级请求变量，渲染进环境请求头 / 请求体模板；值支持字符串、数字与 JSON，数字（含嵌套）统一按原文保存为字符串 |
 
 ### 3.3 模板与模型
 
@@ -171,6 +171,7 @@
   不同接口可各自定义；`SERVER_RETURNED` 首轮渲染为空字符串，由目标接口按首轮对话处理；
 - `request_variables` 的 key 需匹配 `[A-Za-z_][A-Za-z0-9_]*`，且不能使用运行时保留字
   （`query` / `history` / `history_text` / `turn` / `timestamp_iso`），否则校验失败；总量上限 16KB。
+- 所有数字取值（含对象 / 数组内部）统一按原文保存为字符串，避免手机号、订单号等长数字丢精度或变科学计数法；布尔值与对象结构保持不变。
 
 > 「AI 帮我填」覆盖用例抽屉里的全部可填语义字段：除基础字段与 Must/May/MustNot 外，
 > 还可生成 `request_variables`、`expected_rules`、`turns[].expected_rules`、`session_expected`、

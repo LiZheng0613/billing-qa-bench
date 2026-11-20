@@ -944,6 +944,38 @@ const missingEnvPlaceholders = computed(() =>
 
 const JSON_NUMBER_LITERAL = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
 
+/** 请求变量里的数字统一存成字符串；大整数用定点格式，避免变科学计数法。 */
+function numberToPlainText(value: number): string {
+  if (!Number.isFinite(value)) return String(value)
+  if (Number.isInteger(value)) {
+    return value.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 0 })
+  }
+  return String(value)
+}
+
+function normalizeRequestVariableValue(value: unknown): unknown {
+  if (typeof value === 'number') return numberToPlainText(value)
+  if (Array.isArray(value)) return value.map(normalizeRequestVariableValue)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        normalizeRequestVariableValue(item),
+      ]),
+    )
+  }
+  return value
+}
+
+function normalizeRequestVariables(
+  values: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!values) return {}
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, normalizeRequestVariableValue(value)]),
+  )
+}
+
 /**
  * 把 JSON 中的数字字面量包成字符串后再解析，避免长数字（手机号、订单号等）
  * 被转成 number 后丢失精度，或序列化成科学计数法。只扫描字符串外的字符，
@@ -1072,7 +1104,10 @@ function switchRequestVariablesMode(mode: 'rows' | 'json'): void {
       const key = row.key.trim()
       if (key) data[key] = parseRequestVariableValue(row.value)
     }
-    form.requestVariablesJson = Object.keys(data).length ? JSON.stringify(data, null, 2) : ''
+    const normalized = normalizeRequestVariables(data)
+    form.requestVariablesJson = Object.keys(normalized).length
+      ? JSON.stringify(normalized, null, 2)
+      : ''
     form.requestVariablesMode = 'json'
     return
   }
@@ -1092,7 +1127,7 @@ function switchRequestVariablesMode(mode: 'rows' | 'json'): void {
       return
     }
   }
-  form.requestVariables = Object.entries(data).map(([key, value]) => ({
+  form.requestVariables = Object.entries(normalizeRequestVariables(data)).map(([key, value]) => ({
     key,
     value: typeof value === 'string' ? value : JSON.stringify(value),
   }))
@@ -1172,13 +1207,16 @@ function resetForm(): void {
   form.riskLevel = (source?.risk_level as 'LOW' | 'HIGH') ?? 'LOW'
   form.owner = source?.owner ?? ''
   form.snapshotId = source?.snapshot_id ?? ''
-  form.requestVariables = Object.entries(source?.request_variables ?? {}).map(([key, value]) => ({
+  const normalizedRequestVariables = normalizeRequestVariables(source?.request_variables)
+  form.requestVariables = Object.entries(normalizedRequestVariables).map(([key, value]) => ({
     key,
     value: requestVariableValueText(value),
   }))
-  originalRequestVariables.value = source?.request_variables ?? null
+  originalRequestVariables.value = Object.keys(normalizedRequestVariables).length
+    ? normalizedRequestVariables
+    : null
   form.requestVariablesJson = form.requestVariables.length
-    ? JSON.stringify(source?.request_variables ?? {}, null, 2)
+    ? JSON.stringify(normalizedRequestVariables, null, 2)
     : ''
   form.requestVariablesMode = 'rows'
   resetContractForm(source)
@@ -1257,6 +1295,7 @@ async function loadVersions(kind: 'simulator' | 'judge'): Promise<void> {
 const aiOpen = ref(false)
 const aiPane = ref<AiPane>('input')
 const aiPrompt = ref('')
+const aiPromptInput = ref<HTMLTextAreaElement | null>(null)
 const aiLoading = ref(false)
 const aiError = ref('')
 const aiDrafts = ref<CaseAIDraft[]>([])
@@ -1382,10 +1421,10 @@ function buildRequestVariables(): Record<string, unknown> | null {
   if (form.requestVariablesMode === 'json') {
     const text = form.requestVariablesJson.trim()
     if (!text) return {}
-    // 文本与源值完全一致时直接复用源对象，避免数字被重新解析成字符串等类型漂移。
+    // 文本与源值完全一致时直接复用源对象，避免重新解析造成类型漂移；仍统一归一化为字符串。
     const sourceVariables = originalRequestVariables.value
     if (sourceVariables && text === JSON.stringify(sourceVariables, null, 2).trim()) {
-      return { ...sourceVariables }
+      return normalizeRequestVariables(sourceVariables)
     }
     let parsed: unknown
     try {
@@ -1431,8 +1470,7 @@ function buildRequestVariables(): Record<string, unknown> | null {
       toast.error(`请求变量「${key}」重复`)
       return null
     }
-    // 行内文本未变时保留源值原始类型（数字 / 布尔 / 对象），
-    // 只有用户实际修改过的变量才按当前输入规则重新解析。
+    // 行内文本未变时保留源值（布尔 / 对象等结构），数字则在返回前统一归一化为字符串。
     const sourceVariables = originalRequestVariables.value
     const originalValue =
       sourceVariables && Object.prototype.hasOwnProperty.call(sourceVariables, key)
@@ -1443,7 +1481,7 @@ function buildRequestVariables(): Record<string, unknown> | null {
       requestVariableValueText(originalValue) === row.value
     result[key] = unchanged ? originalValue : parseRequestVariableValue(row.value)
   }
-  return result
+  return normalizeRequestVariables(result)
 }
 
 function buildPayload(): CasePayload | null {
@@ -1795,6 +1833,24 @@ const aiExamples = computed(() => {
   if (form.case_type === 'DYNAMIC_MULTI') return AI_EDIT_DYNAMIC_EXAMPLES
   return form.case_type === 'STATIC_MULTI' ? AI_EDIT_MULTI_EXAMPLES : AI_EDIT_EXAMPLES
 })
+
+function applyAiExample(example: string): void {
+  const current = aiPrompt.value
+  // 输入框为空时直接填入；已有内容时追加，绝不覆盖用户已经写好的描述。
+  if (!current.trim()) {
+    aiPrompt.value = example
+  } else if (!current.includes(example)) {
+    const joiner = /[，,。；;！!？?\s]$/.test(current) ? '' : '，'
+    aiPrompt.value = `${current.trimEnd()}${joiner}${example}`
+  }
+  // 追加后把光标移到末尾，方便继续补充。
+  void nextTick(() => {
+    const element = aiPromptInput.value
+    if (!element) return
+    element.focus()
+    element.setSelectionRange(element.value.length, element.value.length)
+  })
+}
 
 function selectDraft(index: number): void {
   if (index < 0 || index >= aiDrafts.value.length) return
@@ -2151,7 +2207,7 @@ function currentRequestVariables(): Record<string, unknown> {
     try {
       const parsed = parseJsonPreservingNumbers(form.requestVariablesJson || '{}')
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>
+        return normalizeRequestVariables(parsed as Record<string, unknown>)
       }
     } catch {
       // 非法 JSON 时按空处理，保存前会再次校验。
@@ -2163,7 +2219,7 @@ function currentRequestVariables(): Record<string, unknown> {
     const key = row.key.trim()
     if (key) result[key] = parseRequestVariableValue(row.value)
   }
-  return result
+  return normalizeRequestVariables(result)
 }
 
 function requestVariablesSummary(values: Record<string, unknown>): string {
@@ -3103,12 +3159,13 @@ function applyHiddenGroup(picked?: AiChangeChild[]): void {
 }
 
 function writeRequestVariables(values: Record<string, unknown>): void {
-  const rows = Object.entries(values).map(([key, value]) => ({
+  const normalized = normalizeRequestVariables(values)
+  const rows = Object.entries(normalized).map(([key, value]) => ({
     key,
     value: requestVariableValueText(value),
   }))
   form.requestVariables = rows
-  form.requestVariablesJson = rows.length ? JSON.stringify(values, null, 2) : ''
+  form.requestVariablesJson = rows.length ? JSON.stringify(normalized, null, 2) : ''
   form.requestVariablesMode = 'rows'
 }
 
@@ -3853,6 +3910,7 @@ function openDraftResult(): void {
             <div class="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
               <template v-if="aiPane === 'input'">
                 <textarea
+                  ref="aiPromptInput"
                   v-model="aiPrompt"
                   class="input min-h-[72px] resize-y text-xs leading-relaxed"
                   rows="3"
@@ -3869,8 +3927,10 @@ function openDraftResult(): void {
                   <button
                     v-for="example in aiExamples"
                     :key="example"
+                    type="button"
                     class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[9.5px] font-medium text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
-                    @click="aiPrompt = example"
+                    title="追加到输入框，不覆盖已写内容"
+                    @click="applyAiExample(example)"
                   >
                     {{ example }}
                   </button>
@@ -4352,7 +4412,7 @@ function openDraftResult(): void {
               </div>
               <div v-show="!isSectionCollapsed('variables')" class="space-y-3">
               <p class="text-[11px] text-slate-500">
-                渲染进环境请求头 / 请求体模板；数字按原文保存为字符串，避免长数字丢精度或变成科学计数法。优先级：运行时 &gt; 用例变量 &gt;
+                渲染进环境请求头 / 请求体模板；所有数字（含 JSON 内嵌套数字）均按原文保存为字符串，避免长数字丢精度或变成科学计数法。优先级：运行时 &gt; 用例变量 &gt;
                 环境变量池。
               </p>
 

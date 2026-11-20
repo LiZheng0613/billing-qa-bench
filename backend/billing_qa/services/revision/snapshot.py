@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from billing_qa.models.test_case import TestCase
+from billing_qa.schemas.case import normalize_request_variables
 from billing_qa.services.facts import build_verified_ledger
 
 # 参与快照与 Diff 的字段（顺序即展示顺序）
@@ -109,6 +110,10 @@ def build_snapshot(case: TestCase) -> dict[str, Any]:
         snapshot[field] = value if value is not None else None
     snapshot["id"] = case.id
     snapshot["name"] = case.name
+    # 请求变量统一以字符串落库：数字（手机号/订单号等）不转 number，避免精度与长度丢失。
+    snapshot["request_variables"] = normalize_request_variables(
+        snapshot.get("request_variables")
+    )
     # 事实账本：已取证事实随执行快照冻结，便于判分上下文与审计回放。
     snapshot["verified_facts"] = build_verified_ledger(snapshot.get("answer_envelope"))
     return snapshot

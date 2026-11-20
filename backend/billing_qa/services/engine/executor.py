@@ -17,6 +17,7 @@ from billing_qa.db.session import SessionLocal
 from billing_qa.models.enums import ExecutionSource, ExecutionStatus, TerminationStatus
 from billing_qa.models.execution import ExecutionRecord, JudgeResult, TurnTrace
 from billing_qa.models.gold_query import FactResult
+from billing_qa.schemas.case import normalize_request_variables
 from billing_qa.services.adapter.renderer import format_history, render_prompt
 from billing_qa.services.adapter.session import (
     init_session_id,
@@ -116,6 +117,14 @@ class CaseExecutor:
         # 未指定时保留用例自身绑定，由用例快照决定。
         if environment_id is not None:
             snapshot = {**snapshot, "environment_id": environment_id}
+        # 兼容历史快照里的数字型请求变量：执行与落库前统一转成字符串。
+        if snapshot.get("request_variables") is not None:
+            snapshot = {
+                **snapshot,
+                "request_variables": normalize_request_variables(
+                    snapshot.get("request_variables")
+                ),
+            }
         execution_id = await self._create_execution(
             case_id=case_id,
             case_version=case_version,

@@ -55,8 +55,25 @@ def test_session_updates_only_server_returned() -> None:
 # ---------------------------------------------------------------------- #
 def test_request_variable_validation_ok() -> None:
     value = {"user_id": "13800138000", "ext": {"vip": True}, "level": 3}
-    assert validate_request_variables(value) == value
+    assert validate_request_variables(value) == {
+        "user_id": "13800138000",
+        "ext": {"vip": True},
+        "level": "3",
+    }
     assert validate_request_variables(None) is None
+
+
+def test_request_variable_numbers_are_stored_as_strings() -> None:
+    value = {
+        "phone": 13800138000123456789,
+        "amount": 268.5,
+        "profile": {"level": 3, "tags": [1, 2]},
+    }
+    assert validate_request_variables(value) == {
+        "phone": "13800138000123456789",
+        "amount": "268.5",
+        "profile": {"level": "3", "tags": ["1", "2"]},
+    }
 
 
 def test_request_variable_validation_rejects_bad_key() -> None:

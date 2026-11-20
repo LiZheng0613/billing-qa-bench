@@ -294,7 +294,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 环境模板（`headers_template` / `body_template`）用 `{{variable}}` 占位，具体取值按用例注入：
 
-- **请求变量**：用例级 `request_variables`（key-value，值支持字符串 / 数字 / JSON），在用例抽屉「请求变量」中按行维护或直接编辑 JSON；不放敏感信息，明文保存。
+- **请求变量**：用例级 `request_variables`（key-value，值支持字符串 / 数字 / JSON），在用例抽屉「请求变量」中按行维护或直接编辑 JSON；不放敏感信息，明文保存。所有数字（含嵌套对象 / 数组里的数字）统一按原文保存为字符串，避免手机号、订单号等长数字丢精度或变成科学计数法。
 - **三层优先级**：运行时变量（`query` / `session_id` / `history` / `history_text` / `turn` / `timestamp_iso`）> 用例 `request_variables` > 环境变量池。其中 `query` / `history` / `history_text` / `turn` / `timestamp_iso` 为保留字，不允许在用例变量中定义；`session_id` 由会话机制注入，用例中自定义会被运行时值覆盖。
 - **时间戳**：`timestamp_iso` 为请求时刻的 ISO 8601 字符串（如 `2026-11-17T18:00:00.123`），每轮请求刷新。
 - **Basic 鉴权**：环境可配置账号 + 密码（密码加密存储），执行时自动生成 `Authorization: Basic base64(账号:密码)`；请求头模板显式写了 `Authorization` 时以模板为准。
