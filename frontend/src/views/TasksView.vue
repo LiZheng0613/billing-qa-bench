@@ -6,11 +6,13 @@ import { useTaskEventStream } from '../composables/useTaskEventStream'
 import { api } from '../api'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
+import PaginationBar from '../components/PaginationBar.vue'
 import StatusPill from '../components/StatusPill.vue'
 import TaskCreateModal from './components/TaskCreateModal.vue'
 import type { BatchTask, TaskProgressEvent, TaskScheduleType } from '../types'
 import { errorMessage } from '../utils/errors'
 import { formatDateTime, formatPercent, statusLabel } from '../utils/format'
+import { readPageSize, savePageSize } from '../utils/pagination'
 import { hasKeyword } from '../utils/search'
 import {
   canStopPlanTask,
@@ -28,7 +30,8 @@ const toast = useToastStore()
 const auth = useAuthStore()
 const confirm = useConfirm()
 
-const PAGE_SIZE = 20
+const PAGE_SIZE_OPTIONS = [20, 50, 100]
+const pageSize = ref(readPageSize('tasks.pageSize', 20, PAGE_SIZE_OPTIONS))
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -70,7 +73,7 @@ const busyId = ref<number | null>(null)
 const showCreate = ref(false)
 const copySource = ref<BatchTask | null>(null)
 
-const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const hasFilter = computed(() =>
   Boolean(hasKeyword(keyword.value) || statusFilter.value || scheduleFilter.value),
 )
@@ -89,7 +92,7 @@ async function load(silent = false): Promise<boolean> {
   try {
     const data = await api.tasks.list({
       page: page.value,
-      page_size: PAGE_SIZE,
+      page_size: pageSize.value,
       keyword: keyword.value.trim() || undefined,
       status: statusFilter.value || undefined,
       schedule_type: scheduleFilter.value || undefined,
@@ -191,6 +194,13 @@ function resetFilters(): void {
 function goPage(next: number): void {
   if (next < 1 || next > pageCount.value || next === page.value) return
   page.value = next
+  void load()
+}
+
+function changePageSize(size: number): void {
+  pageSize.value = size
+  savePageSize('tasks.pageSize', size)
+  page.value = 1
   void load()
 }
 
@@ -682,19 +692,16 @@ onBeforeUnmount(() => {
           正在加载任务…
         </div>
       </div>
-      <div class="flex items-center justify-between border-t border-slate-200 px-4 py-3">
-        <span class="text-[11px] text-slate-500">
-          共 <span class="font-medium tabular-nums text-slate-700">{{ total }}</span> 条任务 · 第 {{ page }} / {{ pageCount }} 页
-        </span>
-        <div class="flex gap-1">
-          <button class="btn-ghost btn-xs" :disabled="page <= 1" @click="goPage(page - 1)">
-            上一页
-          </button>
-          <button class="btn-ghost btn-xs" :disabled="page >= pageCount" @click="goPage(page + 1)">
-            下一页
-          </button>
-        </div>
-      </div>
+      <PaginationBar
+        :total="total"
+        :page="page"
+        :page-size="pageSize"
+        :page-size-options="PAGE_SIZE_OPTIONS"
+        :loading="loading"
+        unit="条任务"
+        @update:page="goPage"
+        @update:page-size="changePageSize"
+      />
     </section>
 
     <TaskCreateModal v-model="showCreate" :copy-from="copySource" @created="onCreated" />

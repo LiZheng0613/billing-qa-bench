@@ -5,6 +5,7 @@ import { api } from '../api'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
+import PaginationBar from '../components/PaginationBar.vue'
 import StatusPill from '../components/StatusPill.vue'
 import TestCaseDrawer from './components/TestCaseDrawer.vue'
 import CaseRevisionPanel from './components/CaseRevisionPanel.vue'
@@ -25,6 +26,7 @@ import type {
 import { useConfirm } from '../composables/useConfirm'
 import { useTaskEventStream } from '../composables/useTaskEventStream'
 import { errorMessage } from '../utils/errors'
+import { readPageSize, savePageSize } from '../utils/pagination'
 import {
   caseTypeLabel,
   formatDateTime,
@@ -65,7 +67,10 @@ const trend = ref<CaseTrend | null>(null)
 const executions = ref<CaseExecutionItem[]>([])
 const executionTotal = ref(0)
 const executionPage = ref(1)
-const executionPageSize = 20
+const EXECUTION_PAGE_SIZE_OPTIONS = [10, 20, 50]
+const executionPageSize = ref(
+  readPageSize('caseExecutions.pageSize', 20, EXECUTION_PAGE_SIZE_OPTIONS),
+)
 const executionLoading = ref(false)
 const revisions = ref<CaseRevision[]>([])
 const environments = ref<Environment[]>([])
@@ -284,7 +289,7 @@ const gradingInfo = computed<InfoRow[]>(() => {
 
 const recentRevisions = computed(() => revisions.value.slice(0, 6))
 const executionPageCount = computed(() =>
-  Math.max(1, Math.ceil(executionTotal.value / executionPageSize)),
+  Math.max(1, Math.ceil(executionTotal.value / executionPageSize.value)),
 )
 const ACTIVE_EXECUTION_STATUSES = new Set(['PENDING', 'RUNNING'])
 /** 当前页存在执行中的记录时，展示实时更新标识（列表由 WS 事件驱动刷新）。 */
@@ -333,7 +338,7 @@ async function refresh(): Promise<void> {
       api.cases.trend(caseId.value),
       api.cases.executions(caseId.value, {
         page: executionPage.value,
-        page_size: executionPageSize,
+        page_size: executionPageSize.value,
       }),
       api.cases.revisions(caseId.value),
     ])
@@ -549,7 +554,7 @@ async function loadExecutions(silent = false): Promise<void> {
   try {
     const pageData = await api.cases.executions(item.value.id, {
       page: executionPage.value,
-      page_size: executionPageSize,
+      page_size: executionPageSize.value,
     })
     executions.value = pageData.items
     executionTotal.value = pageData.total
@@ -578,6 +583,13 @@ useTaskEventStream(applyExecutionEvent, { onOpen: () => void loadExecutions(true
 function changeExecutionPage(next: number): void {
   if (next < 1 || next > executionPageCount.value || next === executionPage.value) return
   executionPage.value = next
+  void loadExecutions()
+}
+
+function changeExecutionPageSize(size: number): void {
+  executionPageSize.value = size
+  savePageSize('caseExecutions.pageSize', size)
+  executionPage.value = 1
   void loadExecutions()
 }
 
@@ -987,7 +999,6 @@ onBeforeUnmount(() => {
                 <h2 class="panel-title">执行记录</h2>
                 <p class="mt-0.5 text-[11px] text-slate-500">
                   共 {{ executionTotal }} 次执行（含批量、调试与重跑）
-                  <span v-if="executionPageCount > 1"> · 第 {{ executionPage }} / {{ executionPageCount }} 页</span>
                 </p>
               </div>
               <span
@@ -1063,31 +1074,18 @@ onBeforeUnmount(() => {
                 </tbody>
               </table>
             </div>
-            <div
-              v-if="executionPageCount > 1"
-              class="flex items-center justify-between border-t border-line px-4 py-3"
-            >
-              <span class="text-[11px] text-slate-500">
-                第 {{ executionPage }} / {{ executionPageCount }} 页
-                <span v-if="executionLoading" class="ml-1 text-slate-400">加载中…</span>
-              </span>
-              <div class="flex gap-1">
-                <button
-                  class="btn-ghost btn-xs"
-                  :disabled="executionPage <= 1 || executionLoading"
-                  @click="changeExecutionPage(executionPage - 1)"
-                >
-                  上一页
-                </button>
-                <button
-                  class="btn-ghost btn-xs"
-                  :disabled="executionPage >= executionPageCount || executionLoading"
-                  @click="changeExecutionPage(executionPage + 1)"
-                >
-                  下一页
-                </button>
-              </div>
-            </div>
+            <PaginationBar
+              v-if="executionTotal > 0"
+              :total="executionTotal"
+              :page="executionPage"
+              :page-size="executionPageSize"
+              :page-size-options="EXECUTION_PAGE_SIZE_OPTIONS"
+              :loading="executionLoading"
+              unit="次执行"
+              :show-summary="false"
+              @update:page="changeExecutionPage"
+              @update:page-size="changeExecutionPageSize"
+            />
             <EmptyState
               v-if="executions.length === 0"
               compact

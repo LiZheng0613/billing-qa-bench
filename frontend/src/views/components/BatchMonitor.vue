@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import StatusPill from '../../components/StatusPill.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import PaginationBar from '../../components/PaginationBar.vue'
 import type { BatchTask, CaseExecutionItem, TaskMetrics } from '../../types'
 import {
   formatDateTime,
@@ -27,6 +28,7 @@ const props = withDefaults(
     executionTotal?: number
     executionPage?: number
     executionPageSize?: number
+    executionPageSizeOptions?: number[]
     latestPerCase?: boolean
     executionStatus?: string
     executionKeyword?: string
@@ -35,7 +37,7 @@ const props = withDefaults(
     executionSort?: '' | 'score_desc' | 'score_asc'
     exporting?: boolean
   }>(),
-  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, latestPerCase: true, executionStatus: '', executionKeyword: '', executionMinScore: null, executionMaxScore: null, executionSort: '', exporting: false },
+  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, executionPageSizeOptions: () => [10, 20, 30, 50], latestPerCase: true, executionStatus: '', executionKeyword: '', executionMinScore: null, executionMaxScore: null, executionSort: '', exporting: false },
 )
 
 const emit = defineEmits<{
@@ -50,6 +52,7 @@ const emit = defineEmits<{
   (e: 'open-case', caseId: number): void
   (e: 'retry-case', caseId: number): void
   (e: 'page-change', page: number): void
+  (e: 'page-size-change', size: number): void
   (e: 'mode-change', latestPerCase: boolean): void
   (
     e: 'filter-change',
@@ -146,20 +149,6 @@ const planActive = computed(
 )
 
 const progress = computed(() => props.metrics?.progress ?? 0)
-
-const executionPageCount = computed(() =>
-  Math.max(1, Math.ceil(props.executionTotal / props.executionPageSize)),
-)
-
-function previousPage(): void {
-  if (props.executionPage > 1) emit('page-change', props.executionPage - 1)
-}
-
-function nextPage(): void {
-  if (props.executionPage < executionPageCount.value) {
-    emit('page-change', props.executionPage + 1)
-  }
-}
 
 const stats = computed<Array<{ label: string; value: string; hint?: string }>>(() => [
   {
@@ -846,26 +835,17 @@ onBeforeUnmount(clearFilterTimer)
             重置筛选
           </button>
         </EmptyState>
-        <div
-          v-if="executionTotal > executionPageSize"
-          class="flex items-center justify-between border-t border-slate-200 px-5 py-3"
-        >
-          <span class="text-[11px] text-slate-500">
-            第 {{ executionPage }} / {{ executionPageCount }} 页
-          </span>
-          <div class="flex gap-1">
-            <button class="btn-ghost btn-xs" :disabled="executionPage <= 1" @click="previousPage">
-              上一页
-            </button>
-            <button
-              class="btn-ghost btn-xs"
-              :disabled="executionPage >= executionPageCount"
-              @click="nextPage"
-            >
-              下一页
-            </button>
-          </div>
-        </div>
+        <PaginationBar
+          v-if="executionTotal > 0"
+          :total="executionTotal"
+          :page="executionPage"
+          :page-size="executionPageSize"
+          :page-size-options="executionPageSizeOptions"
+          :show-summary="false"
+          unit="次执行"
+          @update:page="(next) => emit('page-change', next)"
+          @update:page-size="(size) => emit('page-size-change', size)"
+        />
       </div>
       </template>
     </template>

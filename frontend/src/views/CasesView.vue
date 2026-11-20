@@ -6,6 +6,7 @@ import type { CaseImportAction, CaseImportConflict, CaseImportResult } from '../
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
+import PaginationBar from '../components/PaginationBar.vue'
 import ScheduleField from '../components/ScheduleField.vue'
 import StatusPill from '../components/StatusPill.vue'
 import TestCaseDrawer from './components/TestCaseDrawer.vue'
@@ -17,6 +18,7 @@ import type {
   TestCase,
 } from '../types'
 import { errorMessage } from '../utils/errors'
+import { readPageSize, savePageSize } from '../utils/pagination'
 import {
   caseTypeLabel,
   formatDateTime,
@@ -41,7 +43,8 @@ const debugStore = useDebugStore()
 const cases = ref<TestCase[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+const PAGE_SIZE_OPTIONS = [20, 50, 100]
+const pageSize = ref(readPageSize('cases.pageSize', 20, PAGE_SIZE_OPTIONS))
 const keyword = ref('')
 const caseType = ref('')
 const status = ref('')
@@ -489,6 +492,13 @@ function goPage(next: number): void {
   void loadCases()
 }
 
+function changePageSize(size: number): void {
+  pageSize.value = size
+  savePageSize('cases.pageSize', size)
+  page.value = 1
+  void loadCases()
+}
+
 onMounted(() => {
   void loadOptions()
   void loadCases()
@@ -718,15 +728,25 @@ onMounted(() => {
         </EmptyState>
       </div>
 
-      <div class="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3">
-        <span class="text-[11px] text-slate-500">
-          共 <span class="font-medium tabular-nums text-slate-700">{{ total }}</span> 条用例 · 第 {{ page }} / {{ pageCount }} 页
-        </span>
-        <div class="flex items-center gap-2">
-          <button class="btn-ghost btn-xs" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
-          <button class="btn-ghost btn-xs" :disabled="page >= pageCount" @click="goPage(page + 1)">下一页</button>
-        </div>
-      </div>
+      <PaginationBar
+        :total="total"
+        :page="page"
+        :page-size="pageSize"
+        :page-size-options="PAGE_SIZE_OPTIONS"
+        :loading="loading"
+        unit="条用例"
+        @update:page="goPage"
+        @update:page-size="changePageSize"
+      >
+        <template #extra>
+          <span
+            v-if="selectedIds.length"
+            class="inline-flex items-center rounded-full border border-brand-edge bg-brand-soft px-2 py-0.5 text-[10px] font-medium text-brand-deep"
+          >
+            已选 {{ selectedIds.length }} 条
+          </span>
+        </template>
+      </PaginationBar>
     </div>
 
     <BaseModal

@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>设计稿 02 · 列表分页组件（批量任务 / 用例资产）</title>
+<style>
+  :root{
+    --canvas:#f5f5f7; --line:#e8e8ed; --line-soft:#f0f0f4; --line-strong:#dcdfe6;
+    --ink:#111827; --ink-soft:#374151; --muted:#6b7280; --faint:#9ca3af;
+    --brand:#4f46e5; --brand-deep:#4338ca; --brand-soft:#eef2ff; --brand-edge:#e0e7ff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:"Inter","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    background:#eceef2;color:var(--ink);font-size:13px;-webkit-font-smoothing:antialiased;
+  }
+  .board{max-width:1400px;margin:0 auto;padding:28px 24px 48px}
+  .board-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px}
+  .board-head .kicker{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--brand)}
+  .board-head h1{font-size:21px;letter-spacing:-.02em;margin-top:4px}
+  .board-head p{font-size:12px;color:var(--muted);margin-top:5px;max-width:760px;line-height:1.6}
+  .tag-soft{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:11px;color:var(--muted);white-space:nowrap}
+  .tag-soft b{color:var(--brand)}
+
+  /* ---------- 分节 ---------- */
+  .spec{margin-top:24px}
+  .spec-head{display:flex;align-items:baseline;gap:9px;margin:0 0 10px 2px;flex-wrap:wrap}
+  .spec-head h2{font-size:13px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+  .spec-head .idx{width:20px;height:20px;border-radius:6px;background:var(--brand);color:#fff;display:grid;place-items:center;font-size:10.5px;font-weight:700}
+  .spec-head p{font-size:10.5px;color:var(--muted)}
+  .frame{border:1px solid var(--line-strong);border-radius:20px;background:var(--canvas);padding:16px;box-shadow:0 24px 60px -50px rgba(17,24,39,.5)}
+
+  /* ---------- 对比 ---------- */
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .cmp{background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px 14px}
+  .cmp-tag{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:600;letter-spacing:.04em;color:#64748b;background:#f1f5f9;border-radius:999px;padding:2px 8px;margin-bottom:9px}
+  .cmp-tag.brand{color:var(--brand-deep);background:var(--brand-soft)}
+  .old-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;color:#64748b;padding:9px 10px;border:1px dashed #e2e8f0;border-radius:10px;background:#fcfcfd}
+  .old-bar .btns{display:flex;gap:6px}
+  .note{font-size:9.5px;color:var(--faint);margin-top:8px;line-height:1.6}
+  .note b{color:#b45309;font-weight:600}
+
+  /* ---------- 迷你应用壳 ---------- */
+  .mini{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(17,24,39,.04)}
+  .mini-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line-soft);background:#fff}
+  .mini-bar .title{font-size:12px;font-weight:600;letter-spacing:-.01em}
+  .mini-bar .sub{font-size:9.5px;color:var(--faint);margin-left:2px}
+  .mini-bar .spacer{flex:1}
+  .inp{border:1px solid var(--line);border-radius:8px;background:#fff;padding:5px 9px;font-size:11px;color:var(--ink-soft);outline:none}
+  .inp.small{width:150px;color:var(--faint)}
+  .sel{border:1px solid var(--line);border-radius:8px;background:#fff;padding:5px 9px;font-size:11px;color:var(--ink-soft)}
+  .btn{border:1px solid var(--line);background:#fff;color:var(--ink-soft);border-radius:8px;padding:5px 10px;font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap}
+  .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:9.5px;font-weight:500;color:#94a3b8;padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:10px 12px;border-bottom:1px solid var(--line-soft);font-size:11px;color:#475569;vertical-align:middle}
+  tbody tr:last-child td{border-bottom:none}
+  .code{font-family:"JetBrains Mono",Consolas,monospace;font-size:10.5px;color:var(--brand)}
+  .name{font-size:11.5px;color:var(--ink);font-weight:500}
+  .muted{font-size:9.5px;color:var(--faint);margin-top:2px}
+  .badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:1px 7px;font-size:9px;font-weight:500;color:#475569;background:#fff;line-height:15px;white-space:nowrap}
+  .badge.brand{background:var(--brand-soft);border-color:var(--brand-edge);color:var(--brand-deep)}
+  .badge.green{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
+  .badge.amber{background:#fffbeb;border-color:#fde68a;color:#b45309}
+  .badge.rose{background:#fff1f2;border-color:#fecdd3;color:#be123c}
+  .prog{width:92px;height:5px;border-radius:999px;background:#eef2f7;overflow:hidden;margin-bottom:4px}
+  .prog i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#6366f1,#4f46e5)}
+  .ops{display:flex;gap:5px;justify-content:flex-end}
+  .ops .btn{padding:3px 8px;font-size:10px;border-radius:6px}
+
+  /* ================= 分页条（核心） ================= */
+  .pager{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    min-height:52px;padding:12px 16px;border-top:1px solid var(--line);background:#fff;
+  }
+  .pager-left{display:flex;align-items:center;gap:7px;font-size:11px;color:#64748b;min-width:0;flex-wrap:wrap}
+  .pager-left b{font-weight:600;color:#334155;font-variant-numeric:tabular-nums}
+  .pager-left .dot{color:#cbd5e1}
+  .ps-wrap{position:relative;display:inline-flex;align-items:center}
+  .ps-wrap select{
+    appearance:none;-webkit-appearance:none;height:28px;padding:0 24px 0 9px;
+    border:1px solid var(--line);border-radius:8px;background:#fff;color:#475569;
+    font-size:11px;font-family:inherit;cursor:pointer;outline:none;transition:border-color .15s;
+  }
+  .ps-wrap select:hover{border-color:#cbd5e1}
+  .ps-wrap select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(79,70,229,.12)}
+  .ps-wrap::after{
+    content:"";position:absolute;right:8px;top:50%;width:10px;height:10px;transform:translateY(-52%);
+    background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center/10px no-repeat;
+    pointer-events:none;
+  }
+  .sel-chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:999px;background:var(--brand-soft);border:1px solid var(--brand-edge);color:var(--brand-deep);font-size:10px;font-weight:500}
+  .pager-right{display:flex;align-items:center;gap:3px;flex:none}
+  .pg{
+    min-width:28px;height:28px;padding:0 6px;border:1px solid transparent;border-radius:8px;
+    background:#fff;color:#475569;font-size:12px;font-weight:500;font-variant-numeric:tabular-nums;
+    font-family:inherit;cursor:pointer;transition:background .15s,color .15s,border-color .15s,box-shadow .15s;
+  }
+  .pg:hover{background:#f1f5f9;color:#1e293b}
+  .pg.on,.pg.on:hover{
+    background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600;
+    box-shadow:0 6px 14px -8px rgba(79,70,229,.95);
+  }
+  .pg:disabled{color:#cbd5e1;background:#fff;cursor:not-allowed}
+  .pg:disabled:hover{background:#fff;color:#cbd5e1}
+  .pg-arrow{
+    display:inline-flex;align-items:center;gap:3px;height:28px;padding:0 9px;
+    border:1px solid transparent;border-radius:8px;background:#fff;color:#475569;
+    font-size:11px;font-weight:500;font-family:inherit;cursor:pointer;white-space:nowrap;
+    transition:background .15s,color .15s;
+  }
+  .pg-arrow:hover:not(:disabled){background:#f1f5f9;color:#1e293b}
+  .pg-arrow:disabled{color:#cbd5e1;cursor:not-allowed}
+  .gap{width:24px;text-align:center;color:#94a3b8;font-size:12px;user-select:none;letter-spacing:.05em}
+  .vline{width:1px;height:16px;background:var(--line);margin:0 5px;flex:none}
+  .jump{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:#64748b;white-space:nowrap}
+  .jump-input{
+    width:46px;height:28px;padding:0 4px;text-align:center;border:1px solid var(--line);border-radius:8px;
+    background:#fff;color:var(--ink-soft);font-size:11.5px;font-weight:500;font-variant-numeric:tabular-nums;
+    font-family:inherit;outline:none;transition:border-color .15s,box-shadow .15s;
+  }
+  .jump-input:hover{border-color:#cbd5e1}
+  .jump-input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(79,70,229,.12)}
+  .jump-input::placeholder{color:#cbd5e1}
+
+  /* 页码容器：槽位数固定为 7，宽度自然稳定，无需留白居中 */
+  .pg-nums{display:flex;align-items:center;gap:3px;flex:none}
+  .pager.compact .pg-nums{min-width:0}
+
+  /* ---------- 解剖标注 ---------- */
+  .anatomy{background:#fff;border:1px solid var(--line);border-radius:16px;padding:34px 18px 18px;overflow:visible}
+  .anatomy .pager{padding:14px 16px;border:1px dashed var(--brand-edge);border-radius:12px;background:#fdfdff}
+  .a{position:relative;display:inline-flex;align-items:center;gap:5px}
+  .anno{
+    position:absolute;top:-24px;left:50%;transform:translateX(-50%);
+    display:grid;place-items:center;width:18px;height:18px;border-radius:999px;
+    background:var(--brand);color:#fff;font-size:10px;font-weight:700;font-style:normal;
+    box-shadow:0 0 0 3px #fff;z-index:2;
+  }
+  .anno::after{content:"";position:absolute;top:18px;left:50%;width:1px;height:6px;background:var(--brand-edge)}
+  .legend{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+  .legend .item{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;gap:8px;align-items:flex-start}
+  .legend .num{flex:none;width:17px;height:17px;border-radius:999px;background:var(--brand-soft);border:1px solid var(--brand-edge);color:var(--brand-deep);font-size:9.5px;font-weight:700;display:grid;place-items:center;margin-top:1px}
+  .legend .item p{font-size:10.5px;color:#475569;line-height:1.6}
+  .legend .item b{color:var(--ink);font-weight:600}
+  .legend code{font-family:Consolas,monospace;font-size:9.5px;background:var(--brand-soft);color:var(--brand-deep);border-radius:4px;padding:0 4px}
+
+  /* ---------- 状态 ---------- */
+  .states{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+  .state{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 12px;display:flex;flex-direction:column;align-items:center;gap:10px;min-height:96px;justify-content:center}
+  .state .demo{display:flex;align-items:center;justify-content:center;gap:5px;min-height:28px}
+  .state .cap{font-size:10px;color:var(--muted);text-align:center;line-height:1.5}
+  .state .cap b{display:block;color:var(--ink-soft);font-weight:600;font-size:10.5px;margin-bottom:1px}
+  .pg.hover-demo{background:#f1f5f9;color:#1e293b}
+  .pg.disabled-demo{color:#cbd5e1;cursor:not-allowed}
+  .loading-bar{display:flex;align-items:center;gap:7px;font-size:10.5px;color:#64748b;opacity:.7}
+  .spinner{width:12px;height:12px;border:2px solid #e0e7ff;border-top-color:var(--brand);border-radius:999px;animation:spin .8s linear infinite;flex:none}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .disabled-bar{opacity:.55;display:flex;align-items:center;gap:4px;font-size:10px;color:#64748b}
+
+  /* ---------- 窄屏 ---------- */
+  .narrow{max-width:640px;margin:0 auto;background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .pager.compact{padding:10px 12px;min-height:44px}
+  .pager.compact .pager-right{gap:2px}
+  .pager.compact .pg-arrow{padding:0 7px;font-size:10.5px}
+  .pager.compact .page-now{font-size:11px;color:#475569;font-variant-numeric:tabular-nums;padding:0 3px}
+  .pager.compact .page-now b{color:var(--brand);font-weight:600}
+
+  /* ---------- 滑窗规则 ---------- */
+  .rules{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .rule{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+  .rule .cap{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--muted);margin-bottom:9px}
+  .rule .cap b{color:var(--ink-soft);font-weight:600}
+  .rule .cap code{font-family:Consolas,monospace;font-size:9.5px;color:#94a3b8}
+  .rule .row{display:flex;align-items:center;gap:3px}
+
+  /* ---------- 页脚 ---------- */
+  .foot{margin-top:26px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+  .foot .k{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--brand);flex:none;margin-top:2px}
+  .foot p{font-size:10.5px;color:#475569;line-height:1.75;flex:1;min-width:280px}
+  .foot code{font-family:Consolas,monospace;font-size:10px;background:var(--brand-soft);color:var(--brand-deep);border-radius:4px;padding:0 4px}
+  .foot .divider{width:1px;align-self:stretch;background:var(--line-soft)}
+
+  .hintline{display:flex;align-items:center;gap:6px;font-size:9.5px;color:var(--faint);margin-top:8px}
+  .hintline .dot{width:4px;height:4px;border-radius:999px;background:#cbd5e1}
+</style>
+</head>
+<body>
+<div class="board">
+
+  <div class="board-head">
+    <div>
+      <div class="kicker">Design 02 · Pagination</div>
+      <h1>列表分页组件 · 批量任务 / 用例资产</h1>
+      <p>一个组件同时服务两张列表：左侧统计与每页条数，右侧页码滑窗 + 上一页/下一页 + 直达跳转；窄屏自动收敛为「第 X / Y 页」。下方为可点击演示。</p>
+    </div>
+    <span class="tag-soft">交互：<b>页码 · 跳转 · 每页条数</b></span>
+  </div>
+
+  <!-- ============ 对比 ============ -->
+  <div class="compare">
+    <div class="cmp">
+      <span class="cmp-tag">改造前</span>
+      <div class="old-bar">
+        <span>共 <b style="color:#334155;font-variant-numeric:tabular-nums">1,284</b> 条用例 · 第 4 / 65 页</span>
+        <span class="btns"><span class="btn">上一页</span><span class="btn">下一页</span></span>
+      </div>
+      <p class="note"><b>问题</b>：只有前后翻页，跨 10 页以上只能连点；每页固定 20 条；看不出临近页位置。</p>
+    </div>
+    <div class="cmp">
+      <span class="cmp-tag brand">改造后</span>
+      <div class="pager" style="padding:9px 10px;border:1px dashed #e2e8f0;border-radius:10px;background:#fcfcfd;min-height:0">
+        <div class="pager-left" style="font-size:10.5px">
+          <span>共 <b>1,284</b> 条</span><span class="dot">·</span><span>每页</span>
+          <span class="ps-wrap"><select style="height:26px;font-size:10.5px"><option>20 条</option></select></span>
+        </div>
+        <div class="pager-right">
+          <span class="pg-arrow" style="height:26px;font-size:10.5px">‹ 上一页</span>
+          <span class="pg" style="height:26px;min-width:26px">3</span>
+          <span class="pg on" style="height:26px;min-width:26px">4</span>
+          <span class="pg" style="height:26px;min-width:26px">5</span>
+          <span class="gap" style="width:18px">…</span>
+          <span class="pg" style="height:26px;min-width:26px">65</span>
+          <span class="pg-arrow" style="height:26px;font-size:10.5px">下一页 ›</span>
+          <span class="vline" style="margin:0 2px"></span>
+          <span class="jump" style="font-size:10px">跳至 <span class="jump-input" style="width:34px;height:26px;display:inline-grid;place-items:center;font-size:10.5px">4</span> 页</span>
+        </div>
+      </div>
+      <p class="note"><b>收益</b>：邻页 1 次点击、远页 1 次输入；每页 20 / 50 / 100 可调并记忆。</p>
+    </div>
+  </div>
+
+  <!-- ============ A · 用例资产 ============ -->
+  <section class="spec">
+    <div class="spec-head">
+      <h2><span class="idx">A</span>用例资产 · 完整态</h2>
+      <p>表格底部工具条，与服务端 <code style="font-family:Consolas,monospace;color:#4338ca">page / page_size</code> 对应</p>
+    </div>
+    <div class="frame">
+      <div class="mini">
+        <div class="mini-bar">
+          <span class="title">用例库</span><span class="sub">1,284 条 · 启用 1,052</span>
+          <span class="spacer"></span>
+          <span class="inp small">搜索编号 / 名称 / 标签</span>
+          <span class="sel">全部类型</span>
+          <span class="sel">全部状态</span>
+          <span class="btn">刷新</span>
+          <span class="btn primary">新建用例</span>
+        </div>
+        <table>
+          <thead>
+            <tr><th style="width:34px"><span style="display:inline-block;width:13px;height:13px;border:1px solid #cbd5e1;border-radius:4px;vertical-align:-2px"></span></th><th>用例编号 / 名称</th><th>类型</th><th>评审</th><th>最近结果</th><th>更新时间</th><th style="text-align:right">操作</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span style="display:inline-block;width:13px;height:13px;border:1px solid #cbd5e1;border-radius:4px;vertical-align:-2px"></span></td>
+              <td><span class="code">TC-10241</span><div class="name">账单分期还款计划试算</div><div class="muted">标签：账单 · 试算 · P0</div></td>
+              <td><span class="badge brand">单轮</span></td>
+              <td><span class="badge green">已通过</span></td>
+              <td><span class="badge green">通过</span></td>
+              <td style="font-size:10.5px;color:#64748b">11-20 14:32</td>
+              <td><div class="ops"><span class="btn">调试</span><span class="btn">复制</span></div></td>
+            </tr>
+            <tr>
+              <td><span style="display:inline-block;width:13px;height:13px;border:1px solid #cbd5e1;border-radius:4px;vertical-align:-2px"></span></td>
+              <td><span class="code">TC-10240</span><div class="name">跨月账单金额一致性校验</div><div class="muted">标签：对账 · 静态多轮</div></td>
+              <td><span class="badge">静态多轮</span></td>
+              <td><span class="badge amber">待评审</span></td>
+              <td><span class="badge amber">部分失败</span></td>
+              <td style="font-size:10.5px;color:#64748b">11-20 13:08</td>
+              <td><div class="ops"><span class="btn">调试</span><span class="btn">复制</span></div></td>
+            </tr>
+            <tr>
+              <td><span style="display:inline-block;width:13px;height:13px;border:1px solid #cbd5e1;border-radius:4px;vertical-align:-2px"></span></td>
+              <td><span class="code">TC-10238</span><div class="name">优惠券叠加后应付金额推算</div><div class="muted">标签：营销 · 动态多轮</div></td>
+              <td><span class="badge">动态多轮</span></td>
+              <td><span class="badge green">已通过</span></td>
+              <td><span class="badge rose">失败</span></td>
+              <td style="font-size:10.5px;color:#64748b">11-20 11:45</td>
+              <td><div class="ops"><span class="btn">调试</span><span class="btn">复制</span></div></td>
+            </tr>
+            <tr>
+              <td><span style="display:inline-block;width:13px;height:13px;border:1px solid #cbd5e1;border-radius:4px;vertical-align:-2px"></span></td>
+              <td><span class="code">TC-10235</span><div class="name">逾期罚息取数口径核对</div><div class="muted">标签：罚息 · 取数</div></td>
+              <td><span class="badge brand">单轮</span></td>
+              <td><span class="badge">无需评审</span></td>
+              <td><span class="badge" style="color:#64748b">未执行</span></td>
+              <td style="font-size:10.5px;color:#64748b">11-19 18:20</td>
+              <td><div class="ops"><span class="btn">调试</span><span class="btn">复制</span></div></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="pager" data-pager data-pages="65" data-current="4">
+          <div class="pager-left">
+            <span>共 <b>1,284</b> 条</span>
+            <span class="dot">·</span>
+            <span class="ps-label">每页</span>
+            <span class="ps-wrap"><select data-ps><option>20 条</option><option>50 条</option><option>100 条</option></select></span>
+            <span class="sel-chip">已选 12 条</span>
+          </div>
+          <div class="pager-right">
+            <button class="pg-arrow" data-prev>‹ 上一页</button>
+            <span class="pg-nums" data-nums></span>
+            <button class="pg-arrow" data-next>下一页 ›</button>
+            <span class="vline"></span>
+            <span class="jump">跳至 <input class="jump-input" data-jump inputmode="numeric" value="4" /> 页</span>
+          </div>
+        </div>
+      </div>
+      <div class="hintline"><span class="dot"></span>页码与输入框可点击：输入 58 回车，可直接跳到第 58 页。<span class="dot"></span>切换每页条数会回到第 1 页。</div>
+    </div>
+  </section>
+
+  <!-- ============ B · 批量任务 ============ -->
+  <section class="spec">
+    <div class="spec-head">
+      <h2><span class="idx">B</span>批量任务 · 完整态（同组件复用）</h2>
+      <p>结构完全一致，只是左侧统计文案换成「条任务」，不需要第二套实现</p>
+    </div>
+    <div class="frame">
+      <div class="mini">
+        <div class="mini-bar">
+          <span class="title">批量任务</span><span class="sub">共 312 条 · 运行中 6</span>
+          <span class="spacer"></span>
+          <span class="inp small">搜索任务编号 / 名称</span>
+          <span class="sel">全部状态</span>
+          <span class="sel">全部执行方式</span>
+          <span class="btn">刷新</span>
+          <span class="btn primary">新建批量任务</span>
+        </div>
+        <table>
+          <thead>
+            <tr><th>任务编号 / 名称</th><th style="width:170px">执行进度</th><th>用例</th><th>通过率</th><th>状态</th><th>创建时间</th><th style="text-align:right">操作</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="code">BT-20261120-004</span><div class="name">账单回归 · 夜间全量</div></td>
+              <td><div class="prog"><i style="width:72%"></i></div><div class="muted">18 / 25 · 失败 2</div></td>
+              <td style="font-variant-numeric:tabular-nums">25</td>
+              <td><span style="color:#047857;font-weight:600">88%</span></td>
+              <td><span class="badge brand">运行中</span></td>
+              <td style="font-size:10.5px;color:#64748b">11-20 14:02</td>
+              <td><div class="ops"><span class="btn">详情</span><span class="btn">停止</span></div></td>
+            </tr>
+            <tr>
+              <td><span class="code">BT-20261120-003</span><div class="name">营销券叠加 P0 回归</div></td>
+              <td><div class="prog"><i style="width:100%"></i></div><div class="muted">40 / 40 · 失败 1</div></td>
+              <td style="font-variant-numeric:tabular-nums">40</td>
+              <td><span style="color:#b45309;font-weight:600">97.5%</span></td>
+              <td><span class="badge green">已完成</span></td>
+              <td style="font-size:10.5px;color:#64748b">11-20 11:30</td>
+              <td><div class="ops"><span class="btn">详情</span><span class="btn">复制</span></div></td>
+            </tr>
+            <tr>
+              <td><span class="code">BT-20261119-012</span><div class="name">逾期罚息口径巡检</div></td>
+              <td><div class="prog"><i style="width:0%"></i></div><div class="muted">0 / 12 · 等待调度</div></td>
+              <td style="font-variant-numeric:tabular-nums">12</td>
+              <td><span style="color:#94a3b8">—</span></td>
+              <td><span class="badge amber">待执行</span></td>
+              <td style="font-size:10.5px;color:#64748b">11-19 22:00</td>
+              <td><div class="ops"><span class="btn">详情</span><span class="btn">复制</span></div></td>
+            </tr>
+            <tr>
+              <td><span class="code">BT-20261119-009</span><div class="name">账务对账全链路回放</div></td>
+              <td><div class="prog"><i style="width:100%"></i></div><div class="muted">120 / 120 · 失败 0</div></td>
+              <td style="font-variant-numeric:tabular-nums">120</td>
+              <td><span style="color:#047857;font-weight:600">100%</span></td>
+              <td><span class="badge green">已完成</span></td>
+              <td style="font-size:10.5px;color:#64748b">11-19 09:10</td>
+              <td><div class="ops"><span class="btn">详情</span><span class="btn">复制</span></div></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="pager" data-pager data-pages="16" data-current="1">
+          <div class="pager-left">
+            <span>共 <b>312</b> 条任务</span>
+            <span class="dot">·</span>
+            <span class="ps-label">每页</span>
+            <span class="ps-wrap"><select data-ps><option>20 条</option><option>50 条</option><option>100 条</option></select></span>
+          </div>
+          <div class="pager-right">
+            <button class="pg-arrow" data-prev disabled>‹ 上一页</button>
+            <span class="pg-nums" data-nums></span>
+            <button class="pg-arrow" data-next>下一页 ›</button>
+            <span class="vline"></span>
+            <span class="jump">跳至 <input class="jump-input" data-jump inputmode="numeric" value="1" /> 页</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ C · 解剖 ============ -->
+  <section class="spec">
+    <div class="spec-head">
+      <h2><span class="idx">C</span>组件解剖 · 尺寸与层级</h2>
+      <p>整条 52px 高、圆角 8px 控件、11~12px 字号，全部复用现有 token</p>
+    </div>
+    <div class="anatomy">
+      <div class="pager">
+        <div class="pager-left">
+          <span class="a"><i class="anno">1</i><span>共 <b>1,284</b> 条</span></span>
+          <span class="dot">·</span>
+          <span class="a"><i class="anno">2</i><span class="ps-wrap"><select tabindex="-1"><option>20 条</option></select></span></span>
+        </div>
+        <div class="pager-right">
+          <span class="a"><i class="anno">3</i><button class="pg-arrow" tabindex="-1">‹ 上一页</button></span>
+          <span class="a"><i class="anno">4</i>
+            <span style="display:inline-flex;align-items:center;gap:3px">
+              <button class="pg" tabindex="-1">3</button>
+              <button class="pg on" tabindex="-1">4</button>
+              <button class="pg" tabindex="-1">5</button>
+              <span class="gap">…</span>
+              <button class="pg" tabindex="-1">65</button>
+            </span>
+          </span>
+          <span class="a"><i class="anno">5</i><button class="pg-arrow" tabindex="-1">下一页 ›</button></span>
+          <span class="vline"></span>
+          <span class="a"><i class="anno">6</i><span class="jump">跳至 <span class="jump-input" style="display:inline-grid;place-items:center">4</span> 页</span></span>
+        </div>
+      </div>
+      <div class="legend">
+        <div class="item"><span class="num">1</span><p><b>总数统计</b><br>11px / slate-500，数字 <code>tabular-nums</code> 对齐不跳动</p></div>
+        <div class="item"><span class="num">2</span><p><b>每页条数</b><br>28px 高 select，20 / 50 / 100，选中后写 localStorage</p></div>
+        <div class="item"><span class="num">3</span><p><b>上一页</b><br>首屏禁用为 <code>slate-300</code>，不再整块消失导致错位</p></div>
+        <div class="item"><span class="num">4</span><p><b>页码滑窗</b><br>首末页常驻 + 当前页 ±1，最多 9 槽，当前页实心靛蓝</p></div>
+        <div class="item"><span class="num">5</span><p><b>下一页</b><br>与上一页同尺寸，文字 + chevron，表意比纯箭头更清楚</p></div>
+        <div class="item"><span class="num">6</span><p><b>直达跳转</b><br>46px 输入框，回车/失焦提交，越界自动收敛到 1 / 65</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ D · 状态 ============ -->
+  <section class="spec">
+    <div class="spec-head">
+      <h2><span class="idx">D</span>状态</h2>
+      <p>加载中锁定交互，避免连点产生乱序请求</p>
+    </div>
+    <div class="states">
+      <div class="state">
+        <div class="demo"><button class="pg" tabindex="-1">4</button></div>
+        <div class="cap"><b>默认</b>白底 / 描边透明</div>
+      </div>
+      <div class="state">
+        <div class="demo"><button class="pg hover-demo" tabindex="-1">4</button></div>
+        <div class="cap"><b>悬停</b>slate-100 底</div>
+      </div>
+      <div class="state">
+        <div class="demo"><button class="pg on" tabindex="-1">4</button></div>
+        <div class="cap"><b>当前页</b>brand 实心 + 微光</div>
+      </div>
+      <div class="state">
+        <div class="demo"><button class="pg disabled-demo" tabindex="-1">4</button></div>
+        <div class="cap"><b>禁用</b>slate-300 / 45%</div>
+      </div>
+      <div class="state">
+        <div class="demo disabled-bar"><span class="spinner"></span><button class="pg" disabled tabindex="-1">4</button><button class="pg" disabled tabindex="-1">5</button></div>
+        <div class="cap"><b>加载中</b>整条 opacity-70 + 全部 disabled</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ E · 窄屏 ============ -->
+  <section class="spec">
+    <div class="spec-head">
+      <h2><span class="idx">E</span>窄屏 · &lt; 768px</h2>
+      <p>隐藏页码列表与跳转，保留前后翻页和页码位置；统计与每页条数留在筛选区</p>
+    </div>
+    <div class="frame">
+      <div class="narrow">
+        <div class="mini-bar" style="padding:9px 12px">
+          <span class="title" style="font-size:11.5px">用例库</span>
+          <span class="spacer"></span>
+          <span class="sel" style="font-size:10px">每页 20 条</span>
+        </div>
+        <div class="pager compact">
+          <span style="font-size:10.5px;color:#64748b">共 <b style="color:#334155;font-variant-numeric:tabular-nums">1,284</b> 条</span>
+          <div class="pager-right">
+            <button class="pg-arrow" tabindex="-1">‹</button>
+            <span class="page-now">第 <b>4</b> / 65 页</span>
+            <button class="pg-arrow" tabindex="-1">›</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ F · 滑窗规则 ============ -->
+  <section class="spec">
+    <div class="spec-head">
+      <h2><span class="idx">F</span>页码滑窗规则 · 总页数 20</h2>
+      <p>固定 7 个页码槽位，首末常驻，越界时向中间收拢</p>
+    </div>
+    <div class="rules">
+      <div class="rule">
+        <div class="cap"><span><b>总页数 ≤ 7</b> · 全部展开</span><code>total ≤ 7</code></div>
+        <div class="row">
+          <span class="pg">1</span><span class="pg on">2</span><span class="pg">3</span><span class="pg">4</span><span class="pg">5</span><span class="pg">6</span><span class="pg">7</span>
+        </div>
+      </div>
+      <div class="rule">
+        <div class="cap"><span><b>靠前</b> · 当前 ≤ 4</span><code>1 2 3 4 5 … 20</code></div>
+        <div class="row">
+          <span class="pg">1</span><span class="pg">2</span><span class="pg">3</span><span class="pg on">4</span><span class="pg">5</span><span class="gap">…</span><span class="pg">20</span>
+        </div>
+      </div>
+      <div class="rule">
+        <div class="cap"><span><b>中间</b> · 当前页两侧各 1</span><code>1 … 9 10 11 … 20</code></div>
+        <div class="row">
+          <span class="pg">1</span><span class="gap">…</span><span class="pg">9</span><span class="pg on">10</span><span class="pg">11</span><span class="gap">…</span><span class="pg">20</span>
+        </div>
+      </div>
+      <div class="rule">
+        <div class="cap"><span><b>靠后</b> · 当前 ≥ 17</span><code>1 … 16 17 18 19 20</code></div>
+        <div class="row">
+          <span class="pg">1</span><span class="gap">…</span><span class="pg">16</span><span class="pg">17</span><span class="pg on">18</span><span class="pg">19</span><span class="pg">20</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 页脚 ============ -->
+  <div class="foot">
+    <span class="k">落地</span>
+    <p><code>frontend/src/components/PaginationBar.vue</code>，props <code>total / page / pageSize / loading</code>，支持 <code>v-model:page</code>、<code>v-model:pageSize</code>；替换 <code>CasesView.vue</code> 与 <code>TasksView.vue</code> 现有手写分页，后端接口无需改动。</p>
+    <div class="divider"></div>
+    <p style="flex:0 0 auto"><code>空列表</code> 仅显示「共 0 条」<br><code>单页</code> 不渲染页码，保留统计</p>
+  </div>
+
+</div>
+
+<script>
+  /* 页码滑窗 + 最小交互演示（仅设计稿用） */
+  function windowItems(current, total) {
+    const all = () => Array.from({ length: total }, (_, i) => i + 1)
+    if (total <= 7) return all()
+    if (current <= 4) return [1, 2, 3, 4, 5, 'gap', total]
+    if (current >= total - 3) return [1, 'gap', total - 4, total - 3, total - 2, total - 1, total]
+    return [1, 'gap', current - 1, current, current + 1, 'gap', total]
+  }
+
+  document.querySelectorAll('[data-pager]').forEach((pager) => {
+    const totalPages = Number(pager.dataset.pages || 65)
+    let page = Number(pager.dataset.current || 1)
+    const nums = pager.querySelector('[data-nums]')
+    const prev = pager.querySelector('[data-prev]')
+    const next = pager.querySelector('[data-next]')
+    const jump = pager.querySelector('[data-jump]')
+    const ps = pager.querySelector('[data-ps]')
+
+    function render() {
+      nums.innerHTML = ''
+      windowItems(page, totalPages).forEach((item) => {
+        if (item === 'gap') {
+          const gap = document.createElement('span')
+          gap.className = 'gap'
+          gap.textContent = '…'
+          nums.appendChild(gap)
+          return
+        }
+        const btn = document.createElement('button')
+        btn.className = 'pg' + (item === page ? ' on' : '')
+        btn.textContent = item
+        btn.setAttribute('aria-label', '第 ' + item + ' 页')
+        if (item === page) btn.setAttribute('aria-current', 'page')
+        btn.addEventListener('click', () => { page = item; render() })
+        nums.appendChild(btn)
+      })
+      prev.disabled = page <= 1
+      next.disabled = page >= totalPages
+      if (jump) jump.value = page
+    }
+
+    prev.addEventListener('click', () => { if (page > 1) { page -= 1; render() } })
+    next.addEventListener('click', () => { if (page < totalPages) { page += 1; render() } })
+    if (jump) {
+      jump.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return
+        let n = parseInt(jump.value, 10)
+        if (!n || n < 1) n = 1
+        if (n > totalPages) n = totalPages
+        page = n
+        render()
+      })
+      jump.addEventListener('blur', () => {
+        let n = parseInt(jump.value, 10)
+        if (!n || n < 1) n = 1
+        if (n > totalPages) n = totalPages
+        page = n
+        render()
+      })
+      jump.addEventListener('input', () => {
+        jump.value = jump.value.replace(/\D/g, '').slice(0, 3)
+      })
+    }
+    if (ps) ps.addEventListener('change', () => { page = 1; render() })
+
+    render()
+  })
+</script>
+</body>
+</html>

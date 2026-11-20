@@ -7,6 +7,7 @@ import { buildWebSocketUrl } from '../api/client'
 import EmptyState from '../components/EmptyState.vue'
 import MetricCard from '../components/MetricCard.vue'
 import PageHeader from '../components/PageHeader.vue'
+import PaginationBar from '../components/PaginationBar.vue'
 import StatusPill from '../components/StatusPill.vue'
 import BatchMonitor from './components/BatchMonitor.vue'
 import TaskCreateModal from './components/TaskCreateModal.vue'
@@ -19,6 +20,7 @@ import type {
 } from '../types'
 import { errorMessage } from '../utils/errors'
 import { formatDateTime, formatPercent } from '../utils/format'
+import { readPageSize, savePageSize } from '../utils/pagination'
 import {
   canStopPlanTask,
   isPlanStopped,
@@ -44,7 +46,10 @@ const metrics = ref<TaskMetrics | null>(null)
 const executions = ref<CaseExecutionItem[]>([])
 const executionTotal = ref(0)
 const executionPage = ref(1)
-const executionPageSize = 30
+const EXECUTION_PAGE_SIZE_OPTIONS = [10, 20, 30, 50]
+const executionPageSize = ref(
+  readPageSize('taskExecutions.pageSize', 30, EXECUTION_PAGE_SIZE_OPTIONS),
+)
 const latestPerCase = ref(true)
 const executionStatus = ref('')
 const executionKeyword = ref('')
@@ -61,7 +66,8 @@ const exporting = ref(false)
 const runs = ref<BatchTask[]>([])
 const runsTotal = ref(0)
 const runsPage = ref(1)
-const runsPageSize = 10
+const RUNS_PAGE_SIZE_OPTIONS = [10, 20, 50]
+const runsPageSize = ref(readPageSize('taskRuns.pageSize', 10, RUNS_PAGE_SIZE_OPTIONS))
 const runsSummary = ref<TaskRunSummary | null>(null)
 const runsLoading = ref(false)
 const selectedRunId = ref<number | null>(null)
@@ -72,7 +78,7 @@ let unmounted = false
 let detailSeq = 0
 
 const isPeriodicPlan = computed(() => Boolean(plan.value))
-const runsPageCount = computed(() => Math.max(1, Math.ceil(runsTotal.value / runsPageSize)))
+const runsPageCount = computed(() => Math.max(1, Math.ceil(runsTotal.value / runsPageSize.value)))
 const planActive = computed(
   () => Boolean(plan.value?.schedule_active && plan.value.status === 'SCHEDULED'),
 )
@@ -144,7 +150,7 @@ function reportError(exc: unknown): void {
 function executionQuery() {
   return {
     page: executionPage.value,
-    page_size: executionPageSize,
+    page_size: executionPageSize.value,
     latest_per_case: latestPerCase.value,
     status: executionStatus.value || undefined,
     keyword: executionKeyword.value.trim() || undefined,
@@ -202,7 +208,7 @@ async function loadRuns(preferLatest = false): Promise<boolean> {
   try {
     const data = await api.tasks.runs(current.id, {
       page: runsPage.value,
-      page_size: runsPageSize,
+      page_size: runsPageSize.value,
     })
     runs.value = data.items
     runsTotal.value = data.total
@@ -333,7 +339,7 @@ function applyEvent(event: TaskProgressEvent): void {
         executions.value.unshift({ ...next, attempt_count: Math.max(1, next.attempt_no) })
         executionTotal.value += 1
       }
-      executions.value = executions.value.slice(0, executionPageSize)
+      executions.value = executions.value.slice(0, executionPageSize.value)
     } else {
       const index = executions.value.findIndex((item) => item.id === next.id)
       if (index >= 0) {
@@ -346,7 +352,7 @@ function applyEvent(event: TaskProgressEvent): void {
         executions.value.unshift(next)
         executionTotal.value += 1
       }
-      executions.value = executions.value.slice(0, executionPageSize)
+      executions.value = executions.value.slice(0, executionPageSize.value)
     }
     sortExecutions()
   }
@@ -476,10 +482,24 @@ function changeRunsPage(next: number): void {
   void loadRuns()
 }
 
+function changeRunsPageSize(size: number): void {
+  runsPageSize.value = size
+  savePageSize('taskRuns.pageSize', size)
+  runsPage.value = 1
+  void loadRuns()
+}
+
 function changeExecutionPage(next: number): void {
   if (!task.value) return
   executionPage.value = next
   void loadExecutions(task.value.id)
+}
+
+function changeExecutionPageSize(size: number): void {
+  executionPageSize.value = size
+  savePageSize('taskExecutions.pageSize', size)
+  executionPage.value = 1
+  if (task.value) void loadExecutions(task.value.id)
 }
 
 function changeMode(next: boolean): void {
@@ -974,24 +994,18 @@ onBeforeUnmount(() => {
             description="到点触发或手动执行后，每次执行（每轮）都会生成一个独立批次。"
           />
         </div>
-        <div
-          v-if="runsTotal > runsPageSize"
-          class="flex items-center justify-between border-t border-slate-200 px-5 py-3"
-        >
-          <span class="text-[11px] text-slate-500">第 {{ runsPage }} / {{ runsPageCount }} 页</span>
-          <div class="flex gap-1">
-            <button class="btn-ghost btn-xs" :disabled="runsPage <= 1" @click="changeRunsPage(runsPage - 1)">
-              上一页
-            </button>
-            <button
-              class="btn-ghost btn-xs"
-              :disabled="runsPage >= runsPageCount"
-              @click="changeRunsPage(runsPage + 1)"
-            >
-              下一页
-            </button>
-          </div>
-        </div>
+        <PaginationBar
+          v-if="runsTotal > 0"
+          :total="runsTotal"
+          :page="runsPage"
+          :page-size="runsPageSize"
+          :page-size-options="RUNS_PAGE_SIZE_OPTIONS"
+          :show-summary="false"
+          :loading="runsLoading"
+          unit="次执行"
+          @update:page="changeRunsPage"
+          @update:page-size="changeRunsPageSize"
+        />
       </section>
 
       <!-- 选中批次的逐用例结果 -->
@@ -1009,6 +1023,7 @@ onBeforeUnmount(() => {
           :execution-total="executionTotal"
           :execution-page="executionPage"
           :execution-page-size="executionPageSize"
+          :execution-page-size-options="EXECUTION_PAGE_SIZE_OPTIONS"
           :latest-per-case="latestPerCase"
           :execution-status="executionStatus"
           :execution-keyword="executionKeyword"
@@ -1027,6 +1042,7 @@ onBeforeUnmount(() => {
           @open-case="openCaseDetail"
           @retry-case="retryCase"
           @page-change="changeExecutionPage"
+          @page-size-change="changeExecutionPageSize"
           @mode-change="changeMode"
           @filter-change="applyExecutionFilters"
           @export="exportResults"
@@ -1043,6 +1059,7 @@ onBeforeUnmount(() => {
         :execution-total="executionTotal"
         :execution-page="executionPage"
         :execution-page-size="executionPageSize"
+        :execution-page-size-options="EXECUTION_PAGE_SIZE_OPTIONS"
         :latest-per-case="latestPerCase"
         :execution-status="executionStatus"
         :execution-keyword="executionKeyword"
