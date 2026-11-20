@@ -172,6 +172,29 @@ async def get_current_user(
         raise _unauthorized("未登录或缺少访问令牌")
 
     payload = decode_access_token(credentials.credentials)
+    return await resolve_token_user(payload, db=db)
+
+
+async def resolve_token_user(
+    payload: dict,
+    *,
+    db: AsyncSession | None = None,
+) -> CurrentUser:
+    """按解码后的 Token 载荷解析当前用户。
+
+    与 :func:`get_current_user` 同一套校验（账号状态、``token_version``、
+    旧 Token 兼容规则），供 WebSocket 等非 HTTP 依赖场景复用——避免 WS
+    只解码 JWT 而不校验账号已被禁用 / 角色已回收的长连接漏洞。
+    """
+    if db is not None:
+        return await _resolve_token_user(db, payload)
+    from billing_qa.db.session import SessionLocal
+
+    async with SessionLocal() as session:
+        return await _resolve_token_user(session, payload)
+
+
+async def _resolve_token_user(db: AsyncSession, payload: dict) -> CurrentUser:
     subject = str(payload.get("sub") or "")
     if not subject:
         raise _unauthorized("访问令牌缺少主体信息")

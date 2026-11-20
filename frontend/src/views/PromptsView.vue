@@ -21,8 +21,10 @@ import { errorMessage } from '../utils/errors'
 import { parseJsonObject, templateTypeLabel } from '../utils/format'
 import { matchesAnyKeyword } from '../utils/search'
 import { useToastStore } from '../stores/toast'
+import { useAuthStore } from '../stores/auth'
 
 const toast = useToastStore()
+const auth = useAuthStore()
 const confirm = useConfirm()
 
 const templates = ref<PromptListItem[]>([])
@@ -436,7 +438,7 @@ onMounted(() => {
       description="用户模拟器、LLM 裁判、AI 用例编写与失败追问自检模板的版本管理、引用影响分析与沙盒试跑。"
     >
       <template #actions>
-        <button class="btn-primary" @click="openCreate">
+        <button v-if="auth.can('prompt:write')" class="btn-primary" @click="openCreate">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" d="M12 5v14M5 12h14" />
           </svg>

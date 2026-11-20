@@ -8,6 +8,7 @@ import { api } from '../api'
 import { errorMessage } from '../utils/errors'
 import { formatDateTime } from '../utils/format'
 import { useToastStore } from '../stores/toast'
+import { useAuthStore } from '../stores/auth'
 import type {
   Caliber,
   CandidateSource,
@@ -45,6 +46,7 @@ const TABS: Array<{ value: TabKey; label: string }> = [
 ]
 
 const toast = useToastStore()
+const auth = useAuthStore()
 const confirm = useConfirm()
 const route = useRoute()
 const router = useRouter()
@@ -1076,6 +1078,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
               <td class="td">
                 <div class="flex justify-end gap-1">
                   <button
+                    v-if="auth.can('case:update')"
                     class="btn-ghost btn-xs"
                     :disabled="loading || factStatus(item) === 'VERIFIED'"
                     @click="openFactDialog(item, 'VERIFIED')"
@@ -1083,6 +1086,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
                     通过
                   </button>
                   <button
+                    v-if="auth.can('case:update')"
                     class="btn-ghost btn-xs"
                     :disabled="loading || factStatus(item) === 'WAIVED'"
                     @click="openFactDialog(item, 'WAIVED')"
@@ -1090,6 +1094,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
                     豁免
                   </button>
                   <button
+                    v-if="auth.can('case:update')"
                     class="btn-ghost btn-xs"
                     :disabled="loading || factStatus(item) === 'PENDING'"
                     @click="openFactDialog(item, 'PENDING')"
@@ -1111,7 +1116,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
 
     <!-- ------------------------------------------------------- 候选池 -->
     <div v-if="tab === 'candidates'" class="space-y-4">
-      <div class="card space-y-3 p-4">
+      <div v-if="auth.can('candidate:triage')" class="card space-y-3 p-4">
         <div class="grid gap-2 sm:grid-cols-2">
           <input v-model="candidateForm.raw_question" class="input" placeholder="候选问题原文" />
           <select v-model="candidateForm.source" class="input">
@@ -1182,6 +1187,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
               <td class="td">
                 <div class="flex justify-end gap-1">
                   <button
+                    v-if="auth.can('candidate:triage')"
                     class="btn-ghost btn-xs"
                     :disabled="loading || item.status !== 'NEW'"
                     @click="triageCandidate(item)"
@@ -1189,6 +1195,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
                     分诊
                   </button>
                   <button
+                    v-if="auth.can('candidate:promote')"
                     class="btn-ghost btn-xs"
                     :disabled="loading || item.status === 'PROMOTED' || item.status === 'REJECTED'"
                     @click="promoteCandidate(item)"
@@ -1196,6 +1203,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
                     转正
                   </button>
                   <button
+                    v-if="auth.can('candidate:triage')"
                     class="btn-ghost btn-xs"
                     :disabled="loading || item.status === 'REJECTED'"
                     @click="rejectCandidate(item)"
@@ -1222,7 +1230,14 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
             对同一份正确用例做定点变异，必须全部识别，且正确基线不能被误杀。
           </p>
         </div>
-        <button class="btn-primary btn-xs" :disabled="loading" @click="runEvals">运行自检</button>
+        <button
+          v-if="auth.can('grader:run')"
+          class="btn-primary btn-xs"
+          :disabled="loading"
+          @click="runEvals"
+        >
+          运行自检
+        </button>
       </div>
 
       <div v-if="lastEval" class="card grid gap-3 p-4 sm:grid-cols-4">
@@ -1307,7 +1322,12 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
           >
             取消编辑
           </button>
-          <button class="btn-primary btn-xs" :disabled="loading" @click="submitCaliber">
+          <button
+            v-if="auth.can('caliber:write')"
+            class="btn-primary btn-xs"
+            :disabled="loading"
+            @click="submitCaliber"
+          >
             {{ editingCaliberId !== null ? '保存修改' : '新增口径' }}
           </button>
         </div>
@@ -1336,10 +1356,20 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
               <td class="td text-xs text-slate-600">{{ item.owner || '—' }}</td>
               <td class="td text-right">
                 <div class="flex justify-end gap-1">
-                  <button class="btn-ghost btn-xs" :disabled="loading" @click="startEditCaliber(item)">
+                  <button
+                    v-if="auth.can('caliber:write')"
+                    class="btn-ghost btn-xs"
+                    :disabled="loading"
+                    @click="startEditCaliber(item)"
+                  >
                     编辑
                   </button>
-                  <button class="btn-ghost btn-xs" :disabled="loading" @click="removeCaliber(item)">
+                  <button
+                    v-if="auth.can('caliber:write')"
+                    class="btn-ghost btn-xs"
+                    :disabled="loading"
+                    @click="removeCaliber(item)"
+                  >
                     删除
                   </button>
                 </div>
@@ -1407,7 +1437,12 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
           >
             取消编辑
           </button>
-          <button class="btn-primary btn-xs" :disabled="loading" @click="submitSource">
+          <button
+            v-if="auth.can('capability:write')"
+            class="btn-primary btn-xs"
+            :disabled="loading"
+            @click="submitSource"
+          >
             {{ editingSourceId !== null ? '保存修改' : '新增数据源' }}
           </button>
         </div>
@@ -1456,13 +1491,24 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
               </td>
               <td class="td">
                 <div class="flex justify-end gap-1">
-                  <button class="btn-ghost btn-xs" :disabled="loading" @click="startEditSource(item)">
+                  <button
+                    v-if="auth.can('capability:write')"
+                    class="btn-ghost btn-xs"
+                    :disabled="loading"
+                    @click="startEditSource(item)"
+                  >
                     编辑
                   </button>
-                  <button class="btn-ghost btn-xs" :disabled="loading" @click="probeSource(item)">
+                  <button
+                    v-if="auth.can('capability:execute')"
+                    class="btn-ghost btn-xs"
+                    :disabled="loading"
+                    @click="probeSource(item)"
+                  >
                     探活
                   </button>
                   <button
+                    v-if="auth.can('capability:write')"
                     class="btn-ghost btn-xs"
                     :disabled="loading"
                     @click="toggleSource(item)"
@@ -1519,7 +1565,12 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
           >
             取消编辑
           </button>
-          <button class="btn-primary btn-xs" :disabled="loading" @click="submitCapability">
+          <button
+            v-if="auth.can('capability:write')"
+            class="btn-primary btn-xs"
+            :disabled="loading"
+            @click="submitCapability"
+          >
             {{ editingCapabilityId !== null ? '保存修改' : '新增能力' }}
           </button>
         </div>
@@ -1560,6 +1611,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
               <td class="td text-right">
                 <div class="flex justify-end gap-1">
                   <button
+                    v-if="auth.can('capability:write')"
                     class="btn-ghost btn-xs"
                     :disabled="loading"
                     @click="startEditCapability(item)"
@@ -1567,6 +1619,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
                     编辑
                   </button>
                   <button
+                    v-if="auth.can('capability:write')"
                     class="btn-ghost btn-xs"
                     :disabled="loading || item.status === 'CERTIFIED'"
                     @click="certifyCapability(item)"
@@ -1574,6 +1627,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
                     认证
                   </button>
                   <button
+                    v-if="auth.can('capability:write')"
                     class="btn-ghost btn-xs"
                     :disabled="loading"
                     @click="removeCapability(item)"
@@ -1607,7 +1661,12 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
             placeholder="用例 ID"
           />
           <input v-model="evidenceForm.factIdsText" class="input" placeholder="事实 ID，逗号分隔" />
-          <button class="btn-primary btn-xs" :disabled="loading" @click="runEvidence">
+          <button
+            v-if="auth.can('capability:execute')"
+            class="btn-primary btn-xs"
+            :disabled="loading"
+            @click="runEvidence"
+          >
             执行取证
           </button>
         </div>
@@ -1736,7 +1795,12 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
         <button class="btn-ghost btn-sm" :disabled="loading" @click="factDialogOpen = false">
           取消
         </button>
-        <button class="btn-primary btn-sm" :disabled="loading" @click="submitFactDialog">
+        <button
+          v-if="auth.can('case:update')"
+          class="btn-primary btn-sm"
+          :disabled="loading"
+          @click="submitFactDialog"
+        >
           {{ FACT_ACTION_META[factAction].confirm }}
         </button>
       </template>

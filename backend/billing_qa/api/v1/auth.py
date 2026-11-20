@@ -13,6 +13,7 @@ from billing_qa.core.security import (
     load_user_auth,
 )
 from billing_qa.db.session import get_db
+from billing_qa.models.user import SysUser
 from billing_qa.schemas.auth import (
     ChangePasswordRequest,
     LoginRequest,
@@ -87,14 +88,21 @@ async def login(
 
 
 @router.get("/me", response_model=UserInfo, summary="当前登录用户")
-async def me(user: CurrentUser = Depends(get_current_user)) -> UserInfo:
+async def me(
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserInfo:
+    # 必须改密标记以数据库为准，而非固定 False，避免初始化/重置密码后
+    # 前端一直不弹改密提醒。
+    row = await db.get(SysUser, user.id)
+    must_change = bool(row.must_change_password) if row is not None else False
     return UserInfo(
         id=user.id,
         username=user.username,
         display_name=user.display_name,
         roles=sorted(user.roles),
         permissions=sorted(user.permissions),
-        must_change_password=False,
+        must_change_password=must_change,
         role=min(user.roles) if user.roles else "",
     )
 

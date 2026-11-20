@@ -4,6 +4,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import StatusPill from '../../components/StatusPill.vue'
 import type { PromptTemplate } from '../../types'
 import { formatDateTime, statusLabel, templateTypeLabel } from '../../utils/format'
+import { useAuthStore } from '../../stores/auth'
 
 const props = defineProps<{ template: PromptTemplate | null; loading: boolean }>()
 const emit = defineEmits<{
@@ -13,6 +14,8 @@ const emit = defineEmits<{
   (e: 'edit-meta'): void
   (e: 'delete'): void
 }>()
+
+const auth = useAuthStore()
 
 const versions = computed(() =>
   [...(props.template?.versions ?? [])].sort((a, b) => b.version - a.version),
@@ -42,11 +45,18 @@ const versions = computed(() =>
           <p v-if="template.description" class="mt-1 text-xs text-slate-500">{{ template.description }}</p>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button class="btn-primary btn-xs" @click="emit('sandbox')">沙盒试用</button>
-          <button class="btn-ghost btn-xs" @click="emit('create-version')">发布新版本</button>
+          <button v-if="auth.can('prompt:write')" class="btn-primary btn-xs" @click="emit('sandbox')">沙盒试用</button>
+          <button v-if="auth.can('prompt:write')" class="btn-ghost btn-xs" @click="emit('create-version')">发布新版本</button>
           <button class="btn-ghost btn-xs" @click="emit('view-usage')">引用影响</button>
-          <button class="btn-ghost btn-xs" @click="emit('edit-meta')">编辑信息</button>
-          <button class="btn-danger btn-xs" :disabled="template.is_builtin" @click="emit('delete')">删除</button>
+          <button v-if="auth.can('prompt:write')" class="btn-ghost btn-xs" @click="emit('edit-meta')">编辑信息</button>
+          <button
+            v-if="auth.can('prompt:write')"
+            class="btn-danger btn-xs"
+            :disabled="template.is_builtin"
+            @click="emit('delete')"
+          >
+            删除
+          </button>
         </div>
       </header>
 
@@ -84,7 +94,13 @@ const versions = computed(() =>
                 <span class="text-[11px] text-slate-600">{{ version.changelog || '无变更说明' }}</span>
                 <span class="text-[10px] text-slate-500">{{ version.created_by || 'system' }} · {{ formatDateTime(version.created_at) }}</span>
               </div>
-              <button class="btn-ghost btn-xs" @click="emit('sandbox', version.version)">用此版本试用</button>
+              <button
+                v-if="auth.can('prompt:write')"
+                class="btn-ghost btn-xs"
+                @click="emit('sandbox', version.version)"
+              >
+                用此版本试用
+              </button>
             </div>
             <div v-if="version.variables?.length" class="flex flex-wrap gap-1 px-3 pb-2">
               <span v-for="variable in version.variables" :key="variable" class="tag font-mono">

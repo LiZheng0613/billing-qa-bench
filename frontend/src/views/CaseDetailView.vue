@@ -36,6 +36,7 @@ import {
   statusLabel,
   truncate,
 } from '../utils/format'
+import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toast'
 
 interface StatCard {
@@ -54,6 +55,7 @@ interface InfoRow {
 const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
+const auth = useAuthStore()
 const confirm = useConfirm()
 
 const caseId = computed(() => Number(route.params.id))
@@ -430,7 +432,6 @@ async function submitCase(payload: CasePayload): Promise<void> {
   }
 }
 
-
 /** 执行记录中的追问自检状态标签 */
 function selfCheckBadge(run: CaseExecutionItem): { label: string; className: string } {
   if (run.self_check_status === 'DONE') {
@@ -661,9 +662,30 @@ onBeforeUnmount(() => {
 
       <template #actions>
         <button class="btn-ghost" :disabled="!item" @click="refreshFromButton">刷新</button>
-        <button class="btn-ghost" :disabled="!item" @click="openEdit">编辑</button>
-        <button class="btn-ghost" :disabled="!item" @click="openCopy">复制</button>
-        <button class="btn-primary" :disabled="!item" @click="openWorkbench">调试工作台</button>
+        <button
+          v-if="auth.can('case:update')"
+          class="btn-ghost"
+          :disabled="!item"
+          @click="openEdit"
+        >
+          编辑
+        </button>
+        <button
+          v-if="auth.can('case:create')"
+          class="btn-ghost"
+          :disabled="!item"
+          @click="openCopy"
+        >
+          复制
+        </button>
+        <button
+          v-if="auth.can('case:debug')"
+          class="btn-primary"
+          :disabled="!item"
+          @click="openWorkbench"
+        >
+          调试工作台
+        </button>
         <details ref="menuRef" class="relative">
           <summary
             class="btn-ghost cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden"
@@ -690,23 +712,35 @@ onBeforeUnmount(() => {
               运行对比
             </button>
             <button
-              v-if="item && canReview(item)"
+              v-if="auth.can('case:review') && item && canReview(item)"
               class="menu-item"
               @click="runMenuAction(openReview)"
             >
               {{ reviewActionLabel }}
             </button>
-            <button v-if="canFreeze" class="menu-item" @click="runMenuAction(openFreeze)">
+            <button
+              v-if="auth.can('case:freeze') && canFreeze"
+              class="menu-item"
+              @click="runMenuAction(openFreeze)"
+            >
               冻结进数据集
             </button>
-            <button class="menu-item" @click="runMenuAction(exportCase)">导出 JSON</button>
-            <div class="my-1 h-px bg-line-soft" />
             <button
-              class="menu-item text-rose-600 hover:bg-rose-50 hover:text-rose-700"
-              @click="runMenuAction(removeCase)"
+              v-if="auth.can('case:export')"
+              class="menu-item"
+              @click="runMenuAction(exportCase)"
             >
-              删除用例
+              导出 JSON
             </button>
+            <template v-if="auth.can('case:delete')">
+              <div class="my-1 h-px bg-line-soft" />
+              <button
+                class="menu-item text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                @click="runMenuAction(removeCase)"
+              >
+                删除用例
+              </button>
+            </template>
           </div>
         </details>
       </template>
@@ -749,7 +783,13 @@ onBeforeUnmount(() => {
                   {{ caseTypeLabel(item.case_type) }} · 当前版本 v{{ item.current_version }}
                 </p>
               </div>
-              <button class="btn-ghost btn-xs" @click="openEdit">编辑内容</button>
+              <button
+                v-if="auth.can('case:update')"
+                class="btn-ghost btn-xs"
+                @click="openEdit"
+              >
+                编辑内容
+              </button>
             </header>
 
             <div class="space-y-4 px-4 py-4">
@@ -1065,7 +1105,13 @@ onBeforeUnmount(() => {
                   当前 v{{ item.current_version }}，共 {{ revisions.length }} 个版本
                 </p>
               </div>
-              <button class="btn-ghost btn-xs" @click="revisionOpen = true">版本 Diff / 回滚</button>
+              <button
+                v-if="auth.can('case:rollback')"
+                class="btn-ghost btn-xs"
+                @click="revisionOpen = true"
+              >
+                版本 Diff / 回滚
+              </button>
             </header>
             <div v-if="recentRevisions.length" class="px-4 py-4">
               <div class="relative space-y-4 pl-4">
@@ -1150,13 +1196,21 @@ onBeforeUnmount(() => {
               </div>
             </dl>
             <div
-              v-if="canReview(item) || canFreeze"
+              v-if="(auth.can('case:review') && canReview(item)) || (auth.can('case:freeze') && canFreeze)"
               class="flex flex-wrap gap-2 border-t border-line px-4 py-3"
             >
-              <button v-if="canReview(item)" class="btn-ghost btn-xs flex-1" @click="openReview">
+              <button
+                v-if="auth.can('case:review') && canReview(item)"
+                class="btn-ghost btn-xs flex-1"
+                @click="openReview"
+              >
                 {{ reviewActionLabel }}
               </button>
-              <button v-if="canFreeze" class="btn-ghost btn-xs flex-1" @click="openFreeze">
+              <button
+                v-if="auth.can('case:freeze') && canFreeze"
+                class="btn-ghost btn-xs flex-1"
+                @click="openFreeze"
+              >
                 冻结进数据集
               </button>
             </div>

@@ -192,6 +192,15 @@ async def authenticate(
         await db.commit()
         raise AppError("账号暂时锁定，请稍后再试", code="ACCOUNT_LOCKED", status_code=401)
 
+    if user.locked_until and user.locked_until <= _now():
+        # 锁定窗口已过：自动恢复为可用账号，重置失败计数后再走密码校验。
+        user.locked_until = None
+        user.failed_login_count = 0
+        if user.status == UserStatus.LOCKED.value:
+            user.status = UserStatus.ACTIVE.value
+        await db.flush()
+        logger.info("账号锁定已到期，自动恢复 username=%s", user.username)
+
     if user.status != UserStatus.ACTIVE.value:
         add_audit(
             db,
@@ -599,6 +608,10 @@ async def unlock_user(
     path: str | None = None,
 ) -> SysUser:
     user = await get_user(db, user_id)
+    if user.status == UserStatus.DISABLED.value:
+        # 解锁只恢复「锁定」语义；禁用是管理员的明确处置，需走「编辑账号
+        # 状态」恢复，不能被解锁接口绕过复活。
+        raise ConflictError("账号已被禁用，不能通过解锁恢复，请编辑账号状态为启用")
     user.status = UserStatus.ACTIVE.value
     user.failed_login_count = 0
     user.locked_until = None

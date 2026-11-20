@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from billing_qa.core.authz import require_module_access
+from billing_qa.core.authz import require_module_access, require_permission
 from billing_qa.core.context import CurrentUser
 from billing_qa.core.crypto import decrypt_value, encrypt_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -120,7 +120,12 @@ async def list_data_sources(
     )
 
 
-@router.post("/data-sources", response_model=DataSourceOut, summary="新增数据源")
+@router.post(
+    "/data-sources",
+    response_model=DataSourceOut,
+    summary="新增数据源",
+    dependencies=[Depends(require_permission("capability:write"))],
+)
 async def create_data_source(
     payload: DataSourceCreate,
     db: AsyncSession = Depends(get_db),
@@ -149,7 +154,12 @@ async def get_data_source(
     return _source_out(await _get_source(db, source_id), reveal=_can_read_auth(user))
 
 
-@router.put("/data-sources/{source_id}", response_model=DataSourceOut, summary="编辑数据源")
+@router.put(
+    "/data-sources/{source_id}",
+    response_model=DataSourceOut,
+    summary="编辑数据源",
+    dependencies=[Depends(require_permission("capability:write"))],
+)
 async def update_data_source(
     source_id: int,
     payload: DataSourceUpdate,
@@ -168,7 +178,10 @@ async def update_data_source(
 
 
 @router.delete(
-    "/data-sources/{source_id}", response_model=MessageResponse, summary="停用数据源"
+    "/data-sources/{source_id}",
+    response_model=MessageResponse,
+    summary="停用数据源",
+    dependencies=[Depends(require_permission("capability:write"))],
 )
 async def delete_data_source(
     source_id: int, db: AsyncSession = Depends(get_db)
@@ -180,7 +193,10 @@ async def delete_data_source(
 
 
 @router.post(
-    "/data-sources/{source_id}/probe", response_model=ProbeResult, summary="探活数据源"
+    "/data-sources/{source_id}/probe",
+    response_model=ProbeResult,
+    summary="探活数据源",
+    dependencies=[Depends(require_permission("capability:execute"))],
 )
 async def probe_source(
     source_id: int, db: AsyncSession = Depends(get_db)
@@ -242,7 +258,12 @@ async def list_capabilities(
     )
 
 
-@router.post("/capabilities", response_model=CapabilityOut, summary="新增能力")
+@router.post(
+    "/capabilities",
+    response_model=CapabilityOut,
+    summary="新增能力",
+    dependencies=[Depends(require_permission("capability:write"))],
+)
 async def create_capability(
     payload: CapabilityCreate, db: AsyncSession = Depends(get_db)
 ) -> CapabilityOut:
@@ -266,7 +287,12 @@ async def get_capability(
     return CapabilityOut.model_validate(await _get_capability(db, capability_id))
 
 
-@router.put("/capabilities/{capability_id}", response_model=CapabilityOut, summary="编辑能力")
+@router.put(
+    "/capabilities/{capability_id}",
+    response_model=CapabilityOut,
+    summary="编辑能力",
+    dependencies=[Depends(require_permission("capability:write"))],
+)
 async def update_capability(
     capability_id: int, payload: CapabilityUpdate, db: AsyncSession = Depends(get_db)
 ) -> CapabilityOut:
@@ -286,7 +312,10 @@ async def update_capability(
 
 
 @router.delete(
-    "/capabilities/{capability_id}", response_model=MessageResponse, summary="停用能力"
+    "/capabilities/{capability_id}",
+    response_model=MessageResponse,
+    summary="停用能力",
+    dependencies=[Depends(require_permission("capability:write"))],
 )
 async def delete_capability(
     capability_id: int, db: AsyncSession = Depends(get_db)
@@ -301,6 +330,7 @@ async def delete_capability(
     "/capabilities/{capability_id}/evidence",
     response_model=CapabilityExecuteResult,
     summary="执行能力取证并生成 GoldQuery",
+    dependencies=[Depends(require_permission("capability:execute"))],
 )
 async def execute_evidence(
     capability_id: int,

@@ -14,11 +14,13 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+import uuid
 from datetime import datetime
 
 from sqlalchemy import select
 
 from billing_qa.core.config import settings
+from billing_qa.core.control_store import control_store
 from billing_qa.core.logging import get_logger
 from billing_qa.core.schedule_time import compute_next_run
 from billing_qa.db.base import now
@@ -37,6 +39,9 @@ IN_FLIGHT_STATUSES = {
     TaskStatus.RUNNING.value,
     TaskStatus.SCHEDULED.value,
 }
+# 同一计划同一触发时刻的派发互斥窗口：覆盖「读计划 → 克隆入库 → 推进 next_run_at」
+# 的整个事务过程即可，无需覆盖任务执行期（执行期由任务运行锁保护）。
+PLAN_TRIGGER_LOCK_SECONDS = 60.0
 
 
 def generate_task_code() -> str:
@@ -152,8 +157,21 @@ async def _latest_run_status(db, plan_id: int) -> str | None:
     return str(row) if row else None
 
 
+def _plan_trigger_lock_name(plan: BatchTask) -> str:
+    """同一计划、同一触发时刻共用一把锁：多实例同时扫到到期计划时只有一个派发。"""
+    moment = (
+        plan.next_run_at.strftime("%Y%m%d%H%M%S") if plan.next_run_at else "immediate"
+    )
+    return f"{settings.redis_key_prefix}plan:{plan.id}:trigger:{moment}"
+
+
 async def run_due_tasks(reference: datetime | None = None) -> list[int]:
-    """派发所有到期的定时计划，返回本次启动的任务 id。"""
+    """派发所有到期的定时计划，返回本次启动的任务 id。
+
+    多实例部署时，各实例的后台轮询会同时扫到同一条到期计划；派发前先按
+    「计划 + 触发时刻」抢锁，抢不到的实例跳过本次派发，避免同一触发被克隆
+    出多个重复批次（Redis 不可用时退化为进程内锁，仅保护单实例）。
+    """
     current = reference or now()
     started: list[int] = []
     async with SessionLocal() as db:
@@ -175,76 +193,97 @@ async def run_due_tasks(reference: datetime | None = None) -> list[int]:
         )
 
         for plan in rows:
-            if plan.schedule_type == TaskScheduleType.SCHEDULED.value:
-                total = max(1, int(plan.repeat_rounds or 1))
-                plan.next_run_at = None
-                plan.last_run_at = current
-                # 连续多轮计划保留 schedule_active 表示轮次链继续；
-                # 单轮计划触发后即收口，不再参与任何触发。
-                plan.schedule_active = total > 1
-                if total > 1:
-                    # 连续多轮：计划行本身只保留配置，第一轮也克隆成独立执行
-                    run = clone_for_run(plan, current=current)
-                    db.add(run)
-                    await db.flush()
-                    plan.status = TaskStatus.COMPLETED
-                    plan.control_state = "FINISHED"
-                    await db.commit()
-                    if await scheduler.start(run.id):
-                        started.append(run.id)
-                        logger.info(
-                            "连续多轮计划已启动第 1/%d 轮 plan=%s run=%s",
-                            total,
-                            plan.id,
-                            run.id,
-                        )
-                    continue
-                # 一次性计划：到点直接用当前任务执行，之后不再触发
-                plan.status = TaskStatus.PENDING
-                await db.commit()
-                if await scheduler.start(plan.id):
-                    started.append(plan.id)
-                    logger.info("定时任务已启动 task=%s(%s)", plan.id, plan.name)
-                continue
-
-            latest = await _latest_run_status(db, plan.id)
-            if latest in IN_FLIGHT_STATUSES:
-                # 上一轮还没跑完，跳过本次触发，避免周期任务堆叠
-                plan.next_run_at = compute_next_run(
-                    schedule_type=plan.schedule_type,
-                    schedule_time=plan.schedule_time or "00:00",
-                    weekdays=plan.schedule_weekdays,
-                    base=current,
-                )
-                await db.commit()
-                logger.warning(
-                    "周期任务上一轮仍未结束，跳过本次触发 plan=%s status=%s next=%s",
+            lock_name = _plan_trigger_lock_name(plan)
+            lock_token = uuid.uuid4().hex
+            if not await control_store.acquire_lock(
+                lock_name, lock_token, PLAN_TRIGGER_LOCK_SECONDS
+            ):
+                logger.info(
+                    "计划触发锁被其他实例持有，跳过本次派发 plan=%s moment=%s",
                     plan.id,
-                    latest,
                     plan.next_run_at,
                 )
                 continue
+            try:
+                await _dispatch_plan(db, plan, current, started)
+            finally:
+                await control_store.release_lock(lock_name, lock_token)
+    return started
 
+
+async def _dispatch_plan(
+    db, plan: BatchTask, current: datetime, started: list[int]
+) -> None:
+    """派发单个到期计划（调用方已持有该触发的派发锁）。"""
+    if plan.schedule_type == TaskScheduleType.SCHEDULED.value:
+        total = max(1, int(plan.repeat_rounds or 1))
+        plan.next_run_at = None
+        plan.last_run_at = current
+        # 连续多轮计划保留 schedule_active 表示轮次链继续；
+        # 单轮计划触发后即收口，不再参与任何触发。
+        plan.schedule_active = total > 1
+        if total > 1:
+            # 连续多轮：计划行本身只保留配置，第一轮也克隆成独立执行
             run = clone_for_run(plan, current=current)
             db.add(run)
             await db.flush()
-            plan.last_run_at = current
-            plan.next_run_at = compute_next_run(
-                schedule_type=plan.schedule_type,
-                schedule_time=plan.schedule_time or "00:00",
-                weekdays=plan.schedule_weekdays,
-                base=current,
-            )
+            plan.status = TaskStatus.COMPLETED
+            plan.control_state = "FINISHED"
             await db.commit()
             if await scheduler.start(run.id):
                 started.append(run.id)
                 logger.info(
-                    "周期任务已生成并启动 plan=%s run=%s next=%s",
+                    "连续多轮计划已启动第 1/%d 轮 plan=%s run=%s",
+                    total,
                     plan.id,
                     run.id,
-                    plan.next_run_at,
                 )
-    return started
+            return
+        # 一次性计划：到点直接用当前任务执行，之后不再触发
+        plan.status = TaskStatus.PENDING
+        await db.commit()
+        if await scheduler.start(plan.id):
+            started.append(plan.id)
+            logger.info("定时任务已启动 task=%s(%s)", plan.id, plan.name)
+        return
+
+    latest = await _latest_run_status(db, plan.id)
+    if latest in IN_FLIGHT_STATUSES:
+        # 上一轮还没跑完，跳过本次触发，避免周期任务堆叠
+        plan.next_run_at = compute_next_run(
+            schedule_type=plan.schedule_type,
+            schedule_time=plan.schedule_time or "00:00",
+            weekdays=plan.schedule_weekdays,
+            base=current,
+        )
+        await db.commit()
+        logger.warning(
+            "周期任务上一轮仍未结束，跳过本次触发 plan=%s status=%s next=%s",
+            plan.id,
+            latest,
+            plan.next_run_at,
+        )
+        return
+
+    run = clone_for_run(plan, current=current)
+    db.add(run)
+    await db.flush()
+    plan.last_run_at = current
+    plan.next_run_at = compute_next_run(
+        schedule_type=plan.schedule_type,
+        schedule_time=plan.schedule_time or "00:00",
+        weekdays=plan.schedule_weekdays,
+        base=current,
+    )
+    await db.commit()
+    if await scheduler.start(run.id):
+        started.append(run.id)
+        logger.info(
+            "周期任务已生成并启动 plan=%s run=%s next=%s",
+            plan.id,
+            run.id,
+            plan.next_run_at,
+        )
 
 
 class ScheduleDispatcher:
@@ -285,6 +324,8 @@ class ScheduleDispatcher:
                 await self.tick()
                 # 自愈：恢复中断/未启动的连续轮次链
                 await scheduler.resume_round_chains()
+                # 自愈：恢复派发后从未启动的计划批次（克隆入库与启动之间进程退出）
+                await scheduler.resume_orphaned_plan_runs()
                 # 自愈：接管重启后无人推进的任务（锁过期后由本实例续做）
                 await scheduler.adopt_interrupted_tasks()
             except asyncio.CancelledError:

@@ -465,3 +465,82 @@ async def test_adopt_skips_while_lock_held_by_other_instance() -> None:
         await control_store.release_lock(lock_name, "other-instance")
         await _wait_not_running(task_id)
         await _cleanup(task_id)
+
+
+async def test_abort_pending_task_finalizes_control_state() -> None:
+    """终止排队中（PENDING）任务：落库 ABORTED 后控制面定稿为 ABORTED。
+
+    避免控制面永久残留 ABORTING——ABORTING 只应表示「仍在下发的终止意图」，
+    否则后续重启该任务会被启动前的终止检查误拒。
+    """
+    if not await _dependencies_ready():
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
+    loaded = await _load_demo_case("DEMO-SINGLE-001")
+    if loaded is None:
+        pytest.skip("演示用例缺失")
+    case_id, _, _ = loaded
+    task_id = await _create_task([case_id], status="PENDING", control_state="RUNNING")
+    try:
+        await scheduler.abort(task_id)
+        assert not scheduler.is_running(task_id)
+        assert await control_store.get_state(task_id) == "ABORTED"
+        async with SessionLocal() as db:
+            task = await db.get(BatchTask, task_id)
+            assert task is not None
+            assert task.status == "ABORTED"
+            assert task.control_state == "ABORTED"
+    finally:
+        await _cleanup(task_id)
+
+
+async def test_start_respects_abort_intent() -> None:
+    """PENDING 任务在启动瞬间带终止意图：不拉起执行，直接收口为已终止。"""
+    if not await _dependencies_ready():
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
+    loaded = await _load_demo_case("DEMO-SINGLE-001")
+    if loaded is None:
+        pytest.skip("演示用例缺失")
+    case_id, _, _ = loaded
+    task_id = await _create_task([case_id], status="PENDING", control_state="RUNNING")
+    await control_store.set_state(task_id, "ABORTING")
+    try:
+        assert await scheduler.start(task_id) is True
+        await _wait_not_running(task_id)
+
+        assert await _records(task_id) == []  # 未执行任何用例
+        assert await control_store.get_state(task_id) == "ABORTED"
+        async with SessionLocal() as db:
+            task = await db.get(BatchTask, task_id)
+            assert task is not None
+            assert task.status == "ABORTED"
+            assert task.control_state == "ABORTED"
+    finally:
+        await _wait_not_running(task_id)
+        await _cleanup(task_id)
+
+
+async def test_retry_case_respects_abort_intent() -> None:
+    """单用例重试与终止指令竞态：保持终止语义，不启动重试。"""
+    if not await _dependencies_ready():
+        pytest.skip("PostgreSQL 或 Mock 服务不可用")
+    loaded = await _load_demo_case("DEMO-SINGLE-001")
+    if loaded is None:
+        pytest.skip("演示用例缺失")
+    case_id, version, snapshot = loaded
+    task_id = await _create_task(
+        [case_id],
+        status="ABORTED",
+        records=[(case_id, version, snapshot, "FAIL", 1)],
+    )
+    await control_store.set_state(task_id, "ABORTING")
+    try:
+        assert await scheduler.retry_case(task_id, case_id) is False
+        assert not scheduler.is_running(task_id)
+        assert len(await _records(task_id)) == 1  # 未产生新执行记录
+        assert await control_store.get_state(task_id) == "ABORTED"
+        async with SessionLocal() as db:
+            task = await db.get(BatchTask, task_id)
+            assert task is not None
+            assert task.status == "ABORTED"
+    finally:
+        await _cleanup(task_id)

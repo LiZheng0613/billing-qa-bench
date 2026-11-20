@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from billing_qa.core.authz import require_module_access
+from billing_qa.core.authz import require_module_access, require_permission
 from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.search import keyword_condition
@@ -145,7 +145,12 @@ async def list_templates(
     )
 
 
-@router.post("", response_model=PromptOut, summary="新建模板")
+@router.post(
+    "",
+    response_model=PromptOut,
+    summary="新建模板",
+    dependencies=[Depends(require_permission("prompt:write"))],
+)
 async def create_template(
     payload: PromptCreate,
     db: AsyncSession = Depends(get_db),
@@ -187,7 +192,12 @@ async def get_template(template_id: int, db: AsyncSession = Depends(get_db)) -> 
     return PromptOut.model_validate(await _get_template(db, template_id))
 
 
-@router.put("/{template_id}", response_model=PromptOut, summary="更新模板元信息")
+@router.put(
+    "/{template_id}",
+    response_model=PromptOut,
+    summary="更新模板元信息",
+    dependencies=[Depends(require_permission("prompt:write"))],
+)
 async def update_template(
     template_id: int,
     payload: PromptUpdate,
@@ -202,7 +212,12 @@ async def update_template(
     return PromptOut.model_validate(await _get_template(db, template_id))
 
 
-@router.delete("/{template_id}", response_model=MessageResponse, summary="删除模板")
+@router.delete(
+    "/{template_id}",
+    response_model=MessageResponse,
+    summary="删除模板",
+    dependencies=[Depends(require_permission("prompt:write"))],
+)
 async def delete_template(
     template_id: int, db: AsyncSession = Depends(get_db)
 ) -> MessageResponse:
@@ -219,7 +234,12 @@ async def delete_template(
     return MessageResponse(message=f"模板 {code} 已删除")
 
 
-@router.post("/{template_id}/versions", response_model=PromptOut, summary="发布新版本")
+@router.post(
+    "/{template_id}/versions",
+    response_model=PromptOut,
+    summary="发布新版本",
+    dependencies=[Depends(require_permission("prompt:write"))],
+)
 async def create_version(
     template_id: int,
     payload: PromptVersionCreate,
@@ -311,7 +331,10 @@ async def template_usage(
 
 
 @router.post(
-    "/{template_id}/sandbox", response_model=SandboxResponse, summary="沙盒单条试跑"
+    "/{template_id}/sandbox",
+    response_model=SandboxResponse,
+    summary="沙盒单条试跑",
+    dependencies=[Depends(require_permission("prompt:write"))],
 )
 async def sandbox_run(
     template_id: int,

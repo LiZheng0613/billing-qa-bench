@@ -26,11 +26,13 @@ import {
   stripRoundSuffix,
   taskScheduleLabel,
 } from '../utils/schedule'
+import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toast'
 
 const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
+const auth = useAuthStore()
 const confirm = useConfirm()
 
 const rootId = computed(() => Number(route.params.id))
@@ -81,9 +83,16 @@ function isPeriodic(task: BatchTask): boolean {
   return ['DAILY', 'WEEKLY'].includes(task.schedule_type)
 }
 
-/** 需要以「计划 + 历次执行」视角展示：周期计划，或连续多轮任务。 */
+/** 需要以「计划 + 历次执行」视角展示：周期计划或连续多轮任务的本体。
+
+ * 计划派生的批次（schedule_source_id 非空）只是链上的一轮，
+ * 不应再以「计划 + 历次执行」视角展示。
+ */
 function isMultiRunRoot(task: BatchTask): boolean {
-  return isPeriodic(task) || (task.repeat_rounds ?? 1) > 1
+  return (
+    task.schedule_source_id == null &&
+    (isPeriodic(task) || (task.repeat_rounds ?? 1) > 1)
+  )
 }
 
 const isSchedulePlan = computed(
@@ -742,7 +751,7 @@ onBeforeUnmount(() => {
     >
       <template #actions>
         <button class="btn-ghost" :disabled="!plan && !task" @click="refresh">刷新</button>
-        <button class="btn-ghost" :disabled="!task" @click="openCopy">复制</button>
+        <button v-if="auth.can('task:create')" class="btn-ghost" :disabled="!task" @click="openCopy">复制</button>
       </template>
     </PageHeader>
 
@@ -787,24 +796,32 @@ onBeforeUnmount(() => {
             <p class="mt-0.5 text-[11px] text-slate-500">{{ planHint }}</p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <button v-if="isSchedulePlan && planActive" class="btn-primary btn-xs" @click="runPlanNow">
+            <button
+              v-if="auth.can('task:create') && isSchedulePlan && planActive"
+              class="btn-primary btn-xs"
+              @click="runPlanNow"
+            >
               立即执行
             </button>
             <button
-              v-if="!isSchedulePlan && plan.status === 'PENDING'"
+              v-if="auth.can('task:create') && !isSchedulePlan && plan.status === 'PENDING'"
               class="btn-primary btn-xs"
               @click="startRootTask"
             >
               启动
             </button>
             <button
-              v-if="isSchedulePlan && !planActive && plan.status === 'ABORTED'"
+              v-if="auth.can('task:create') && isSchedulePlan && !planActive && plan.status === 'ABORTED'"
               class="btn-ghost btn-xs"
               @click="togglePlan(true)"
             >
               启用计划
             </button>
-            <button v-if="planStoppable" class="btn-danger btn-xs" @click="stopPlan">
+            <button
+              v-if="auth.can('task:stop') && planStoppable"
+              class="btn-danger btn-xs"
+              @click="stopPlan"
+            >
               停止计划
             </button>
           </div>

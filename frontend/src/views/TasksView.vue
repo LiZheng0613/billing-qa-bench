@@ -19,11 +19,13 @@ import {
   isPlanTask,
   taskScheduleLabel,
 } from '../utils/schedule'
+import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toast'
 
 const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
+const auth = useAuthStore()
 const confirm = useConfirm()
 
 const PAGE_SIZE = 20
@@ -406,7 +408,7 @@ onBeforeUnmount(() => {
     >
       <template #actions>
         <button class="btn-ghost" @click="refreshList">刷新</button>
-        <button class="btn-primary" @click="openCreate">
+        <button v-if="auth.can('task:create')" class="btn-primary" @click="openCreate">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" d="M12 5v14M5 12h14" />
           </svg>
@@ -592,9 +594,15 @@ onBeforeUnmount(() => {
               <td class="td whitespace-nowrap text-right">
                 <div class="flex flex-nowrap items-center justify-end gap-1" @click.stop>
                   <button class="btn-ghost btn-xs" @click="openDetail(item)">详情</button>
-                  <button class="btn-ghost btn-xs" @click="openCopy(item)">复制</button>
                   <button
-                    v-if="planWaiting(item) && planActive(item)"
+                    v-if="auth.can('task:create')"
+                    class="btn-ghost btn-xs"
+                    @click="openCopy(item)"
+                  >
+                    复制
+                  </button>
+                  <button
+                    v-if="auth.can('task:create') && planWaiting(item) && planActive(item)"
                     class="btn-primary btn-xs"
                     :disabled="busyId === item.id"
                     @click="runNow(item)"
@@ -602,7 +610,7 @@ onBeforeUnmount(() => {
                     立即执行
                   </button>
                   <button
-                    v-if="canStopPlanTask(item)"
+                    v-if="auth.can('task:stop') && canStopPlanTask(item)"
                     class="btn-ghost btn-xs"
                     :disabled="busyId === item.id"
                     @click="stopPlan(item)"
@@ -610,7 +618,7 @@ onBeforeUnmount(() => {
                     停止计划
                   </button>
                   <button
-                    v-if="planWaiting(item) && !planActive(item)"
+                    v-if="auth.can('task:create') && planWaiting(item) && !planActive(item)"
                     class="btn-ghost btn-xs"
                     :disabled="busyId === item.id"
                     @click="enablePlan(item)"
@@ -618,7 +626,7 @@ onBeforeUnmount(() => {
                     启用计划
                   </button>
                   <button
-                    v-if="item.status === 'PENDING' && !isPlanTask(item)"
+                    v-if="auth.can('task:create') && item.status === 'PENDING' && !isPlanTask(item)"
                     class="btn-primary btn-xs"
                     :disabled="busyId === item.id"
                     @click="startTask(item)"
@@ -627,6 +635,7 @@ onBeforeUnmount(() => {
                   </button>
                   <button
                     v-if="
+                      auth.can('task:stop') &&
                       ['RUNNING', 'PENDING'].includes(item.status) &&
                       !isPlanTask(item) &&
                       !isContinuousPlanTask(item)
@@ -638,7 +647,7 @@ onBeforeUnmount(() => {
                     终止
                   </button>
                   <button
-                    v-if="canResume(item)"
+                    v-if="auth.can('execution:retry') && canResume(item)"
                     class="btn-primary btn-xs"
                     :disabled="busyId === item.id"
                     title="只补跑未完成的用例，已有结果保持不动"
@@ -647,7 +656,7 @@ onBeforeUnmount(() => {
                     继续执行
                   </button>
                   <button
-                    v-if="canRetry(item)"
+                    v-if="auth.can('execution:retry') && canRetry(item)"
                     class="btn-ghost btn-xs"
                     :disabled="busyId === item.id"
                     @click="retryFailed(item)"

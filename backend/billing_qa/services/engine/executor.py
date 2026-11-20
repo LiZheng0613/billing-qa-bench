@@ -353,6 +353,9 @@ class CaseExecutor:
                     )
                     sim_prompt_tokens += result.prompt_tokens
                     sim_completion_tokens += result.completion_tokens
+                    # 模拟器 token 立即计入总额：下方 GOAL_ACHIEVED / GIVE_UP / 复读机
+                    # 熔断等 break 路径会直接退出轮次循环，绕过循环尾部的累加。
+                    simulator_tokens += result.prompt_tokens + result.completion_tokens
                     data = parse_structured(
                         result.content, ["thought", "status", "query"]
                     )
@@ -389,7 +392,6 @@ class CaseExecutor:
                     for item in released_this_turn:
                         released_keys.add(str(item["key"]))
 
-                simulator_tokens += sim_prompt_tokens + sim_completion_tokens
                 response = await adapter.chat(
                     query,
                     session_id=session_id,

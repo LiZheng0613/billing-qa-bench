@@ -14,6 +14,7 @@ from billing_qa.api.v1.serializers import build_execution_detail, execution_to_i
 from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import NotFoundError
 from billing_qa.db.session import get_db
+from billing_qa.models.enums import ExecutionSource
 from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
@@ -27,7 +28,7 @@ router = APIRouter(
         Depends(
             require_module_access(
                 "execution:read",
-                ("execution:retry", "execution:export"),
+                ("execution:retry",),
             )
         )
     ],
@@ -87,7 +88,11 @@ async def execution_pass_rate(
     hours: int = Query(default=24, ge=1, le=24 * 30, description="统计窗口（小时）"),
     db: AsyncSession = Depends(get_db),
 ) -> ExecutionPassRate:
-    """按 started_at 统计最近 N 小时内的执行通过率，仅统计已判定（pass_flag 非空）的执行。"""
+    """按 started_at 统计最近 N 小时内的执行通过率，仅统计已判定（pass_flag 非空）的执行。
+
+    沙盒试跑（SANDBOX）是作者侧草稿验证，不代表真实测试结果，不纳入通过率口径；
+    单条调试（DEBUG）仍是正式的测试执行，保留统计。
+    """
     since = datetime.now() - timedelta(hours=hours)
     row = (
         await db.execute(
@@ -97,7 +102,10 @@ async def execution_pass_rate(
                 func.sum(case((ExecutionRecord.pass_flag.is_(True), 1), else_=0)).label(
                     "passed"
                 ),
-            ).where(ExecutionRecord.started_at >= since)
+            ).where(
+                ExecutionRecord.started_at >= since,
+                ExecutionRecord.source != ExecutionSource.SANDBOX,
+            )
         )
     ).one()
     measured = int(row.measured or 0)

@@ -25,11 +25,13 @@ import {
   formatScore,
   sourceLabel,
 } from '../utils/format'
+import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toast'
 import { roundLabel, stripRoundSuffix } from '../utils/schedule'
 
 const router = useRouter()
 const toast = useToastStore()
+const auth = useAuthStore()
 
 const caseTotal = ref(0)
 const activeCaseTotal = ref(0)
@@ -152,65 +154,84 @@ function reportError(exc: unknown): void {
 async function load(silent = false): Promise<boolean> {
   if (!silent) loading.value = true
   try {
-    const [
-      allCases,
-      activeCases,
-      taskPage,
-      execPage,
-      passRate,
-      envPage,
-      promptPage,
-      modelPage,
-      statsOverview,
-      candidatesPage,
-      pendingCandidatesPage,
-      caliberPage,
-      sourcePage,
-      capabilityPage,
-      evalPage,
-    ] = await Promise.all([
-      api.cases.list({ page: 1, page_size: 1 }),
-      api.cases.list({ page: 1, page_size: 1, status: 'ACTIVE' }),
-      api.tasks.list({ page_size: 50, include_runs: true }),
-      api.executions.list({ page_size: 20 }),
-      api.executions.passRate(24),
-      api.environments.list({ page_size: 100 }),
-      api.prompts.list({ page: 1, page_size: 1 }),
-      api.models.list({ page: 1, page_size: 1 }),
-      api.stats.overview(),
-      api.candidates.list({ page: 1, page_size: 1 }),
-      api.candidates.list({ status: 'NEW', page: 1, page_size: 1 }),
-      api.calibers.list({ page: 1, page_size: 1 }),
-      api.dataSources.list({ page: 1, page_size: 100 }),
-      api.capabilities.list({ page: 1, page_size: 100 }),
-      api.grader.evals({ page: 1, page_size: 1 }),
-    ])
-    caseTotal.value = allCases.total
-    activeCaseTotal.value = activeCases.total
-    tasks.value = taskPage.items
-    taskTotal.value = taskPage.total
-    recentExecutions.value = execPage.items
-    executionTotal.value = execPage.total
-    passRateSummary.value = passRate
-    environments.value = envPage.items
-    promptTotal.value = promptPage.total
-    modelTotal.value = modelPage.total
+    // 按当前用户权限裁剪请求：无权限的板块直接不请求（避免 403 刷屏）；
+    // 各板块独立容错，单个接口失败不再拖垮整个大盘。
+    const jobs: Array<Promise<void>> = []
+    const guard = (perm: string, apply: () => Promise<void>): void => {
+      if (!auth.can(perm)) return
+      jobs.push(apply())
+    }
 
-    opsOverview.value = statsOverview
-    candidateTotal.value = candidatesPage.total
-    candidatePending.value = pendingCandidatesPage.total
-    caliberTotal.value = caliberPage.total
-    sourceTotal.value = sourcePage.total
-    sourceActive.value = sourcePage.items.filter((item) => item.is_active).length
-    sourceProbeFailed.value = sourcePage.items.filter(
-      (item) => item.is_active && item.last_probe_status && item.last_probe_status !== 'OK',
-    ).length
-    capabilityTotal.value = capabilityPage.total
-    latestEval.value = evalPage.items[0] ?? null
-    return true
-  } catch (exc) {
-    if (!silent) reportError(exc)
-    return false
+    guard('case:read', async () => {
+      const [allCases, activeCases] = await Promise.all([
+        api.cases.list({ page: 1, page_size: 1 }),
+        api.cases.list({ page: 1, page_size: 1, status: 'ACTIVE' }),
+      ])
+      caseTotal.value = allCases.total
+      activeCaseTotal.value = activeCases.total
+    })
+    guard('task:read', async () => {
+      const taskPage = await api.tasks.list({ page_size: 50, include_runs: true })
+      tasks.value = taskPage.items
+      taskTotal.value = taskPage.total
+    })
+    guard('execution:read', async () => {
+      const [execPage, passRate] = await Promise.all([
+        api.executions.list({ page_size: 20 }),
+        api.executions.passRate(24),
+      ])
+      recentExecutions.value = execPage.items
+      executionTotal.value = execPage.total
+      passRateSummary.value = passRate
+    })
+    guard('environment:read', async () => {
+      const envPage = await api.environments.list({ page_size: 100 })
+      environments.value = envPage.items
+    })
+    guard('prompt:read', async () => {
+      promptTotal.value = (await api.prompts.list({ page: 1, page_size: 1 })).total
+    })
+    guard('model:read', async () => {
+      modelTotal.value = (await api.models.list({ page: 1, page_size: 1 })).total
+    })
+    guard('stats:read', async () => {
+      opsOverview.value = await api.stats.overview()
+    })
+    guard('candidate:read', async () => {
+      const [candidatesPage, pendingCandidatesPage] = await Promise.all([
+        api.candidates.list({ page: 1, page_size: 1 }),
+        api.candidates.list({ status: 'NEW', page: 1, page_size: 1 }),
+      ])
+      candidateTotal.value = candidatesPage.total
+      candidatePending.value = pendingCandidatesPage.total
+    })
+    guard('caliber:read', async () => {
+      caliberTotal.value = (await api.calibers.list({ page: 1, page_size: 1 })).total
+    })
+    guard('capability:read', async () => {
+      const [sourcePage, capabilityPage] = await Promise.all([
+        api.dataSources.list({ page: 1, page_size: 100 }),
+        api.capabilities.list({ page: 1, page_size: 100 }),
+      ])
+      sourceTotal.value = sourcePage.total
+      sourceActive.value = sourcePage.items.filter((item) => item.is_active).length
+      sourceProbeFailed.value = sourcePage.items.filter(
+        (item) => item.is_active && item.last_probe_status && item.last_probe_status !== 'OK',
+      ).length
+      capabilityTotal.value = capabilityPage.total
+    })
+    guard('grader:run', async () => {
+      const evalPage = await api.grader.evals({ page: 1, page_size: 1 })
+      latestEval.value = evalPage.items[0] ?? null
+    })
+
+    const results = await Promise.allSettled(jobs)
+    const failed = results.filter((item) => item.status === 'rejected')
+    if (failed.length && !silent) {
+      const first = failed[0]
+      reportError(first.status === 'rejected' ? first.reason : null)
+    }
+    return failed.length === 0
   } finally {
     if (!silent) loading.value = false
   }
@@ -264,24 +285,28 @@ onBeforeUnmount(() => {
 
     <div class="grid grid-cols-2 gap-3 xl:grid-cols-4">
       <MetricCard
+        v-if="auth.can('case:read')"
         label="用例资产"
         :value="caseTotal"
         :hint="`其中启用 ${activeCaseTotal} 条`"
         accent="sky"
       />
       <MetricCard
+        v-if="auth.can('task:read')"
         label="批量任务"
         :value="taskTotal"
         :hint="`最近 ${tasks.length} 条任务中 ${activeTaskCount} 条在队列`"
         accent="indigo"
       />
       <MetricCard
+        v-if="auth.can('task:read')"
         label="运行中"
         :value="runningCount"
         hint="实时执行中的批量任务"
         accent="amber"
       />
       <MetricCard
+        v-if="auth.can('execution:read')"
         label="最近执行通过率"
         :value="formatPercent(recentPassRate, 1)"
         :hint="
@@ -296,7 +321,7 @@ onBeforeUnmount(() => {
 
     <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
       <div class="min-w-0 space-y-5">
-        <section class="card overflow-hidden">
+        <section v-if="auth.can('task:read')" class="card overflow-hidden">
           <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3">
             <div>
               <h2 class="panel-title">批量任务状态</h2>
@@ -332,7 +357,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="card overflow-hidden">
+        <section v-if="auth.can('task:read')" class="card overflow-hidden">
           <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3">
             <div>
               <h2 class="panel-title">最近批量任务</h2>
@@ -400,7 +425,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="card overflow-hidden">
+        <section v-if="auth.can('execution:read')" class="card overflow-hidden">
           <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3">
             <div>
               <h2 class="panel-title">最近执行记录</h2>
@@ -455,7 +480,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="space-y-5">
-        <section class="card overflow-hidden">
+        <section v-if="auth.can('environment:read')" class="card overflow-hidden">
           <header class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
             <div>
               <h2 class="panel-title">环境健康</h2>
@@ -492,31 +517,37 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="card overflow-hidden">
+        <section
+          v-if="auth.canAny(['case:read', 'prompt:read', 'model:read'])"
+          class="card overflow-hidden"
+        >
           <header class="border-b border-slate-200 px-4 py-3">
             <h2 class="panel-title">资产概况</h2>
           </header>
           <dl class="divide-y divide-slate-200 px-4">
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('case:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">用例总数</dt>
               <dd class="font-medium tabular-nums text-slate-800">{{ caseTotal }}</dd>
             </div>
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('case:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">启用用例</dt>
               <dd class="font-medium tabular-nums text-emerald-600">{{ activeCaseTotal }}</dd>
             </div>
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('prompt:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">Prompt 模板</dt>
               <dd class="font-medium tabular-nums text-slate-800">{{ promptTotal }}</dd>
             </div>
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('model:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">模型配置</dt>
               <dd class="font-medium tabular-nums text-slate-800">{{ modelTotal }}</dd>
             </div>
           </dl>
         </section>
 
-        <section class="card overflow-hidden">
+        <section
+          v-if="auth.canAny(['candidate:read', 'capability:read', 'grader:run', 'stats:read'])"
+          class="card overflow-hidden"
+        >
           <header class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
             <div>
               <h2 class="panel-title">运营待办</h2>
@@ -528,6 +559,7 @@ onBeforeUnmount(() => {
           </header>
           <div class="divide-y divide-slate-200">
             <RouterLink
+              v-if="auth.can('candidate:read')"
               to="/ops?tab=candidates"
               class="flex items-center justify-between gap-2 px-4 py-2.5 transition hover:bg-canvas"
             >
@@ -544,6 +576,7 @@ onBeforeUnmount(() => {
               </span>
             </RouterLink>
             <RouterLink
+              v-if="auth.can('capability:read')"
               to="/ops?tab=sources"
               class="flex items-center justify-between gap-2 px-4 py-2.5 transition hover:bg-canvas"
             >
@@ -560,6 +593,7 @@ onBeforeUnmount(() => {
               </span>
             </RouterLink>
             <RouterLink
+              v-if="auth.can('grader:run')"
               to="/ops?tab=grader"
               class="flex items-center justify-between gap-2 px-4 py-2.5 transition hover:bg-canvas"
             >
@@ -578,6 +612,7 @@ onBeforeUnmount(() => {
               <span v-else class="text-[10px] text-slate-500">尚未运行</span>
             </RouterLink>
             <RouterLink
+              v-if="auth.can('stats:read')"
               to="/ops?tab=stats"
               class="flex items-center justify-between gap-2 px-4 py-2.5 transition hover:bg-canvas"
             >
@@ -596,7 +631,10 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="card overflow-hidden">
+        <section
+          v-if="auth.canAny(['caliber:read', 'capability:read', 'stats:read', 'candidate:read'])"
+          class="card overflow-hidden"
+        >
           <header class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
             <div>
               <h2 class="panel-title">运营概况</h2>
@@ -607,40 +645,40 @@ onBeforeUnmount(() => {
             </RouterLink>
           </header>
           <dl class="divide-y divide-slate-200 px-4">
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('caliber:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">业务口径</dt>
               <dd class="font-medium tabular-nums text-slate-800">{{ caliberTotal }}</dd>
             </div>
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('capability:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">数据源</dt>
               <dd class="font-medium tabular-nums text-slate-800">
                 {{ sourceTotal }}
                 <span class="ml-1 font-normal text-slate-500">启用 {{ sourceActive }}</span>
               </dd>
             </div>
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('capability:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">取数能力</dt>
               <dd class="font-medium tabular-nums text-slate-800">{{ capabilityTotal }}</dd>
             </div>
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('stats:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">契约执行</dt>
               <dd class="font-medium tabular-nums text-slate-800">
                 {{ opsOverview?.execution_total ?? 0 }} 次
               </dd>
             </div>
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('stats:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">契约通过率</dt>
               <dd class="font-medium tabular-nums text-emerald-600">
                 {{ formatPercent(opsOverview?.pass_rate, 1) }}
               </dd>
             </div>
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('stats:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">事实通过率</dt>
               <dd class="font-medium tabular-nums text-indigo-600">
                 {{ formatPercent(opsOverview?.fact_pass_rate, 1) }}
               </dd>
             </div>
-            <div class="flex items-center justify-between py-2.5 text-xs">
+            <div v-if="auth.can('candidate:read')" class="flex items-center justify-between py-2.5 text-xs">
               <dt class="text-slate-500">候选池</dt>
               <dd class="font-medium tabular-nums text-slate-800">
                 {{ candidateTotal }}

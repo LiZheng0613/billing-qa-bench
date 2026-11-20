@@ -28,7 +28,7 @@ export type TerminationStatus =
   | 'ERROR'
 
 export type RevisionChangeType = 'CREATE' | 'UPDATE' | 'IMPORT' | 'ROLLBACK'
-export type ExecutionSource = 'BATCH' | 'RETRY' | 'DEBUG' | 'SANDBOX'
+export type ExecutionSource = 'BATCH' | 'RETRY' | 'DEBUG' | 'SANDBOX' | 'RESUME'
 
 export interface Page<T> {
   items: T[]

@@ -34,8 +34,10 @@ import {
   roleLabel,
 } from '../utils/format'
 import { useToastStore } from '../stores/toast'
+import { useAuthStore } from '../stores/auth'
 
 const toast = useToastStore()
+const auth = useAuthStore()
 const confirm = useConfirm()
 
 type TabKey = 'environments' | 'models'
@@ -1052,13 +1054,17 @@ onMounted(() => {
     >
       <template #actions>
         <button class="btn-ghost" @click="refreshConfig">刷新</button>
-        <button v-if="activeTab === 'environments'" class="btn-primary" @click="openCreateEnv">
+        <button
+          v-if="activeTab === 'environments' && auth.can('environment:write')"
+          class="btn-primary"
+          @click="openCreateEnv"
+        >
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" d="M12 5v14M5 12h14" />
           </svg>
           新建环境
         </button>
-        <button v-else class="btn-primary" @click="openCreateModel">
+        <button v-else-if="activeTab === 'models' && auth.can('model:write')" class="btn-primary" @click="openCreateModel">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" d="M12 5v14M5 12h14" />
           </svg>
@@ -1156,10 +1162,34 @@ onMounted(() => {
               </td>
               <td class="td">
                 <div class="flex flex-wrap justify-end gap-1">
-                  <button class="btn-primary btn-xs" @click="openDebug(item)">调试</button>
-                  <button class="btn-ghost btn-xs" @click="openVariables(item)">变量</button>
-                  <button class="btn-ghost btn-xs" @click="openEditEnv(item)">编辑</button>
-                  <button class="btn-danger btn-xs" @click="removeEnv(item)">删除</button>
+                  <button
+                    v-if="auth.can('environment:write')"
+                    class="btn-primary btn-xs"
+                    @click="openDebug(item)"
+                  >
+                    调试
+                  </button>
+                  <button
+                    v-if="auth.can('environment:write')"
+                    class="btn-ghost btn-xs"
+                    @click="openVariables(item)"
+                  >
+                    变量
+                  </button>
+                  <button
+                    v-if="auth.can('environment:write')"
+                    class="btn-ghost btn-xs"
+                    @click="openEditEnv(item)"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    v-if="auth.can('environment:write')"
+                    class="btn-danger btn-xs"
+                    @click="removeEnv(item)"
+                  >
+                    删除
+                  </button>
                 </div>
               </td>
             </tr>
@@ -1170,7 +1200,13 @@ onMounted(() => {
           title="还没有执行环境"
           description="新建一个环境，填写被测系统的 Base URL、接口路径与字段提取器。"
         >
-          <button class="btn-primary btn-xs mt-2" @click="openCreateEnv">新建环境</button>
+          <button
+            v-if="auth.can('environment:write')"
+            class="btn-primary btn-xs mt-2"
+            @click="openCreateEnv"
+          >
+            新建环境
+          </button>
         </EmptyState>
       </div>
     </section>
@@ -1260,14 +1296,27 @@ onMounted(() => {
               <td class="td">
                 <div class="flex flex-wrap justify-end gap-1">
                   <button
+                    v-if="auth.can('model:test')"
                     class="btn-ghost btn-xs"
                     :disabled="testingId === item.id"
                     @click="testModel(item)"
                   >
                     {{ testingId === item.id ? '测试中…' : '测试' }}
                   </button>
-                  <button class="btn-ghost btn-xs" @click="openEditModel(item)">编辑</button>
-                  <button class="btn-danger btn-xs" @click="removeModel(item)">删除</button>
+                  <button
+                    v-if="auth.can('model:write')"
+                    class="btn-ghost btn-xs"
+                    @click="openEditModel(item)"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    v-if="auth.can('model:write')"
+                    class="btn-danger btn-xs"
+                    @click="removeModel(item)"
+                  >
+                    删除
+                  </button>
                 </div>
               </td>
             </tr>
@@ -1278,7 +1327,13 @@ onMounted(() => {
           title="还没有注册模型"
           description="至少注册一个模拟器模型与裁判模型，才能运行动态多轮与 LLM 裁决。"
         >
-          <button class="btn-primary btn-xs mt-2" @click="openCreateModel">注册模型</button>
+          <button
+            v-if="auth.can('model:write')"
+            class="btn-primary btn-xs mt-2"
+            @click="openCreateModel"
+          >
+            注册模型
+          </button>
         </EmptyState>
       </div>
     </section>

@@ -10,7 +10,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import task_to_out
-from billing_qa.core.authz import require_module_access
+from billing_qa.core.authz import require_module_access, require_permission
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.schedule_time import normalize_local, normalize_weekdays, parse_time_text
 from billing_qa.core.search import keyword_condition
@@ -79,7 +79,6 @@ router = APIRouter(
                     "task:stop",
                     "task:delete",
                     "execution:retry",
-                    "execution:export",
                 ),
             )
         )
@@ -254,7 +253,12 @@ async def list_tasks(
     )
 
 
-@router.post("", response_model=TaskOut, summary="创建批量任务")
+@router.post(
+    "",
+    response_model=TaskOut,
+    summary="创建批量任务",
+    dependencies=[Depends(require_permission("task:create"))],
+)
 async def create_task(
     payload: TaskCreate,
     db: AsyncSession = Depends(get_db),
@@ -446,7 +450,12 @@ async def _trigger_plan(db: AsyncSession, task: BatchTask) -> BatchTask:
     return run
 
 
-@router.post("/{task_id}/start", response_model=MessageResponse, summary="启动任务")
+@router.post(
+    "/{task_id}/start",
+    response_model=MessageResponse,
+    summary="启动任务",
+    dependencies=[Depends(require_permission("task:create"))],
+)
 async def start_task(task_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
     task = await _get_task(db, task_id)
     if _is_plan(task):
@@ -459,7 +468,10 @@ async def start_task(task_id: int, db: AsyncSession = Depends(get_db)) -> Messag
 
 
 @router.post(
-    "/{task_id}/run-now", response_model=TaskOut, summary="立即执行一次定时计划"
+    "/{task_id}/run-now",
+    response_model=TaskOut,
+    summary="立即执行一次定时计划",
+    dependencies=[Depends(require_permission("task:create"))],
 )
 async def run_task_now(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskOut:
     task = await _get_task(db, task_id)
@@ -473,7 +485,12 @@ async def run_task_now(task_id: int, db: AsyncSession = Depends(get_db)) -> Task
     return await _task_out(db, run)
 
 
-@router.put("/{task_id}/schedule", response_model=TaskOut, summary="调整定时计划")
+@router.put(
+    "/{task_id}/schedule",
+    response_model=TaskOut,
+    summary="调整定时计划",
+    dependencies=[Depends(require_permission("task:create"))],
+)
 async def update_schedule(
     task_id: int,
     payload: TaskScheduleUpdate,
@@ -525,7 +542,9 @@ async def update_schedule(
     task.scheduled_at = scheduled_at
     task.schedule_time = schedule_time
     task.schedule_weekdays = weekdays or None
-    task.schedule_active = payload.active if payload.active is not None else True
+    # 未显式传 active 时保持现状：避免「只编辑时间的调用静默重启已停计划」。
+    # 注意 activate 分支要求显式传 active=true（或原本就是激活态的编辑）。
+    task.schedule_active = payload.active if payload.active is not None else task.schedule_active
     if task.schedule_active:
         task.next_run_at = initial_next_run(
             schedule_type=schedule_type,
@@ -547,7 +566,12 @@ async def update_schedule(
     return await _task_out(db, task)
 
 
-@router.post("/{task_id}/abort", response_model=MessageResponse, summary="终止任务")
+@router.post(
+    "/{task_id}/abort",
+    response_model=MessageResponse,
+    summary="终止任务",
+    dependencies=[Depends(require_permission("task:stop"))],
+)
 async def abort_task(task_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
     task = await _get_task(db, task_id)
     # 定时计划：还没开跑时直接停掉后续触发，不进入调度器
@@ -565,7 +589,12 @@ async def abort_task(task_id: int, db: AsyncSession = Depends(get_db)) -> Messag
     return MessageResponse(message="终止指令已下发")
 
 
-@router.post("/{task_id}/stop-plan", response_model=TaskOut, summary="停止计划")
+@router.post(
+    "/{task_id}/stop-plan",
+    response_model=TaskOut,
+    summary="停止计划",
+    dependencies=[Depends(require_permission("task:stop"))],
+)
 async def stop_plan(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskOut:
     """停止计划的后续触发；连续多轮计划同时终止当前/待执行的轮次。
 
@@ -615,7 +644,10 @@ async def stop_plan(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskOut
 
 
 @router.post(
-    "/{task_id}/retry-failed", response_model=MessageResponse, summary="失败用例断点重跑"
+    "/{task_id}/retry-failed",
+    response_model=MessageResponse,
+    summary="失败用例断点重跑",
+    dependencies=[Depends(require_permission("execution:retry"))],
 )
 async def retry_failed(task_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
     task = await _get_task(db, task_id)
@@ -634,11 +666,10 @@ async def retry_failed(task_id: int, db: AsyncSession = Depends(get_db)) -> Mess
             targets.append(int(case_id))
     if not targets:
         raise ConflictError("没有可重跑的失败/异常用例")
-    task.status = TaskStatus.RUNNING
-    task.control_state = "RUNNING"
-    task.error_message = None
-    task.finished_at = None
-    await db.commit()
+    # 不在此处预写 RUNNING：状态翻转统一由调度器 worker 执行。若先落库再
+    # start，并发终止会落在两者之间（终止端点看到 RUNNING 会放行，而 worker
+    # 只拦 ABORTING），导致终止意图丢失、任务照跑；交由 worker 翻转后，
+    # 终止端点对「已结束任务」的守卫在所有时序下都成立。
     if not await scheduler.start(task_id, retry_failed=True):
         raise ConflictError("任务已在运行中")
     return MessageResponse(
@@ -647,7 +678,10 @@ async def retry_failed(task_id: int, db: AsyncSession = Depends(get_db)) -> Mess
 
 
 @router.post(
-    "/{task_id}/resume", response_model=MessageResponse, summary="续做未完成用例"
+    "/{task_id}/resume",
+    response_model=MessageResponse,
+    summary="续做未完成用例",
+    dependencies=[Depends(require_permission("execution:retry"))],
 )
 async def resume_task(task_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
     """终止或异常结束后，从未完成处继续执行。
@@ -667,12 +701,7 @@ async def resume_task(task_id: int, db: AsyncSession = Depends(get_db)) -> Messa
         raise ConflictError(
             "所有用例都已有最终结果，无需续做；如需重跑失败用例请使用「失败重跑」"
         )
-    task.status = TaskStatus.RUNNING
-    task.control_state = "RUNNING"
-    task.started_at = task.started_at or now()
-    task.finished_at = None
-    task.error_message = None
-    await db.commit()
+    # 同「失败重跑」：不预写 RUNNING，由 worker 统一翻转，保证并发终止意图不丢。
     if not await scheduler.start(task_id, resume=True):
         raise ConflictError("任务已在运行中")
     return MessageResponse(
@@ -687,6 +716,7 @@ async def resume_task(task_id: int, db: AsyncSession = Depends(get_db)) -> Messa
     "/{task_id}/cases/{case_id}/retry",
     response_model=MessageResponse,
     summary="批次内单用例重试",
+    dependencies=[Depends(require_permission("execution:retry"))],
 )
 async def retry_case(
     task_id: int, case_id: int, db: AsyncSession = Depends(get_db)
@@ -1265,7 +1295,11 @@ def _safe_filename_part(value: str | None) -> str:
     return safe or "task"
 
 
-@router.get("/{task_id}/export", summary="导出本次批量执行结果（Excel / JSONL）")
+@router.get(
+    "/{task_id}/export",
+    summary="导出本次批量执行结果（Excel / JSONL）",
+    dependencies=[Depends(require_permission("task:export"))],
+)
 async def export_task_results(
     task_id: int,
     latest_per_case: bool = Query(

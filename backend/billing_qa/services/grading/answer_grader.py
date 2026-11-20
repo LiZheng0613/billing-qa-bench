@@ -149,7 +149,9 @@ async def grade_answer(
     scorecard = dict(result.scorecard)
     scorecard["assumption_honesty"] = _assumption_score(behavior, input_type)
     off_topic = any(item.kind == "off_topic" for item in result.extras)
-    scorecard["clarity"] = _clarity_score(answer, envelope, off_topic=off_topic)
+    scorecard["clarity"] = _clarity_score(
+        answer, envelope, off_topic=off_topic, question=_final_question(turn_records)
+    )
     total_score = round(
         sum(scorecard.get(key, 0.0) * weight for key, weight in SCORECARD_WEIGHTS.items()),
         2,
@@ -292,7 +294,13 @@ def _assumption_score(behavior: BehaviorResult, input_type: str) -> float:
     return 100.0 if behavior.allowed else 30.0
 
 
-def _clarity_score(answer: str, envelope: AnswerEnvelope, *, off_topic: bool = False) -> float:
+def _clarity_score(
+    answer: str,
+    envelope: AnswerEnvelope,
+    *,
+    off_topic: bool = False,
+    question: str | None = None,
+) -> float:
     text = (answer or "").strip()
     if not text:
         return 0.0
@@ -312,8 +320,10 @@ def _clarity_score(answer: str, envelope: AnswerEnvelope, *, off_topic: bool = F
         ]
         if anchors and not any(anchor and anchor in head for anchor in anchors):
             score -= 25.0
-    question_len = max(1, len(text) // 3)
-    if len(text) / question_len > max_ratio * 3:
+    # 冗长检查：答案长度相对问题长度不应超过 max_ratio 的 3 倍。
+    # 之前误用答案自身长度推导「问题长度」，比值恒为 3，检查永远不触发。
+    question_text = (question or "").strip()
+    if question_text and len(text) / max(1, len(question_text)) > max_ratio * 3:
         score -= 10.0
     return round(max(0.0, min(100.0, score)), 2)
 

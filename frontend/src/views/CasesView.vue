@@ -30,10 +30,12 @@ import {
   scheduleValidationError,
 } from '../utils/schedule'
 import { useDebugStore } from '../stores/debug'
+import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toast'
 
 const router = useRouter()
 const toast = useToastStore()
+const auth = useAuthStore()
 const debugStore = useDebugStore()
 
 const cases = ref<TestCase[]>([])
@@ -502,9 +504,10 @@ onMounted(() => {
     >
       <template #actions>
         <input ref="importInput" type="file" accept=".json" class="hidden" @change="onImport" />
-        <button class="btn-ghost" @click="triggerImport">导入 JSON</button>
-        <button class="btn-ghost" @click="exportCases">导出 JSON</button>
+        <button v-if="auth.can('case:import')" class="btn-ghost" @click="triggerImport">导入 JSON</button>
+        <button v-if="auth.can('case:export')" class="btn-ghost" @click="exportCases">导出 JSON</button>
         <button
+          v-if="auth.can('task:create')"
           class="btn-ghost"
           title="选择当前页、跨页筛选结果或全部启用用例执行"
           @click="openBatch"
@@ -514,7 +517,7 @@ onMounted(() => {
           </svg>
           批量执行<span v-if="selectedIds.length">（{{ selectedIds.length }}）</span>
         </button>
-        <button class="btn-primary" @click="openCreate">
+        <button v-if="auth.can('case:create')" class="btn-primary" @click="openCreate">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" d="M12 5v14M5 12h14" />
           </svg>
@@ -686,8 +689,9 @@ onMounted(() => {
               <td class="td sticky right-0 z-10 bg-white">
                 <div class="flex flex-wrap justify-end gap-1">
                   <button class="btn-ghost btn-xs" @click="openDetail(item)">详情</button>
-                  <button class="btn-ghost btn-xs" @click="openCopy(item)">复制</button>
+                  <button v-if="auth.can('case:create')" class="btn-ghost btn-xs" @click="openCopy(item)">复制</button>
                   <button
+                    v-if="auth.can('case:debug')"
                     class="btn-ghost btn-xs"
                     :disabled="debugStore.isRunning(item.id)"
                     @click="debugCase(item)"
@@ -704,7 +708,13 @@ onMounted(() => {
           title="没有匹配的用例"
           description="调整筛选条件，或新建一条用例开始测试。"
         >
-          <button class="btn-primary btn-xs mt-2" @click="openCreate">新建用例</button>
+          <button
+            v-if="auth.can('case:create')"
+            class="btn-primary btn-xs mt-2"
+            @click="openCreate"
+          >
+            新建用例
+          </button>
         </EmptyState>
       </div>
 

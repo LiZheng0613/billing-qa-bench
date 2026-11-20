@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import build_execution_detail, case_to_out
-from billing_qa.core.authz import require_module_access
+from billing_qa.core.authz import require_module_access, require_permission
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.logging import get_logger
 from billing_qa.core.search import keyword_condition
@@ -324,7 +324,12 @@ async def list_cases(
     )
 
 
-@router.post("", response_model=CaseOut, summary="创建用例")
+@router.post(
+    "",
+    response_model=CaseOut,
+    summary="创建用例",
+    dependencies=[Depends(require_permission("case:create"))],
+)
 async def create_case(
     payload: CaseCreate,
     db: AsyncSession = Depends(get_db),
@@ -379,7 +384,11 @@ def _build_excel_rows(
     return rows
 
 
-@router.get("/export", summary="导出用例（JSON 版本化信封）")
+@router.get(
+    "/export",
+    summary="导出用例（JSON 版本化信封）",
+    dependencies=[Depends(require_permission("case:export"))],
+)
 async def export_cases(
     format: str = Query(default="json", pattern="^(json|xlsx)$"),
     case_type: CaseType | None = None,
@@ -462,7 +471,12 @@ async def export_cases(
     )
 
 
-@router.post("/import", response_model=ImportResult, summary="批量导入用例（JSON）")
+@router.post(
+    "/import",
+    response_model=ImportResult,
+    summary="批量导入用例（JSON）",
+    dependencies=[Depends(require_permission("case:import"))],
+)
 async def import_cases(
     file: UploadFile = File(...),
     dry_run: bool = Query(default=False, description="只校验并预览，不写入数据库"),
@@ -652,6 +666,7 @@ async def import_cases(
     "/ai-draft",
     response_model=CaseAIDraftResponse,
     summary="AI 生成用例草稿（不落库，需人工确认）",
+    dependencies=[Depends(require_permission("case:create"))],
 )
 async def ai_draft_case(
     payload: CaseAIDraftRequest,
@@ -709,6 +724,7 @@ async def list_case_facts(
     "/{case_id}/facts/{fact_id}/verify",
     response_model=CaseOut,
     summary="登记单条事实的取证结论",
+    dependencies=[Depends(require_permission("case:update"))],
 )
 async def verify_case_fact(
     case_id: int,
@@ -755,7 +771,12 @@ async def verify_case_fact(
     )
 
 
-@router.post("/{case_id}/review", response_model=CaseOut, summary="评审用例")
+@router.post(
+    "/{case_id}/review",
+    response_model=CaseOut,
+    summary="评审用例",
+    dependencies=[Depends(require_permission("case:review"))],
+)
 async def review_case(
     case_id: int,
     payload: CaseReviewRequest,
@@ -782,7 +803,12 @@ async def review_case(
     return await _commit_case_change(db, case, operator, summary)
 
 
-@router.post("/{case_id}/freeze", response_model=CaseOut, summary="冻结用例进数据集")
+@router.post(
+    "/{case_id}/freeze",
+    response_model=CaseOut,
+    summary="冻结用例进数据集",
+    dependencies=[Depends(require_permission("case:freeze"))],
+)
 async def freeze_case(
     case_id: int,
     payload: CaseFreezeRequest,
@@ -808,7 +834,12 @@ async def freeze_case(
     return await _commit_case_change(db, case, operator, summary)
 
 
-@router.put("/{case_id}", response_model=CaseOut, summary="编辑用例（自动生成版本快照）")
+@router.put(
+    "/{case_id}",
+    response_model=CaseOut,
+    summary="编辑用例（自动生成版本快照）",
+    dependencies=[Depends(require_permission("case:update"))],
+)
 async def update_case(
     case_id: int,
     payload: CaseUpdate,
@@ -861,7 +892,12 @@ async def update_case(
     return enriched[0]
 
 
-@router.delete("/{case_id}", response_model=MessageResponse, summary="删除用例（软删除）")
+@router.delete(
+    "/{case_id}",
+    response_model=MessageResponse,
+    summary="删除用例（软删除）",
+    dependencies=[Depends(require_permission("case:delete"))],
+)
 async def delete_case(
     case_id: int,
     db: AsyncSession = Depends(get_db),
@@ -936,7 +972,12 @@ async def diff_revisions(
     )
 
 
-@router.post("/{case_id}/rollback", response_model=CaseOut, summary="回滚至指定版本")
+@router.post(
+    "/{case_id}/rollback",
+    response_model=CaseOut,
+    summary="回滚至指定版本",
+    dependencies=[Depends(require_permission("case:rollback"))],
+)
 async def rollback_case(
     case_id: int,
     payload: RollbackRequest,
@@ -1166,7 +1207,12 @@ async def compare_runs(
     )
 
 
-@router.post("/{case_id}/debug", response_model=ExecutionDetail, summary="单条用例调试执行")
+@router.post(
+    "/{case_id}/debug",
+    response_model=ExecutionDetail,
+    summary="单条用例调试执行",
+    dependencies=[Depends(require_permission("case:debug"))],
+)
 async def debug_case(
     case_id: int,
     payload: CaseDebugRequest,

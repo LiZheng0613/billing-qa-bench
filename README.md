@@ -32,7 +32,7 @@
 | --- | --- |
 | 版本快照 | 每次保存用例生成 `TestCaseRevision` 快照，`ExecutionRecord.case_version` 精确绑定执行时的用例版本 |
 | 版本 Diff / 回滚 | 字段级 Diff（含嵌套 JSON 路径）、历史修改记录、一键回滚并自动生成新版本 |
-| 调试工作台 | 编辑任意字段后直接试运行，不生成版本、不动评审状态；草稿记录标记 `SANDBOX`，不进入趋势统计 |
+| 调试工作台 | 编辑任意字段后直接试运行，不生成版本、不动评审状态；草稿记录标记 `SANDBOX`，不进入趋势、通过率与事实统计口径 |
 | 三类用例 | 单轮问答、静态多轮脚本、动态多轮（目标驱动 + 隐藏信息挤牙膏式释放） |
 | 动态多轮状态机 | 模拟器按 `CONTINUE / GOAL_ACHIEVED / GIVE_UP` 驱动，轮次上限与硬上限双重保护 |
 | 三重熔断 | 最大轮次 `MAX_TURNS_EXCEEDED`、复读检测 `REPETITION_ABORT`、模拟器放弃 `GIVE_UP`；熔断一律判不通过 |
@@ -46,7 +46,7 @@
 | 指标大盘 | 通过率、平均 TTFT、P95 时延、Token 消耗、吞吐与预计剩余时间；WebSocket 推送，断线自动降级轮询 |
 | 趋势与 Run 对比 | 单用例历史趋势（得分 / 时延 / 稳定性）、任意两次执行（Run）对比 |
 | 质量运营 | 业务口径字典、判分器自检（变异样本检出 / 误杀统计）、事实通过率与数据集分布统计 |
-| 安全 | JWT 单管理员登录、环境变量与模型 Key 使用 Fernet 加密落库；默认接口返回掩码，拥有 `environment:secret_read` / `model:secret_read` 的账号在配置页可查看明文原值 |
+| 安全 | JWT 多用户 RBAC：46 个权限码、5 个内置角色（系统管理员 / 用例操作员 / 用例审核员 / 测试执行员 / 只读观察员），模块级 + 动作级双重权限校验，操作按钮按权限渲染；登录连续 5 次失败锁定 15 分钟（到期自动恢复、可手动解锁），管理员重置密码后强制改密；环境变量与模型 Key 使用 Fernet 加密落库，默认接口返回掩码，拥有 `environment:secret_read` / `model:secret_read` 的账号在配置页可查看明文原值；关键操作写审计日志 |
 
 ---
 
@@ -56,10 +56,10 @@
 batch_test/
 ├── backend/
 │   ├── billing_qa/            # 后端应用包
-│   │   ├── api/v1/            # auth / environments / models / prompts / cases / tasks / executions / ws / calibers / candidates / capabilities / grader / stats
+│   │   ├── api/v1/            # auth / users / roles / audit / notifications / environments / models / prompts / cases / tasks / executions / ws / calibers / candidates / capabilities / grader / stats
 │   │   ├── core/              # 配置、日志、安全、异常、加密、任务控制面
 │   │   ├── db/                # 引擎/会话、建库初始化、种子数据、演示数据
-│   │   ├── models/            # 18 张 ORM 表
+│   │   ├── models/            # 22 张 ORM 表（18 业务 + 用户 / 角色 / 权限 / 审计）
 │   │   ├── schemas/           # Pydantic 请求/响应模型
 │   │   └── services/
 │   │       ├── adapter/       # 被测系统适配（SSE / JSON、模板渲染、JSONPath 提取、Basic 鉴权、前置接口钩子）
@@ -71,9 +71,9 @@ batch_test/
 │   │       ├── revision/      # 版本快照与 Diff
 │   │       └── io/            # 导入导出：用例 JSON、执行结果 Excel、用例 Excel（历史兼容）
 │   ├── migrations/            # Alembic 迁移脚本
-│   ├── mock_servers/          # 内置 Mock：LLM(8001) 与被测客服系统(8002)
+│   ├── mock_servers/          # 内置 Mock：LLM(8001)、被测客服系统(8002) 与取数执行器(8003)
 │   ├── scripts/               # api_smoke.py / e2e_smoke.py / seed_demo_history.py / migrate_mysql_to_postgres.py
-│   ├── tests/                 # 284 项 pytest
+│   ├── tests/                 # 404 项 pytest
 │   ├── alembic.ini
 │   ├── pyproject.toml
 │   └── .env.example
@@ -83,7 +83,8 @@ batch_test/
 │       ├── api/               # fetch 封装（统一错误、401 登出、鉴权下载）
 │       ├── components/        # AppShell / BaseModal / StatusPill / JsonViewer 等
 │       ├── composables/       # useEChart
-│       ├── stores/            # auth / toast / breadcrumb
+│       ├── stores/            # auth / toast / breadcrumb / debug
+│       ├── access/            # 访问管理：用户 / 角色与权限 / 审计日志
 │       ├── views/             # 登录 / 测试大盘 / 批量任务与详情 / 用例与详情 / Prompt / 单笔执行结果 / 环境与模型 / 运营后台
 │       └── utils/
 ├── docs/                      # 部署、用例 JSON 格式、Agent 对接、答案契约操作手册、演示数据集等
@@ -187,11 +188,13 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 ### 4.6 登录
 
-| 账号 | 密码 |
-| --- | --- |
-| `admin` | `admin123` |
+| 账号 | 密码 | 角色 |
+| --- | --- | --- |
+| `admin` | `admin123` | 系统管理员（`SYSTEM_ADMIN`，拥有全部权限） |
 
 账号密码可用 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 覆盖；生产环境务必同时替换 `SECRET_KEY`。
+
+平台为多用户 RBAC 模型：初始化时写入 5 个内置角色（系统管理员 / 用例操作员 / 用例审核员 / 测试执行员 / 只读观察员），「访问管理」中可创建用户、分配角色、维护自定义角色权限、解锁账号与查看审计日志。登录连续 5 次密码错误会锁定账号 15 分钟，锁定期满自动恢复。
 
 ### 4.7 演示数据包内容
 
@@ -235,6 +238,11 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 > 模拟器模型已从用例字段中移除（原 `simulator_model_id` 列与 API 字段已删除），
 > 执行时统一取全局唯一启用的 `SIMULATOR` 模型。
+
+**模型与环境删除保护**：删除是物理删除，为避免执行链路断链，以下情况返回 409 拒绝——
+
+- 模型：处于启用状态的 `SIMULATOR` / `CASE_AUTHOR` 模型（执行引擎的全局默认，需先停用）；被任意未删除用例的 `judge_model_ids`（多裁判列表）引用的模型。
+- 环境：被任意未删除用例（`environment_id`）或批量任务引用的环境；如下线请改用「编辑」调整配置。
 
 ### 6.2 AI 帮我填（全字段覆盖）
 
@@ -287,6 +295,8 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
   - `ALL_ACTIVE`：由后端一次性解析用例库中全部启用用例（跨分页、不受当前筛选影响），前端只传 `case_scope=ALL_ACTIVE`，避免上百条用例逐页勾选或请求体过大。
 - **终止后续做**：任务被终止后，可点「继续执行」从断点补跑未完成用例（未执行 / 执行中 / 被终止），已完成或已有最终判定的用例保持原结果、不重复执行；新尝试记为 `source=RESUME`，`attempt_no` 从该用例已有最大尝试次数继续递增。若需要连失败用例一起重跑，用「失败重跑」（`source=RETRY`）。
 - **重启自动续做**：服务重启（含实例崩溃）后，执行中的任务会被自动接管续做，不再被标记为「已终止」：启动时先把中断时在途的执行记录收口为 `ABORTED`（保留审计痕迹），随即以 `source=RESUME` 补跑这些用例，最终「用例最新」视图不残留终止态结果。重启前已点「终止」的任务保持终止语义，不会被拉起。多实例部署时通过 Redis 运行锁（`TASK_RUN_LOCK_TTL_SECONDS`）互斥，同一任务只由一个实例执行；实例崩溃后锁自动过期，后台轮询每 `SCHEDULE_POLL_INTERVAL_SECONDS` 秒扫描一次，把无人推进的 RUNNING 任务接管续做。
+- **定时计划多实例防重**：到期计划的派发按「计划 + 触发时刻」抢 Redis 触发锁（TTL 60 秒，覆盖读计划 → 克隆入库 → 推进 `next_run_at` 的事务窗口），多个实例同时扫到同一条到期计划时只派发一次，不会克隆出重复批次。
+- **孤儿批次自愈**：计划派发在「克隆入库」与「启动执行」之间进程退出时，会留下永远无人拉起的 PENDING 批次（周期计划还会因此一直跳过后续触发）。后台轮询每轮做恢复扫描：计划仍有效的批次自动拉起；计划已停止或控制面带终止意图的批次收口为 `ABORTED`，不自动执行。
 
 ### 6.6 批量任务详情与单笔执行结果
 
@@ -314,6 +324,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 - **字段名由模板决定**：例如 `"conversationId": "{{session_id}}"` 或 `"sessionid": "{{session_id}}"`，不同接口可各自定义，平台不写死字段名；`SERVER_RETURNED` 模式下首轮渲染为空字符串，由目标接口按首轮对话处理。
 - **接口配置页**：环境编辑弹窗内提供「Basic 鉴权」「前置接口钩子」、可用占位符清单与变量来源标注，并可选一条示例用例做**报文预览**（只读，不落库）。
 - **探活调试**：环境列表的「调试」可选一条用例，把其提问（可临时修改）经请求模板与用例变量渲染后**直接发送到目标环境**，回显请求/响应报文、耗时、会话与白盒取数；本次发送不写执行记录、不产生任务数据、不更新探活状态，仅用于连通性与功能调试。
+- **明文排障口径（有意设计）**：预览与探活调试回显的报文是**真实渲染值**——环境变量池解密后的取值、用例变量、前置接口注入的会话数据都会按模板渲染原样回显，敏感请求头（`Authorization` / `Cookie` / `X-API-Key` 等）除外（统一掩码为 `***`）。这是排障必需：管理员要定位「模板占位符拼错」「变量取值不对」「前置接口没注入」等问题，就必须看到真实渲染产物。因此这两个入口面向持有环境写权限（内置角色中即系统管理员）的账号，不按 `secret_read` 二次设卡——环境写权限本身已包含对环境机密的处置能力。
 - **执行结果**：对话轮次页展示每轮会话徽标、会话连续性小结、用例变量来源标记；不一致时会提示「上下文可能未延续」。
 
 真实 Agent 报文（前置取 `conversationId`、Basic 鉴权、首轮回填空 `sessionid`）的完整配置示例见 [`docs/AGENT_INTEGRATION_GUIDE.md`](docs/AGENT_INTEGRATION_GUIDE.md)。
@@ -355,7 +366,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 - **失败追问自检**：勾选「失败追问自检调试」后，LLM 裁决失败时在同一会话追问 Agent 自检原因；试运行卡片直接展示自检状态与结论，完整追问 Prompt / 请求响应可在 Trace「追问自检」页签查看。
 - **结果就地对照**：右侧展示执行状态、得分 / 通过线、耗时、TTFT、轮次、执行环境与模板、轮次摘要、事实判定、裁判理由与自检结论；多次试跑按时间堆叠、最新在前。
 - **轨迹往返保留现场**：「查看完整轨迹」在同标签页打开 Trace，浏览器返回键 / 鼠标侧键可直接回到当前工作台；KeepAlive 会保留草稿、试运行结果与展开状态，不会因往返丢失。
-- **草稿记录标记**：试跑记录 `source=SANDBOX`，执行记录与 Trace 显示「草稿试跑」徽标；用例趋势与事实通过率统计自动排除这类记录。
+- **草稿记录标记**：试跑记录 `source=SANDBOX`，执行记录与 Trace 显示「草稿试跑」徽标；用例趋势、执行通过率（`/executions/pass-rate`）与事实通过率 / 数据集分布统计（`/stats/overview`、`/stats/facts`）均自动排除这类记录；单条调试（`source=DEBUG`）属正式测试执行，保留统计。
 - **保存后流转**：保存成功后可直接跳转评审 / 冻结进数据集。
 
 接口：`POST /cases/{id}/debug`（body 示例：`{"draft": true, "environment_id": 1, "case_snapshot_override": {"query": "...", "turns": [...]}}`）。
@@ -383,7 +394,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | `REDIS_KEY_PREFIX` | `batchtest:` | Redis key 前缀 |
 | `SECRET_KEY` | 示例值 | JWT 与 Fernet 加密密钥，**生产必须替换** |
 | `JWT_ALGORITHM` / `JWT_EXPIRE_MINUTES` | `HS256` / `720` | JWT 配置 |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | 单管理员账号 |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | 初始管理员账号（`SYSTEM_ADMIN` 角色，初始化时写入用户表） |
 | `DEFAULT_CONCURRENCY` / `DEFAULT_QPS_LIMIT` | `3` / `5` | 任务默认并发与 QPS |
 | `SCHEDULE_POLL_INTERVAL_SECONDS` | `15` | 定时计划轮询间隔（秒） |
 | `TASK_RUN_LOCK_TTL_SECONDS` | `60` | 任务运行锁 TTL（秒）：多实例下实例崩溃后锁自动过期，允许其他实例接管续做 |
@@ -398,7 +409,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 ---
 
-## 8. 数据模型（18 张业务表）
+## 8. 数据模型（22 张表：18 业务 + 4 系统权限）
 
 | 表 | 作用 |
 | --- | --- |
@@ -420,6 +431,10 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | `case_candidate` | 候选问题池（生产日志 / 执行轨迹 / 手工录入，分诊、转正、拒绝与去重） |
 | `caliber` | 业务口径字典（指标定义、权威来源、负责人） |
 | `grader_eval` | 判分器自检（变异样本、检出数、误杀数、版本与详情） |
+| `sys_user` | 平台账号（密码哈希、状态、登录失败计数与锁定、强制改密标记） |
+| `sys_role` | 角色及角色-权限关联（内置角色不可删除） |
+| `sys_permission` | 权限码目录（46 项，模块 + 动作两级） |
+| `sys_audit_log` | 审计日志（操作人、动作、资源、IP、状态码） |
 
 ---
 
@@ -438,23 +453,26 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 ## 10. API 概览
 
-统一前缀 `/api/v1`，除登录外均需 `Authorization: Bearer <token>`。
+统一前缀 `/api/v1`，除登录外均需 `Authorization: Bearer <token>`。每个接口先过**模块级**权限（按 HTTP 方法区分读 / 写集合），写操作再过**动作级**校验（如创建用例 `case:create`、终止任务 `task:stop`、导出结果 `task:export`），权限不足返回 403。
 
 | 分组 | 主要接口 |
 | --- | --- |
-| 认证 | `POST /auth/login`、`GET /auth/me` |
-| 环境 | `GET/POST /environments`、`PUT/DELETE /environments/{id}`、`GET/PUT /environments/{id}/variables`、`POST /environments/{id}/health-check`、`GET /environments/{id}/usage`、`POST /environments/{id}/preview`（选示例用例渲染报文）、`POST /environments/{id}/debug-chat`（探活调试：选用例直发消息，不落库） |
-| 模型 | `GET/POST /models`、`PUT/DELETE /models/{id}`、`POST /models/{id}/test`、`POST /models/opencode/catalog`（拉取 OpenCode Serve 可用模型与 Agent） |
+| 认证 | `POST /auth/login`、`GET /auth/me`、`POST /auth/change-password`、`POST /auth/logout` |
+| 用户 | `GET/POST /users`、`GET/PATCH /users/{id}`、`PUT /users/{id}/roles`（分配角色）、`POST /users/{id}/reset-password`、`POST /users/{id}/unlock` |
+| 角色与权限 | `GET/POST /roles`、`GET/PATCH /roles/{id}`、`PUT /roles/{id}/permissions`、`DELETE /roles/{id}`、`GET /roles/permissions/catalog`（46 个权限码目录） |
+| 审计与通知 | `GET /audit-logs`（操作审计日志）、`GET /notifications` |
+| 环境 | `GET/POST /environments`、`PUT/DELETE /environments/{id}`（删除带引用保护，被用例 / 任务引用时 409）、`GET/PUT /environments/{id}/variables`、`POST /environments/{id}/health-check`、`GET /environments/{id}/usage`、`POST /environments/{id}/preview`（选示例用例渲染报文）、`POST /environments/{id}/debug-chat`（探活调试：选用例直发消息，不落库） |
+| 模型 | `GET/POST /models`、`PUT/DELETE /models/{id}`（删除带引用保护：启用中的模拟器 / 编写模型、被用例裁判列表引用时 409）、`POST /models/{id}/test`、`POST /models/opencode/catalog`（拉取 OpenCode Serve 可用模型与 Agent） |
 | Prompt | `GET/POST /prompts`、`GET/PUT/DELETE /prompts/{id}`、`POST /prompts/{id}/versions`、`GET /prompts/{id}/versions/{version}`、`GET /prompts/{id}/usage`、`POST /prompts/{id}/sandbox` |
 | 用例 | `GET/POST /cases`、`GET/PUT/DELETE /cases/{id}`、`POST /cases/{id}/debug`、`POST /cases/ai-draft`（AI 草稿）、`GET /cases/{id}/facts`、`POST /cases/{id}/facts/{fact_id}/verify`、`POST /cases/{id}/review`、`POST /cases/{id}/freeze`、`GET /cases/{id}/revisions`、`GET /cases/{id}/revisions/diff`、`POST /cases/{id}/rollback`、`GET /cases/{id}/trend`、`GET /cases/{id}/executions`、`GET /cases/compare/runs`、`POST /cases/import`、`GET /cases/export` |
-| 取数资产 | `GET/POST /data-sources`、`GET/PUT /data-sources/{id}`、`GET/POST /capabilities`、`GET/PUT /capabilities/{id}` |
-| 候选池 | `GET/POST /candidates`、`GET/PATCH /candidates/{id}`、`POST /candidates/{id}/reject` |
+| 取数资产 | `GET/POST /data-sources`、`GET/PUT/DELETE /data-sources/{id}`、`POST /data-sources/{id}/probe`（探活）、`GET/POST /capabilities`、`GET/PUT/DELETE /capabilities/{id}`、`POST /capabilities/{id}/evidence`（执行取证生成 GoldQuery） |
+| 候选池 | `GET/POST /candidates`、`GET/PATCH /candidates/{id}`、`POST /candidates/{id}/reject`、`POST /candidates/{id}/promote`（转正为测试用例） |
 | 业务口径 | `GET/POST /calibers`、`GET/PUT/DELETE /calibers/{id}` |
 | 判分器自检 | `GET /grader/mutants`、`POST /grader/evals/run`、`GET /grader/evals` |
-| 统计 | `GET /stats/overview`、`GET /stats/facts`、`GET /stats/datasets` |
-| 任务 | `GET/POST /tasks`、`GET /tasks/{id}`、`POST /tasks/{id}/start`、`POST /tasks/{id}/abort`、`POST /tasks/{id}/resume`（终止后从未完成处续做）、`POST /tasks/{id}/stop-plan`（停止指定时间/每天/每周/连续多轮计划）、`POST /tasks/{id}/retry-failed`、`POST /tasks/{id}/run-now`（立即执行一次定时计划）、`PUT /tasks/{id}/schedule`（编辑定时计划）、`GET /tasks/{id}/runs`（计划执行历史）、`GET /tasks/{id}/metrics`、`GET /tasks/{id}/executions`（`latest_per_case=true` 按用例取最新一次并返回尝试次数）、`GET /tasks/{id}/export`（单批次结果 Excel，`latest_per_case` 控制用例最新或全部尝试） |
-| 执行 | `GET /executions`、`GET /executions/{id}`、`GET /executions/{id}/raw` |
-| 实时 | `WS /ws/tasks/{task_id}?token=<jwt>` |
+| 统计 | `GET /stats/overview`、`GET /stats/facts`、`GET /stats/datasets`（均排除 `SANDBOX` 草稿试跑） |
+| 任务 | `GET/POST /tasks`、`GET /tasks/{id}`、`POST /tasks/{id}/start`、`POST /tasks/{id}/abort`、`POST /tasks/{id}/resume`（终止后从未完成处续做）、`POST /tasks/{id}/stop-plan`（停止指定时间/每天/每周/连续多轮计划）、`POST /tasks/{id}/retry-failed`、`POST /tasks/{id}/cases/{case_id}/retry`（批次内单用例重试）、`POST /tasks/{id}/run-now`（立即执行一次定时计划）、`PUT /tasks/{id}/schedule`（编辑定时计划）、`GET /tasks/{id}/runs`（计划执行历史）、`GET /tasks/{id}/metrics`、`GET /tasks/{id}/executions`（`latest_per_case=true` 按用例取最新一次并返回尝试次数）、`GET /tasks/{id}/export`（单批次结果 Excel，`latest_per_case` 控制用例最新或全部尝试） |
+| 执行 | `GET /executions`、`GET /executions/pass-rate`（最近 N 小时通过率，排除 `SANDBOX`）、`GET /executions/{id}`、`GET /executions/{id}/raw` |
+| 实时 | `WS /ws/tasks/{task_id}?token=<jwt>`（建连时与 REST 同口径校验账号状态与 `token_version`，禁用 / 顶号后的旧 Token 无法建立长连接） |
 
 ---
 
@@ -464,7 +482,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 ```powershell
 cd backend
-python -m pytest -q          # 284 passed（Mock / PostgreSQL 依赖不可用时自动 skip）
+python -m pytest -q          # 404 passed（Mock / PostgreSQL 依赖不可用时自动 skip）
 python -m ruff check billing_qa scripts tests
 ```
 
@@ -519,8 +537,8 @@ npm run test:e2e    # 「AI 帮我填」主链路回归
 
 ## 13. 已知限制
 
-- 单管理员模型，无多租户与 RBAC；如需扩展可在 `core/security.py` 与 `api/v1/auth.py` 上叠加。
-- 任务执行器为进程内 asyncio 调度；服务重启后执行中的任务会自动续做（在途尝试收口为 `ABORTED` 留审计，未完成用例以 `RESUME` 来源补跑）。多实例部署依赖 Redis 运行锁互斥，Redis 不可用且多实例同时运行时存在重复执行的可能（单实例不受影响）。
+- RBAC 为单租户模型：支持多用户、多角色与 46 项权限码的完整权限体系，但不做多租户（组织 / 空间）隔离；数据不分归属，所有有读权限的账号看到同一份数据。
+- 任务执行器为进程内 asyncio 调度；服务重启后执行中的任务会自动续做（在途尝试收口为 `ABORTED` 留审计，未完成用例以 `RESUME` 来源补跑）。多实例部署依赖 Redis 互斥（任务运行锁 + 计划触发锁）；Redis 不可用且多实例同时运行时存在重复执行的可能（单实例不受影响）。
 - 动态多轮的「目标达成」判定依赖模拟器输出与裁判结论，Mock 场景下由注入指令确定。
 - 前端 ECharts 全量包约 1.0 MB（gzip 343 KB），已拆分为独立 vendor chunk；如需进一步瘦身可改为按需引入。
 - 测试与冒烟脚本会在当前连接的数据库中产生临时数据（脚本会自清理创建的用例与模板，但任务与执行记录会留存）；演示库与开发库建议分开，或演示前按 §4.3 重置。
@@ -532,11 +550,15 @@ npm run test:e2e    # 「AI 帮我填」主链路回归
 | 现象 | 处理 |
 | --- | --- |
 | 后端启动报数据库连接失败 | 确认 PostgreSQL 已启动、`.env` 中账号密码与库名正确；库不存在时先执行 `python -m billing_qa.db.init_db --demo` |
+| 登录提示「账号暂时锁定」 | 连续 5 次密码错误锁定 15 分钟，锁定期满自动恢复；或由拥有 `user:write` 权限的账号在「访问管理 → 用户」中立即解锁 |
+| 管理员重置密码后无法沿用旧密码登录 | 重置会生成临时密码并标记强制改密，首次登录需立即修改密码（`must_change_password`） |
+| 接口返回 403 | 当前角色缺少对应动作权限（如 `case:create`、`task:stop`）；在「访问管理 → 角色」中调整权限，或联系系统管理员 |
 | `/health` 中 `redis: down` | 确认 Redis 已启动；平台会自动降级为进程内状态，但多进程部署需恢复 Redis |
 | 任务一直排队 | 检查任务并发/QPS 配置与 Mock 服务是否可达；查看后端日志与 `/tasks/{id}` 状态 |
 | 前端 401 自动退出 | JWT 过期（默认 12 小时），重新登录即可 |
 | 用例保存后版本未变 | 仅字段实际变更才会生成新版本；如需强制留痕可在变更说明中记录 |
 | 导入失败 | 页面入口仅支持 `.json`；先用页面「导入 JSON」走 dry-run 预览，逐条错误会列在弹窗中（格式见 [`docs/CASE_JSON_FORMAT.md`](docs/CASE_JSON_FORMAT.md)） |
+| 删除环境 / 模型返回 409 | 资产仍被用例或任务引用（模型另受「启用中的模拟器 / 编写模型不可删」保护）；先解除引用或停用后再删除，详见 §6.1 |
 | 演示库出现 `PYTEST-*` / `BATCH20*` 用例或任务 | 运行测试脚本留下的临时数据；执行 `python -m billing_qa.db.init_db --demo --reset` 与 `python scripts/seed_demo_history.py` 恢复演示基线 |
 
 ---

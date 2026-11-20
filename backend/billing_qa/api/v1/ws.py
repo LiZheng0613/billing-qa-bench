@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 
 from billing_qa.core.event_bus import event_bus
 from billing_qa.core.logging import get_logger
-from billing_qa.core.security import decode_access_token
+from billing_qa.core.security import decode_access_token, resolve_token_user
 from billing_qa.db.session import SessionLocal
 from billing_qa.models.task import BatchTask
 from billing_qa.schemas.task import TaskProgressEvent
@@ -51,7 +51,9 @@ async def task_list_socket(
 ) -> None:
     """批量任务列表实时事件流：一条连接接收所有任务的状态/进度。"""
     try:
-        decode_access_token(token or "")
+        # 与 REST 同一套校验：不只解码 JWT，还要确认账号仍可用且
+        # token_version 未被顶号 / 禁用 / 改角色刷新，防止长连接绕过。
+        await resolve_token_user(decode_access_token(token or ""))
     except HTTPException:
         await websocket.close(code=4401)
         return
@@ -83,7 +85,8 @@ async def task_progress_socket(
     token: str | None = Query(default=None),
 ) -> None:
     try:
-        decode_access_token(token or "")
+        # 同 REST 的完整校验（账号状态 / token_version），防长连接绕过。
+        await resolve_token_user(decode_access_token(token or ""))
     except HTTPException:
         await websocket.close(code=4401)
         return

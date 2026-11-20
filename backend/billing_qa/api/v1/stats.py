@@ -101,7 +101,9 @@ async def stats_overview(db: AsyncSession = Depends(get_db)) -> FactStatsOvervie
             select(
                 func.count(FactResult.id).label("total"),
                 func.sum(case((FactResult.passed.is_(True), 1), else_=0)).label("passed"),
-            )
+            ).join(ExecutionRecord, ExecutionRecord.id == FactResult.execution_id)
+            # 沙盒试跑不进入事实统计口径（与 fact_stats / 执行总览保持一致）。
+            .where(ExecutionRecord.source != ExecutionSource.SANDBOX)
         )
     ).one()
 
@@ -113,7 +115,10 @@ async def stats_overview(db: AsyncSession = Depends(get_db)) -> FactStatsOvervie
                 func.count(FactResult.id).label("total"),
                 func.sum(case((FactResult.passed.is_(True), 1), else_=0)).label("passed"),
                 func.max(FactResult.created_at).label("last_run_at"),
-            ).group_by(FactResult.fact_id, FactResult.label)
+            )
+            .join(ExecutionRecord, ExecutionRecord.id == FactResult.execution_id)
+            .where(ExecutionRecord.source != ExecutionSource.SANDBOX)
+            .group_by(FactResult.fact_id, FactResult.label)
         )
     ).all()
     ranked = _fact_rows(list(all_facts))

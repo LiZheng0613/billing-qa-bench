@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from billing_qa.api.v1.serializers import env_to_out, env_variable_to_out
-from billing_qa.core.authz import require_module_access
+from billing_qa.core.authz import require_module_access, require_permission
 from billing_qa.core.context import CurrentUser
 from billing_qa.core.crypto import decrypt_value, encrypt_value, mask_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, TargetApiError, ValidationError
@@ -62,7 +62,9 @@ router = APIRouter(
         Depends(
             require_module_access(
                 "environment:read",
-                ("environment:write", "environment:secret_read"),
+                # 密钥读取（environment:secret_read）是读权限，不应放行模块内写方法；
+                # 动作级校验由各端点的 require_permission 完成。
+                ("environment:write",),
             )
         )
     ],
@@ -172,7 +174,12 @@ async def list_environments(
     )
 
 
-@router.post("", response_model=EnvironmentOut, summary="创建环境")
+@router.post(
+    "",
+    response_model=EnvironmentOut,
+    summary="创建环境",
+    dependencies=[Depends(require_permission("environment:write"))],
+)
 async def create_environment(
     payload: EnvironmentCreate,
     db: AsyncSession = Depends(get_db),
@@ -212,7 +219,12 @@ async def get_environment(
     return env_to_out(await _get_env(db, env_id), reveal=_can_read_secret(user))
 
 
-@router.put("/{env_id}", response_model=EnvironmentOut, summary="更新环境")
+@router.put(
+    "/{env_id}",
+    response_model=EnvironmentOut,
+    summary="更新环境",
+    dependencies=[Depends(require_permission("environment:write"))],
+)
 async def update_environment(
     env_id: int,
     payload: EnvironmentUpdate,
@@ -235,9 +247,34 @@ async def update_environment(
     return env_to_out(await _get_env(db, env_id), reveal=_can_read_secret(user))
 
 
-@router.delete("/{env_id}", response_model=MessageResponse, summary="删除环境")
+@router.delete(
+    "/{env_id}",
+    response_model=MessageResponse,
+    summary="删除环境",
+    dependencies=[Depends(require_permission("environment:write"))],
+)
 async def delete_environment(env_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
     env = await _get_env(db, env_id)
+    # 引用保护：被用例或任务引用的环境不能物理删除，否则历史任务与环境变量
+    # 将无法解析；如需下线请改用「更新环境」调整配置。
+    case_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(TestCase)
+            .where(TestCase.environment_id == env_id, TestCase.deleted_at.is_(None))
+        )
+    ).scalar_one()
+    task_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(BatchTask)
+            .where(BatchTask.environment_id == env_id)
+        )
+    ).scalar_one()
+    if case_count or task_count:
+        raise ConflictError(
+            f"环境 {env.code} 已被引用（用例 {case_count} 处、任务 {task_count} 处），无法删除"
+        )
     await db.delete(env)
     await db.commit()
     return MessageResponse(message=f"环境 {env.code} 已删除")
@@ -260,6 +297,7 @@ async def list_variables(
     "/{env_id}/variables",
     response_model=list[EnvVariableOut],
     summary="批量覆盖环境变量池",
+    dependencies=[Depends(require_permission("environment:write"))],
 )
 async def replace_variables(
     env_id: int,

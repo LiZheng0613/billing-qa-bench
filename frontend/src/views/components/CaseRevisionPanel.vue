@@ -9,6 +9,7 @@ import type { CaseRevision, RevisionDiff, TestCase } from '../../types'
 import { errorMessage } from '../../utils/errors'
 import { formatDateTime, safeJson, statusLabel } from '../../utils/format'
 import { useToastStore } from '../../stores/toast'
+import { useAuthStore } from '../../stores/auth'
 
 const props = defineProps<{ modelValue: boolean; caseData: TestCase | null }>()
 const emit = defineEmits<{
@@ -17,6 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const toast = useToastStore()
+const auth = useAuthStore()
 const confirm = useConfirm()
 const revisions = ref<CaseRevision[]>([])
 const fromVersion = ref<number | null>(null)
@@ -196,6 +198,7 @@ watch(
               </p>
             </div>
             <button
+              v-if="auth.can('case:rollback')"
               class="btn-ghost btn-xs"
               :disabled="rolling || revision.version === caseData?.current_version"
               @click="rollback(revision.version)"

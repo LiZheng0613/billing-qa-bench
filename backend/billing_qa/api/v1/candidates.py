@@ -14,7 +14,7 @@ from billing_qa.api.v1.cases import (
     _validate_references,
     _validate_strategy,
 )
-from billing_qa.core.authz import require_module_access
+from billing_qa.core.authz import require_module_access, require_permission
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.search import keyword_condition
 from billing_qa.core.security import get_current_operator
@@ -99,7 +99,12 @@ async def list_candidates(
     )
 
 
-@router.post("", response_model=CandidateOut, summary="登记候选用例")
+@router.post(
+    "",
+    response_model=CandidateOut,
+    summary="登记候选用例",
+    dependencies=[Depends(require_permission("candidate:triage"))],
+)
 async def create_candidate(
     payload: CandidateCreate,
     db: AsyncSession = Depends(get_db),
@@ -131,7 +136,12 @@ async def get_candidate(
     return CandidateOut.model_validate(await _get_candidate(db, candidate_id))
 
 
-@router.patch("/{candidate_id}", response_model=CandidateOut, summary="分诊候选")
+@router.patch(
+    "/{candidate_id}",
+    response_model=CandidateOut,
+    summary="分诊候选",
+    dependencies=[Depends(require_permission("candidate:triage"))],
+)
 async def update_candidate(
     candidate_id: int,
     payload: CandidateUpdate,
@@ -150,7 +160,12 @@ async def update_candidate(
     return CandidateOut.model_validate(candidate)
 
 
-@router.post("/{candidate_id}/reject", response_model=CandidateOut, summary="拒绝候选")
+@router.post(
+    "/{candidate_id}/reject",
+    response_model=CandidateOut,
+    summary="拒绝候选",
+    dependencies=[Depends(require_permission("candidate:triage"))],
+)
 async def reject_candidate(
     candidate_id: int,
     note: str | None = Query(default=None),
@@ -170,6 +185,7 @@ async def reject_candidate(
     "/{candidate_id}/promote",
     response_model=CandidatePromoteOut,
     summary="候选转正为测试用例",
+    dependencies=[Depends(require_permission("candidate:promote"))],
 )
 async def promote_candidate(
     candidate_id: int,

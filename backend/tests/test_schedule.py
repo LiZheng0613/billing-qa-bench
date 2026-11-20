@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import delete, select
 
+from billing_qa.core.control_store import control_store
 from billing_qa.core.schedule_time import (
     compute_next_run,
     normalize_local,
@@ -20,6 +21,7 @@ from billing_qa.models.enums import TaskScheduleType, TaskStatus
 from billing_qa.models.task import BatchTask
 from billing_qa.schemas.task import TaskCreate
 from billing_qa.services.engine.schedule import (
+    _plan_trigger_lock_name,
     clone_for_run,
     clone_next_round,
     round_task_name,
@@ -876,3 +878,252 @@ async def test_periodic_plan_skips_when_previous_run_in_flight(
             assert len(clones) == 1
     finally:
         await _cleanup(plan_id, busy_id)
+
+
+# --------------------------------------------------------------------- 派发并发防护
+@pytest.mark.asyncio
+async def test_run_due_tasks_skips_dispatch_when_trigger_lock_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """其他实例已持有该计划该触发时刻的锁时，本实例跳过派发，不重复克隆。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr("billing_qa.services.engine.schedule.scheduler.start", fake_start)
+    reference = datetime(2026, 11, 16, 10, 0)
+    due = reference - timedelta(minutes=1)
+    code = f"PLAN-LOCK-{uuid.uuid4().hex[:6]}"
+    async with SessionLocal() as db:
+        plan = BatchTask(
+            code=code,
+            name="每日回归（锁竞争）",
+            status=TaskStatus.SCHEDULED,
+            control_state="RUNNING",
+            case_ids=[1],
+            total_cases=1,
+            schedule_type=TaskScheduleType.DAILY,
+            schedule_time="09:00",
+            next_run_at=due,
+            schedule_active=True,
+        )
+        db.add(plan)
+        await db.commit()
+        plan_id = plan.id
+    async with SessionLocal() as db:
+        plan = await db.get(BatchTask, plan_id)
+        lock_name = _plan_trigger_lock_name(plan)
+    token = uuid.uuid4().hex
+    try:
+        assert await control_store.acquire_lock(lock_name, token, 60.0)
+        await run_due_tasks(reference)
+        assert started == []
+        async with SessionLocal() as db:
+            plan = await db.get(BatchTask, plan_id)
+            assert plan is not None
+            # 未派发：触发时刻未推进，也没有克隆批次
+            assert plan.next_run_at == due
+            clones = (
+                (
+                    await db.execute(
+                        select(BatchTask.id).where(BatchTask.schedule_source_id == plan_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert clones == []
+
+        await control_store.release_lock(lock_name, token)
+        await run_due_tasks(reference)
+        assert len(started) == 1
+        async with SessionLocal() as db:
+            plan = await db.get(BatchTask, plan_id)
+            assert plan is not None
+            assert plan.next_run_at == datetime(2026, 11, 17, 9, 0)
+    finally:
+        await control_store.release_lock(lock_name, token)
+        await _cleanup(plan_id, *started)
+
+
+# --------------------------------------------------------------------- 孤儿批次恢复
+async def _make_periodic_root(*, active: bool, name: str = "每日回归孤儿") -> int:
+    async with SessionLocal() as db:
+        root = BatchTask(
+            code=f"ROOT-{uuid.uuid4().hex[:6]}",
+            name=name,
+            status=TaskStatus.SCHEDULED,
+            control_state="RUNNING",
+            case_ids=[1],
+            total_cases=1,
+            schedule_type=TaskScheduleType.DAILY,
+            schedule_time="09:00",
+            next_run_at=datetime.now() + timedelta(hours=1),
+            schedule_active=active,
+        )
+        db.add(root)
+        await db.commit()
+        return int(root.id)
+
+
+@pytest.mark.asyncio
+async def test_resume_orphaned_plan_runs_starts_periodic_orphan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """周期计划派发的首批克隆停在 PENDING（进程在派发与启动间退出），恢复扫描拉起。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    root_id = await _make_periodic_root(active=True)
+    async with SessionLocal() as db:
+        orphan = clone_for_run(
+            await db.get(BatchTask, root_id), current=datetime.now()
+        )
+        orphan.status = TaskStatus.PENDING
+        db.add(orphan)
+        await db.commit()
+        orphan_id = int(orphan.id)
+    try:
+        await scheduler.resume_orphaned_plan_runs()
+        assert orphan_id in started
+    finally:
+        await _cleanup(root_id, orphan_id)
+
+
+@pytest.mark.asyncio
+async def test_resume_orphaned_plan_runs_aborts_stopped_plan_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """连续多轮计划已停止时，派发后未启动的批次不自动拉起，收口为已终止。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    async with SessionLocal() as db:
+        root = BatchTask(
+            code=f"STOPPED-ROOT-{uuid.uuid4().hex[:6]}",
+            name="已停止连续多轮",
+            status=TaskStatus.COMPLETED,
+            control_state="FINISHED",
+            case_ids=[1],
+            total_cases=1,
+            schedule_type=TaskScheduleType.SCHEDULED,
+            next_run_at=None,
+            schedule_active=False,
+            repeat_rounds=3,
+            round_index=1,
+        )
+        db.add(root)
+        await db.commit()
+        root_id = int(root.id)
+        orphan = clone_for_run(root, current=datetime.now())
+        orphan.status = TaskStatus.PENDING
+        db.add(orphan)
+        await db.commit()
+        orphan_id = int(orphan.id)
+    try:
+        await scheduler.resume_orphaned_plan_runs()
+        assert orphan_id not in started
+        async with SessionLocal() as db:
+            orphan = await db.get(BatchTask, orphan_id)
+            assert orphan is not None
+            assert orphan.status == TaskStatus.ABORTED
+    finally:
+        await _cleanup(root_id, orphan_id)
+
+
+@pytest.mark.asyncio
+async def test_resume_orphaned_one_shot_plan_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """一次性定时计划派发后（last_run_at 已写）进程退出，恢复扫描重新拉起。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    async with SessionLocal() as db:
+        plan = BatchTask(
+            code=f"ONESHOT-{uuid.uuid4().hex[:6]}",
+            name="一次性定时孤儿",
+            status=TaskStatus.PENDING,
+            control_state="RUNNING",
+            case_ids=[1],
+            total_cases=1,
+            schedule_type=TaskScheduleType.SCHEDULED,
+            next_run_at=None,
+            last_run_at=datetime.now() - timedelta(minutes=1),
+            schedule_active=False,
+        )
+        db.add(plan)
+        await db.commit()
+        plan_id = plan.id
+    try:
+        await scheduler.resume_orphaned_plan_runs()
+        assert plan_id in started
+    finally:
+        await _cleanup(plan_id)
+
+
+@pytest.mark.asyncio
+async def test_resume_round_chains_respects_abort_intent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """待执行轮次带终止意图（控制面 ABORTING）：不拉起，收口为已终止。"""
+    started: list[int] = []
+
+    async def fake_start(task_id: int, **_: object) -> bool:
+        started.append(task_id)
+        return True
+
+    monkeypatch.setattr(scheduler, "start", fake_start)
+    root_id = await _complete_root(3, name="连续多轮终止意图")
+    child_id: int | None = None
+    try:
+        async with SessionLocal() as db:
+            child = BatchTask(
+                code=f"PENDING-ABORT-{uuid.uuid4().hex[:6]}",
+                name="连续多轮终止意图 · 第 2/3 轮",
+                status=TaskStatus.PENDING,
+                control_state="RUNNING",
+                case_ids=[1],
+                total_cases=1,
+                schedule_type=TaskScheduleType.IMMEDIATE,
+                schedule_active=False,
+                schedule_source_id=root_id,
+                repeat_rounds=3,
+                round_index=2,
+                round_prev_id=root_id,
+            )
+            db.add(child)
+            await db.commit()
+            child_id = int(child.id)
+
+        await control_store.set_state(child_id, "ABORTING")
+        await scheduler.resume_round_chains()
+        assert child_id not in started
+        async with SessionLocal() as db:
+            child = await db.get(BatchTask, child_id)
+            assert child is not None
+            assert child.status == TaskStatus.ABORTED
+    finally:
+        if child_id is not None:
+            await control_store.clear(child_id)
+        async with SessionLocal() as db:
+            await db.execute(
+                delete(BatchTask).where(
+                    (BatchTask.round_prev_id == root_id) | (BatchTask.id == root_id)
+                )
+            )
+            await db.commit()

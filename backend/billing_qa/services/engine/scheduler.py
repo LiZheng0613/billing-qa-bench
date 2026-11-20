@@ -117,6 +117,17 @@ class BatchScheduler:
                 task.control_state = "RUNNING"
                 task.started_at = task.started_at or now()
                 task.finished_at = None
+                if await control_store.get_state(task_id) == "ABORTING":
+                    # 与终止指令竞态：保持终止语义，回滚刚写入的 RUNNING
+                    # 并收口，不把控制面翻转回去。
+                    task.status = TaskStatus.ABORTED
+                    task.control_state = "ABORTED"
+                    task.finished_at = now()
+                    await db.commit()
+                    await control_store.set_state(task_id, "ABORTED")
+                    await control_store.release_lock(self._task_lock_name(task_id), token)
+                    logger.info("单用例重试与终止指令竞态，保持终止 task=%s", task_id)
+                    return False
                 await db.commit()
             await control_store.set_state(task_id, "RUNNING")
             worker = asyncio.create_task(
@@ -140,6 +151,9 @@ class BatchScheduler:
                 await self._close_running_executions(db, task_id)
                 await db.commit()
                 await self._publish_status(task)
+            # 落库完成后把控制面定稿为 ABORTED，避免 ABORTING 永久残留——
+            # ABORTING 只应表示「仍在下发的终止意图」。
+            await control_store.set_state(task_id, "ABORTED")
         logger.info("任务终止指令已下发 task=%s", task_id)
 
     async def shutdown(self) -> None:
@@ -361,6 +375,25 @@ class BatchScheduler:
                 if retry_failed
                 else ExecutionSource.BATCH
             )
+
+            # 启动过程中可能到达终止指令（如恢复扫描与本轮启动竞态、或用户
+            # 对刚入队的任务点终止）：控制面出现 ABORTING 即保持终止语义，
+            # 收口退出，不把控制面翻转回 RUNNING 擦掉终止意图。
+            if await control_store.get_state(task_id) == "ABORTING":
+                async with SessionLocal() as db:
+                    task = await db.get(BatchTask, task_id)
+                    if task is not None:
+                        task.status = TaskStatus.ABORTED
+                        task.control_state = "ABORTED"
+                        task.finished_at = now()
+                        task.error_message = "启动过程中收到终止指令，保持终止状态"
+                        metrics = await compute_task_metrics(db, task)
+                        apply_metrics_to_task(task, metrics)
+                        await db.commit()
+                        await control_store.set_state(task_id, "ABORTED")
+                        await self._publish_status(task)
+                logger.info("任务启动过程中收到终止指令，保持终止 task=%s", task_id)
+                return
 
             await control_store.set_state(task_id, "RUNNING")
             await self._publish_status_by_id(task_id)
@@ -744,20 +777,24 @@ class BatchScheduler:
                 .all()
             )
         for run in pending_runs:
+            run_id = int(run.id)
+            if self.is_running(run_id):
+                continue
+            state = await control_store.get_state(run_id)
+            if state in {"ABORTING", "ABORTED"}:
+                # 用户已对该轮次明确终止（终止指令先写控制面再落库的窗口期），
+                # 保持终止语义，收口而不是拉起。
+                await self._abort_pending_run(run_id)
+                logger.info("恢复扫描：轮次带终止意图，收口待执行轮次 task=%s", run_id)
+                continue
             if not await self._chain_active(run):
                 # 计划已停止：作废待执行轮次，避免恢复扫描反复拉起。
-                async with SessionLocal() as db:
-                    fresh = await db.get(BatchTask, run.id)
-                    if fresh is not None and fresh.status == TaskStatus.PENDING.value:
-                        fresh.status = TaskStatus.ABORTED
-                        fresh.control_state = "ABORTED"
-                        fresh.finished_at = now()
-                        await db.commit()
-                logger.info("恢复扫描：计划已停止，跳过并作废待执行轮次 task=%s", run.id)
+                await self._abort_pending_run(run_id)
+                logger.info("恢复扫描：计划已停止，跳过并作废待执行轮次 task=%s", run_id)
                 continue
-            if await self.start(int(run.id)):
-                started.append(int(run.id))
-                logger.info("恢复扫描：已启动待执行的轮次 task=%s", run.id)
+            if await self.start(run_id):
+                started.append(run_id)
+                logger.info("恢复扫描：已启动待执行的轮次 task=%s", run_id)
 
         child_table = aliased(BatchTask)
         child_exists = exists().where(child_table.round_prev_id == BatchTask.id)
@@ -805,6 +842,124 @@ class BatchScheduler:
         }:
             return True
         return bool(root.schedule_active)
+
+    async def _abort_pending_run(self, task_id: int) -> None:
+        """把无法继续的 PENDING 计划批次收口为已终止，避免恢复扫描反复拉起。"""
+        async with SessionLocal() as db:
+            fresh = await db.get(BatchTask, task_id)
+            if fresh is None or str(fresh.status) != TaskStatus.PENDING.value:
+                return
+            fresh.status = TaskStatus.ABORTED
+            fresh.control_state = "ABORTED"
+            fresh.finished_at = now()
+            fresh.error_message = "计划已停止或带终止意图，待执行批次自动收口"
+            await db.commit()
+        await control_store.set_state(task_id, "ABORTED")
+
+    @staticmethod
+    async def _plan_batch_active(run: BatchTask) -> bool:
+        """派生批次所属的计划是否仍允许该批次执行。
+
+        与轮次链的 ``_chain_active`` 不同：周期计划每次触发的批次通常只有
+        1 轮，只要计划是 DAILY/WEEKLY 就应跑完当天批次；指定时间 / 连续多轮
+        计划则以 ``schedule_active`` 为准。
+        """
+        plan_id = run.schedule_source_id
+        if plan_id is None:
+            return False
+        async with SessionLocal() as db:
+            root = await db.get(BatchTask, plan_id)
+        if root is None:
+            return False
+        if root.schedule_type in {
+            TaskScheduleType.DAILY.value,
+            TaskScheduleType.WEEKLY.value,
+        }:
+            return True
+        return bool(root.schedule_active)
+
+    async def resume_orphaned_plan_runs(self, *, limit: int = 20) -> list[int]:
+        """后台自愈：恢复「已派发但从未启动」的计划批次。
+
+        ``run_due_tasks`` 在「克隆入库 / 置 PENDING」与 ``scheduler.start``
+        之间进程退出时，会留下永远无人拉起的孤儿任务；周期计划还会因为
+        ``_latest_run_status`` 一直看到 PENDING 而跳过所有后续触发。这里分两类恢复：
+
+        1. 周期 / 连续多轮计划派生的首轮批次：``round_prev_id`` 为空、
+           ``schedule_source_id`` 非空且仍为 PENDING；
+        2. 已到点的一次性定时计划本体：``last_run_at`` 已写（派发标记）但仍是 PENDING。
+
+        计划已停止或控制面带终止意图的批次收口为 ABORTED，不自动拉起。
+        """
+        started: list[int] = []
+        async with SessionLocal() as db:
+            orphans = (
+                (
+                    await db.execute(
+                        select(BatchTask)
+                        .where(
+                            BatchTask.status == TaskStatus.PENDING.value,
+                            BatchTask.round_prev_id.is_(None),
+                            BatchTask.schedule_source_id.is_not(None),
+                        )
+                        .order_by(BatchTask.id)
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        for run in orphans:
+            run_id = int(run.id)
+            if self.is_running(run_id):
+                continue
+            state = await control_store.get_state(run_id)
+            if state in {"ABORTING", "ABORTED"}:
+                # 用户已对该批次明确终止（终止指令先写控制面再落库的窗口期），
+                # 保持终止语义，收口而不是拉起。
+                await self._abort_pending_run(run_id)
+                logger.info("恢复扫描：批次带终止意图，收口派发未启动的批次 task=%s", run_id)
+                continue
+            if not await self._plan_batch_active(run):
+                await self._abort_pending_run(run_id)
+                logger.info("恢复扫描：计划已停止，收口派发未启动的批次 task=%s", run_id)
+                continue
+            if await self.start(run_id):
+                started.append(run_id)
+                logger.warning("恢复扫描：已启动派发后未启动的计划首轮 task=%s", run_id)
+
+        async with SessionLocal() as db:
+            one_shots = (
+                (
+                    await db.execute(
+                        select(BatchTask.id)
+                        .where(
+                            BatchTask.status == TaskStatus.PENDING.value,
+                            BatchTask.schedule_type == TaskScheduleType.SCHEDULED.value,
+                            BatchTask.last_run_at.is_not(None),
+                        )
+                        .order_by(BatchTask.id)
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        for task_id in one_shots:
+            task_id = int(task_id)
+            if self.is_running(task_id):
+                continue
+            state = await control_store.get_state(task_id)
+            if state in {"ABORTING", "ABORTED"}:
+                await self._abort_pending_run(task_id)
+                logger.info(
+                    "恢复扫描：一次性计划带终止意图，收口待执行计划 task=%s", task_id
+                )
+                continue
+            if await self.start(task_id):
+                started.append(task_id)
+                logger.warning("恢复扫描：已启动派发后未启动的一次性定时计划 task=%s", task_id)
+        return started
 
     async def _select_case_ids(
         self,

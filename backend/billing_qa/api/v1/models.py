@@ -6,11 +6,12 @@ import time
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import cast, func, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import model_to_out
-from billing_qa.core.authz import require_module_access
+from billing_qa.core.authz import require_module_access, require_permission
 from billing_qa.core.context import CurrentUser
 from billing_qa.core.crypto import decrypt_value, encrypt_value, mask_value
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -20,6 +21,7 @@ from billing_qa.core.security import get_current_user
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import ModelConnectionType, ModelRole
 from billing_qa.models.model_config import ModelConfig
+from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.common import MessageResponse, Page
 from billing_qa.schemas.model_config import (
     ModelConfigCreate,
@@ -41,7 +43,9 @@ router = APIRouter(
         Depends(
             require_module_access(
                 "model:read",
-                ("model:write", "model:test", "model:secret_read"),
+                # 密钥读取（model:secret_read）是读权限，不应放行模块内写方法；
+                # 动作级校验由各端点的 require_permission 完成。
+                ("model:write", "model:test"),
             )
         )
     ],
@@ -161,7 +165,12 @@ async def list_models(
     )
 
 
-@router.post("", response_model=ModelConfigOut, summary="注册模型")
+@router.post(
+    "",
+    response_model=ModelConfigOut,
+    summary="注册模型",
+    dependencies=[Depends(require_permission("model:write"))],
+)
 async def create_model(
     payload: ModelConfigCreate,
     db: AsyncSession = Depends(get_db),
@@ -190,6 +199,7 @@ async def create_model(
     "/opencode/catalog",
     response_model=OpenCodeCatalogOut,
     summary="拉取 OpenCode 可用模型与 Agent",
+    dependencies=[Depends(require_permission("model:write"))],
 )
 async def opencode_catalog(
     payload: OpenCodeCatalogRequest, db: AsyncSession = Depends(get_db)
@@ -258,7 +268,12 @@ async def get_model(
     return model_to_out(await _get_model(db, model_id), reveal=_can_read_secret(user))
 
 
-@router.put("/{model_id}", response_model=ModelConfigOut, summary="更新模型")
+@router.put(
+    "/{model_id}",
+    response_model=ModelConfigOut,
+    summary="更新模型",
+    dependencies=[Depends(require_permission("model:write"))],
+)
 async def update_model(
     model_id: int,
     payload: ModelConfigUpdate,
@@ -296,16 +311,50 @@ async def update_model(
     return model_to_out(model, reveal=_can_read_secret(user))
 
 
-@router.delete("/{model_id}", response_model=MessageResponse, summary="删除模型")
+@router.delete(
+    "/{model_id}",
+    response_model=MessageResponse,
+    summary="删除模型",
+    dependencies=[Depends(require_permission("model:write"))],
+)
 async def delete_model(model_id: int, db: AsyncSession = Depends(get_db)) -> MessageResponse:
     model = await _get_model(db, model_id)
+    # 引用保护 1：启用的模拟器 / 用例编写模型是执行引擎的全局默认配置，
+    # 删除会让后续执行直接失败；请先停用或切换到其他模型。
+    if model.is_active and model.role in {
+        ModelRole.SIMULATOR.value,
+        ModelRole.CASE_AUTHOR.value,
+    }:
+        raise ConflictError(
+            f"模型 {model.code} 是当前启用的 {model.role} 模型，请先停用后再删除"
+        )
+    # 引用保护 2：被用例的多裁判列表引用的模型不能删除。
+    referencing = (
+        await db.execute(
+            select(TestCase.id)
+            .where(
+                TestCase.deleted_at.is_(None),
+                cast(TestCase.judge_model_ids, JSONB).contains([model_id]),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if referencing is not None:
+        raise ConflictError(
+            f"模型 {model.code} 已被用例（id={referencing}）的裁判模型列表引用，无法删除"
+        )
     code = model.code
     await db.delete(model)
     await db.commit()
     return MessageResponse(message=f"模型 {code} 已删除")
 
 
-@router.post("/{model_id}/test", response_model=ModelTestResult, summary="模型连通性测试")
+@router.post(
+    "/{model_id}/test",
+    response_model=ModelTestResult,
+    summary="模型连通性测试",
+    dependencies=[Depends(require_permission("model:test"))],
+)
 async def test_model(model_id: int, db: AsyncSession = Depends(get_db)) -> ModelTestResult:
     model = await _get_model(db, model_id)
     context = ModelContext.from_orm(model)

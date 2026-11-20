@@ -14,6 +14,9 @@ import {
 } from '../../utils/format'
 import { canStopPlanTask, isPlanRootTask, isPlanStopped, taskScheduleLabel } from '../../utils/schedule'
 import { hasKeyword } from '../../utils/search'
+import { useAuthStore } from '../../stores/auth'
+
+const auth = useAuthStore()
 
 const props = withDefaults(
   defineProps<{
@@ -463,6 +466,7 @@ onBeforeUnmount(clearFilterTimer)
           :label="(planWaiting && !planActive) || isPlanStopped(task) ? '已停止' : null"
         />
         <button
+          v-if="auth.can('task:export')"
           class="btn-ghost btn-xs"
           :disabled="!task || exporting"
           title="人读视图，超长字段按 Excel 上限截断"
@@ -471,6 +475,7 @@ onBeforeUnmount(clearFilterTimer)
           {{ exporting ? '导出中…' : '导出 Excel' }}
         </button>
         <button
+          v-if="auth.can('task:export')"
           class="btn-ghost btn-xs"
           :disabled="!task || exporting"
           title="完整数据（JSONL），超长字段不截断，适合程序消费"
@@ -478,30 +483,30 @@ onBeforeUnmount(clearFilterTimer)
         >
           {{ exporting ? '导出中…' : '导出 JSONL' }}
         </button>
-        <button v-if="canRunNow" class="btn-primary btn-xs" @click="emit('run-now')">
+        <button v-if="auth.can('task:create') && canRunNow" class="btn-primary btn-xs" @click="emit('run-now')">
           立即执行
         </button>
         <button
-          v-if="canEnablePlan"
+          v-if="auth.can('task:create') && canEnablePlan"
           class="btn-ghost btn-xs"
           @click="emit('toggle-plan', true)"
         >
           启用计划
         </button>
-        <button v-if="canStopPlan" class="btn-danger btn-xs" @click="emit('stop-plan')">
+        <button v-if="auth.can('task:stop') && canStopPlan" class="btn-danger btn-xs" @click="emit('stop-plan')">
           停止计划
         </button>
-        <button v-if="canStart" class="btn-primary btn-xs" @click="emit('start')">启动</button>
-        <button v-if="canAbort" class="btn-danger btn-xs" @click="emit('abort')">终止</button>
+        <button v-if="auth.can('task:create') && canStart" class="btn-primary btn-xs" @click="emit('start')">启动</button>
+        <button v-if="auth.can('task:stop') && canAbort" class="btn-danger btn-xs" @click="emit('abort')">终止</button>
         <button
-          v-if="canResume"
+          v-if="auth.can('execution:retry') && canResume"
           class="btn-primary btn-xs"
           title="只补跑未完成的用例，已有结果保持不动"
           @click="emit('resume')"
         >
           继续执行
         </button>
-        <button v-if="canRetry" class="btn-ghost btn-xs" @click="emit('retry')">失败重跑</button>
+        <button v-if="auth.can('execution:retry') && canRetry" class="btn-ghost btn-xs" @click="emit('retry')">失败重跑</button>
       </div>
     </header>
 
@@ -812,7 +817,7 @@ onBeforeUnmount(clearFilterTimer)
               <td class="td text-right">
                 <div class="inline-flex items-center gap-1">
                   <button
-                    v-if="canRetryCase(item)"
+                    v-if="auth.can('execution:retry') && canRetryCase(item)"
                     class="btn-ghost btn-xs"
                     title="在当前批次内重跑该用例，作为最新一次执行结果"
                     @click.stop="emit('retry-case', item.case_id as number)"
