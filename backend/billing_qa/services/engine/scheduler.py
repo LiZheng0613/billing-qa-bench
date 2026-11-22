@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections import deque
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -56,6 +57,11 @@ class BatchScheduler:
     def __init__(self) -> None:
         self._workers: dict[int, asyncio.Task[None]] = {}
         self._locks: dict[int, asyncio.Lock] = {}
+        # 单用例重试队列：同一任务允许连续提交多条用例，由同一个 worker
+        # 顺序执行，保持「同一任务同时只有一个执行 worker」的既有约束。
+        self._retry_queues: dict[int, deque[int]] = {}
+        self._retry_cases: dict[int, set[int]] = {}
+        self._retry_mode: set[int] = set()
 
     def _lock(self, task_id: int) -> asyncio.Lock:
         lock = self._locks.get(task_id)
@@ -67,6 +73,19 @@ class BatchScheduler:
     def is_running(self, task_id: int) -> bool:
         worker = self._workers.get(task_id)
         return worker is not None and not worker.done()
+
+    def is_batch_running(self, task_id: int) -> bool:
+        """是否有整批执行 worker 在运行（不含单用例重试队列）。"""
+        worker = self._workers.get(task_id)
+        return (
+            worker is not None
+            and not worker.done()
+            and task_id not in self._retry_mode
+        )
+
+    def retrying_case_ids(self, task_id: int) -> list[int]:
+        """当前排队中或执行中的单用例重试 id（去重后返回）。"""
+        return sorted(self._retry_cases.get(task_id, set()))
 
     def _task_lock_name(self, task_id: int) -> str:
         return control_store.lock_key(task_id)
@@ -93,15 +112,26 @@ class BatchScheduler:
         return True
 
     async def retry_case(self, task_id: int, case_id: int) -> bool:
-        """在当前批次内单独重跑一条用例。
+        """提交单用例重试；同一任务可连续提交多条用例。
 
-        与 :meth:`start` 互斥（同一任务同时只允许一个 worker），任务立即
-        切回 RUNNING 以便前端连接实时进度；执行完成后按用例最新一次结果
-        重算指标并收口为 COMPLETED。返回 False 表示任务正在运行。
+        与 :meth:`start` 互斥（整批执行期间不允许单用例重试），但多条单用例
+        重试互不阻塞：新提交的用例进入队列，由同一个 worker 顺序执行；全部
+        结束后按用例最新一次结果重算指标并收口为 COMPLETED。返回 False 表示
+        整批任务正在运行、该用例已提交，或任务已进入终止流程。
         """
         async with self._lock(task_id):
-            if self.is_running(task_id):
+            if self.is_batch_running(task_id):
                 return False
+            if task_id in self._retry_mode:
+                # 已有重试 worker 在消费队列：新用例直接入队，不打断当前执行。
+                if not await self._not_aborted(task_id):
+                    return False
+                if case_id in self._retry_cases.get(task_id, set()):
+                    return False
+                self._retry_cases.setdefault(task_id, set()).add(case_id)
+                self._retry_queues.setdefault(task_id, deque()).append(case_id)
+                logger.info("单用例重试已加入队列 task=%s case=%s", task_id, case_id)
+                return True
             token = uuid.uuid4().hex
             if not await control_store.acquire_lock(
                 self._task_lock_name(task_id), token, settings.task_run_lock_ttl_seconds
@@ -130,8 +160,11 @@ class BatchScheduler:
                     return False
                 await db.commit()
             await control_store.set_state(task_id, "RUNNING")
+            self._retry_mode.add(task_id)
+            self._retry_cases[task_id] = {case_id}
+            self._retry_queues[task_id] = deque([case_id])
             worker = asyncio.create_task(
-                self._run_case_retry(task_id, case_id, run_token=token)
+                self._run_case_retries(task_id, run_token=token)
             )
             self._workers[task_id] = worker
         logger.info("单用例重试已启动 task=%s case=%s", task_id, case_id)
@@ -560,62 +593,139 @@ class BatchScheduler:
     # ------------------------------------------------------------------ #
     # 单用例重试
     # ------------------------------------------------------------------ #
-    async def _run_case_retry(
-        self, task_id: int, case_id: int, *, run_token: str | None = None
+    async def _run_case_retries(
+        self, task_id: int, *, run_token: str | None = None
     ) -> None:
-        """在当前批次内重跑单条用例：复用执行器，结果作为该用例的最新一次尝试。"""
+        """顺序消费单用例重试队列，全部结束后统一收口任务状态。"""
+        heartbeat: asyncio.Task[None] | None = None
+        if run_token is not None:
+            heartbeat = asyncio.create_task(self._heartbeat(task_id, run_token))
         cancelled = False
+        finalized = False
         try:
-            async with SessionLocal() as db:
-                task = await db.get(BatchTask, task_id)
-                if task is None:
-                    logger.warning("单用例重试任务不存在 task=%s", task_id)
-                    return
-                environment_id = task.environment_id
-                enable_self_check = bool(task.enable_self_check)
-                latest = (
-                    await db.execute(
-                        select(ExecutionRecord)
-                        .where(
-                            ExecutionRecord.task_id == task_id,
-                            ExecutionRecord.case_id == case_id,
+            while True:
+                async with self._lock(task_id):
+                    if not await self._not_aborted(task_id):
+                        # 终止指令已下发：丢弃尚未开始的排队用例
+                        self._retry_queues.pop(task_id, None)
+                        await self._close_case_retries(
+                            task_id,
+                            cancelled=cancelled,
+                            run_token=run_token,
+                            heartbeat=heartbeat,
                         )
-                        .order_by(ExecutionRecord.id.desc())
-                        .limit(1)
+                        finalized = True
+                        break
+                    queue = self._retry_queues.get(task_id)
+                    if not queue:
+                        # 队列空判定与收口都在锁内完成，避免刚提交的用例
+                        # 在判定为空后入队却被丢弃。
+                        await self._close_case_retries(
+                            task_id,
+                            cancelled=cancelled,
+                            run_token=run_token,
+                            heartbeat=heartbeat,
+                        )
+                        finalized = True
+                        break
+                    case_id = queue.popleft()
+                try:
+                    await self._retry_one_case(task_id, case_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "单用例重试执行失败 task=%s case=%s", task_id, case_id
                     )
-                ).scalar_one_or_none()
-                attempt_no = int(latest.attempt_no if latest is not None else 0) + 1
-
-            snapshot, version = await self._load_case_snapshot(case_id)
-            if snapshot is None:
-                logger.warning("单用例重试跳过：用例不存在或已删除 case=%s", case_id)
-                return
-            await self._publish_status_by_id(task_id)
-            execution_id = await CaseExecutor().execute(
-                case_id=case_id,
-                case_version=version,
-                snapshot=snapshot,
-                task_id=task_id,
-                source=ExecutionSource.RETRY,
-                environment_id=environment_id,
-                attempt_no=attempt_no,
-                enable_self_check=enable_self_check,
-            )
-            await self._publish_progress(task_id, execution_id, case_id, version)
+                finally:
+                    async with self._lock(task_id):
+                        cases = self._retry_cases.get(task_id)
+                        if cases is not None:
+                            cases.discard(case_id)
         except asyncio.CancelledError:
             cancelled = True
             raise
-        except Exception:
-            logger.exception("单用例重试执行失败 task=%s case=%s", task_id, case_id)
         finally:
             try:
-                await self._finish_case_retry(task_id, cancelled=cancelled)
+                if not finalized:
+                    async with self._lock(task_id):
+                        await self._close_case_retries(
+                            task_id,
+                            cancelled=cancelled,
+                            run_token=run_token,
+                            heartbeat=heartbeat,
+                        )
             finally:
-                if run_token is not None:
-                    await control_store.release_lock(
-                        self._task_lock_name(task_id), run_token
-                    )
+                if heartbeat is not None:
+                    heartbeat.cancel()
+                    await asyncio.gather(heartbeat, return_exceptions=True)
+
+    async def _close_case_retries(
+        self,
+        task_id: int,
+        *,
+        cancelled: bool,
+        run_token: str | None,
+        heartbeat: asyncio.Task[None] | None = None,
+    ) -> None:
+        """收口单用例重试并清理队列状态；调用方需持有任务内锁。"""
+        # 先停续租再释放锁，避免释放后仍有一次续租把「续租失败」写进日志。
+        if heartbeat is not None and not heartbeat.done():
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+        # 先清空重试标记再收口：结束时推送的 status 事件不应再带「重试中」，
+        # 否则前端会残留一个永远禁用的按钮。
+        self._retry_queues.pop(task_id, None)
+        self._retry_cases.pop(task_id, None)
+        try:
+            await self._finish_case_retry(task_id, cancelled=cancelled)
+        finally:
+            if run_token is not None:
+                await control_store.release_lock(
+                    self._task_lock_name(task_id), run_token
+                )
+            self._retry_mode.discard(task_id)
+            if self._workers.get(task_id) is asyncio.current_task():
                 self._workers.pop(task_id, None)
+
+    async def _retry_one_case(self, task_id: int, case_id: int) -> None:
+        """在当前批次内重跑单条用例：复用执行器，结果作为该用例的最新一次尝试。"""
+        async with SessionLocal() as db:
+            task = await db.get(BatchTask, task_id)
+            if task is None:
+                logger.warning("单用例重试任务不存在 task=%s", task_id)
+                return
+            environment_id = task.environment_id
+            enable_self_check = bool(task.enable_self_check)
+            latest = (
+                await db.execute(
+                    select(ExecutionRecord)
+                    .where(
+                        ExecutionRecord.task_id == task_id,
+                        ExecutionRecord.case_id == case_id,
+                    )
+                    .order_by(ExecutionRecord.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            attempt_no = int(latest.attempt_no if latest is not None else 0) + 1
+
+        snapshot, version = await self._load_case_snapshot(case_id)
+        if snapshot is None:
+            logger.warning("单用例重试跳过：用例不存在或已删除 case=%s", case_id)
+            return
+        await self._publish_status_by_id(task_id)
+        execution_id = await CaseExecutor().execute(
+            case_id=case_id,
+            case_version=version,
+            snapshot=snapshot,
+            task_id=task_id,
+            source=ExecutionSource.RETRY,
+            environment_id=environment_id,
+            attempt_no=attempt_no,
+            enable_self_check=enable_self_check,
+        )
+        await self._publish_progress(task_id, execution_id, case_id, version)
 
     async def _finish_case_retry(self, task_id: int, *, cancelled: bool) -> None:
         """单用例重试结束后收口任务状态并重算指标。"""
@@ -1129,6 +1239,7 @@ class BatchScheduler:
                 error_count=metrics.status_distribution.ERROR,
                 max_turns_count=metrics.status_distribution.MAX_TURNS_EXCEEDED,
                 metrics=metrics,
+                retrying_cases=self.retrying_case_ids(fresh.id),
                 message=fresh.error_message,
                 timestamp=datetime.now(),
             )

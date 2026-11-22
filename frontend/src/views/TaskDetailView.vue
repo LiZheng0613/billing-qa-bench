@@ -16,6 +16,7 @@ import type {
   CaseExecutionItem,
   TaskMetrics,
   TaskProgressEvent,
+  TaskRetryCandidates,
   TaskRunSummary,
 } from '../types'
 import { errorMessage } from '../utils/errors'
@@ -44,6 +45,7 @@ const plan = ref<BatchTask | null>(null)
 const task = ref<BatchTask | null>(null)
 const metrics = ref<TaskMetrics | null>(null)
 const executions = ref<CaseExecutionItem[]>([])
+const retryCandidates = ref<TaskRetryCandidates | null>(null)
 const executionTotal = ref(0)
 const executionPage = ref(1)
 const EXECUTION_PAGE_SIZE_OPTIONS = [10, 20, 30, 50]
@@ -74,6 +76,7 @@ const selectedRunId = ref<number | null>(null)
 
 let socket: WebSocket | null = null
 let reconnectTimer: number | null = null
+let candidateRefreshTimer: number | null = null
 let unmounted = false
 let detailSeq = 0
 
@@ -239,16 +242,19 @@ async function loadRuns(preferLatest = false): Promise<boolean> {
 
 async function loadTaskDetail(id: number): Promise<void> {
   const seq = ++detailSeq
-  const [detail, taskMetrics, executionPageData] = await Promise.all([
+  const [detail, taskMetrics, executionPageData, candidates] = await Promise.all([
     api.tasks.get(id),
     api.tasks.metrics(id),
     api.tasks.executions(id, executionQuery()),
+    // 可重试候选仅用于批量勾选；老版本后端没有该接口时不阻塞详情加载。
+    api.tasks.retryCandidates(id).catch(() => null),
   ])
   if (seq !== detailSeq) return
   task.value = detail
   metrics.value = taskMetrics
   executions.value = executionPageData.items
   executionTotal.value = executionPageData.total
+  retryCandidates.value = candidates
   patchRun(detail)
   syncLive(detail)
 }
@@ -317,10 +323,21 @@ function applyEvent(event: TaskProgressEvent): void {
     if (typeof event.fail_count === 'number') task.value.fail_count = event.fail_count
     if (typeof event.error_count === 'number') task.value.error_count = event.error_count
     if (typeof event.max_turns_count === 'number') task.value.max_turns_count = event.max_turns_count
+    if (event.retrying_cases) task.value.retrying_cases = event.retrying_cases
     patchRun({ ...task.value })
   }
   if (event.execution) {
     const next = event.execution
+    // 单用例重试完成时后端会推送该用例的最新执行结果，同步移除「重试中」
+    // 标记，避免同一任务里其他已完成的用例仍显示禁用状态。
+    if (next.source === 'RETRY' && task.value?.retrying_cases?.length) {
+      task.value.retrying_cases = task.value.retrying_cases.filter(
+        (id) => id !== next.case_id,
+      )
+      patchRun({ ...task.value })
+    }
+    // 用例重试结束后更新「按状态勾选」的候选清单（合并短时间内的多次完成事件）。
+    if (next.source === 'RETRY') scheduleCandidateRefresh()
     const visible = matchesExecutionFilters(next)
     if (latestPerCase.value) {
       const index = executions.value.findIndex((item) => item.case_id === next.case_id)
@@ -416,6 +433,10 @@ function disconnectSocket(): void {
     window.clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  if (candidateRefreshTimer !== null) {
+    window.clearTimeout(candidateRefreshTimer)
+    candidateRefreshTimer = null
+  }
   if (socket) {
     socket.onclose = null
     socket.onerror = null
@@ -433,6 +454,27 @@ async function loadExecutions(id: number): Promise<void> {
   } catch (exc) {
     reportError(exc)
   }
+}
+
+/** 拉取可重试用例候选，供「按状态勾选」使用；失败时保留原有清单。 */
+async function refreshRetryCandidates(id: number): Promise<void> {
+  try {
+    retryCandidates.value = await api.tasks.retryCandidates(id)
+  } catch {
+    // 候选清单是增强信息，刷新失败不影响主流程
+  }
+}
+
+function scheduleCandidateRefresh(): void {
+  if (candidateRefreshTimer !== null) window.clearTimeout(candidateRefreshTimer)
+  const target = task.value
+  if (!target) return
+  candidateRefreshTimer = window.setTimeout(() => {
+    candidateRefreshTimer = null
+    if (!unmounted && task.value?.id === target.id) {
+      void refreshRetryCandidates(target.id)
+    }
+  }, 500)
 }
 
 // ---------------------------------------------------------- 交互
@@ -561,15 +603,46 @@ async function abortTask(): Promise<void> {
   }
 }
 
-async function retryFailed(): Promise<void> {
-  if (!task.value) return
+const RETRY_BATCH_LIMIT = 500
+
+/** 批量提交勾选用例重试；后端按 FIFO 排队，逐条执行。 */
+async function retryCases(caseIds: number[]): Promise<void> {
+  const current = task.value
+  if (!current || caseIds.length === 0) return
+  const ok = await confirm({
+    title: '批量重试',
+    message: `确定重试选中的 ${caseIds.length} 条用例吗？`,
+    detail: '提交后按顺序逐条执行，已有其他用例的结果保持不变；完成后自动刷新指标。',
+    confirmText: '开始重试',
+  })
+  if (!ok) return
+  let accepted = 0
+  let skipped = 0
+  let failed = false
   try {
-    const result = await api.tasks.retryFailed(task.value.id)
-    toast.success(result.message)
-    await loadTaskDetail(task.value.id)
+    for (let index = 0; index < caseIds.length; index += RETRY_BATCH_LIMIT) {
+      const chunk = caseIds.slice(index, index + RETRY_BATCH_LIMIT)
+      try {
+        const result = await api.tasks.retryCases(current.id, chunk)
+        accepted += result.accepted.length
+        skipped += result.skipped.length
+      } catch (exc) {
+        failed = true
+        reportError(exc)
+        break
+      }
+    }
+    if (accepted > 0) {
+      toast.success(
+        skipped > 0
+          ? `已提交 ${accepted} 条用例重试，${skipped} 条不符合条件未受理`
+          : `已提交 ${accepted} 条用例重试`,
+      )
+    }
+    await loadTaskDetail(current.id)
     if (isPeriodicPlan.value) void loadRuns()
   } catch (exc) {
-    reportError(exc)
+    if (!failed) reportError(exc)
   }
 }
 
@@ -1031,9 +1104,9 @@ onBeforeUnmount(() => {
           :execution-max-score="executionMaxScore"
           :execution-sort="executionSort"
           :exporting="exporting"
+          :retry-candidates="retryCandidates"
           @start="startTask"
           @abort="abortTask"
-          @retry="retryFailed"
           @resume="resumeTask"
           @run-now="runPlanNow"
           @stop-plan="stopPlan"
@@ -1041,6 +1114,7 @@ onBeforeUnmount(() => {
           @select-execution="openExecution"
           @open-case="openCaseDetail"
           @retry-case="retryCase"
+          @retry-cases="retryCases"
           @page-change="changeExecutionPage"
           @page-size-change="changeExecutionPageSize"
           @mode-change="changeMode"
@@ -1067,9 +1141,9 @@ onBeforeUnmount(() => {
         :execution-max-score="executionMaxScore"
         :execution-sort="executionSort"
         :exporting="exporting"
+        :retry-candidates="retryCandidates"
         @start="startTask"
         @abort="abortTask"
-        @retry="retryFailed"
         @resume="resumeTask"
         @run-now="runPlanNow"
         @stop-plan="stopPlan"
@@ -1077,6 +1151,7 @@ onBeforeUnmount(() => {
         @select-execution="openExecution"
         @open-case="openCaseDetail"
         @retry-case="retryCase"
+        @retry-cases="retryCases"
         @page-change="changeExecutionPage"
         @mode-change="changeMode"
         @filter-change="applyExecutionFilters"

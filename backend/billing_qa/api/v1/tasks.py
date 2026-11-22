@@ -26,9 +26,14 @@ from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.case import CaseExecutionItem
 from billing_qa.schemas.common import MessageResponse, Page
 from billing_qa.schemas.task import (
+    CaseRetryRequest,
+    CaseRetryResult,
+    CaseRetrySkipped,
+    RetryCandidateGroup,
     TaskCreate,
     TaskMetrics,
     TaskOut,
+    TaskRetryCandidates,
     TaskRunsPage,
     TaskRunSummary,
     TaskScheduleUpdate,
@@ -163,6 +168,37 @@ async def _unfinished_counts(
     return counts
 
 
+# 可重试用例按此顺序分组展示，与前端状态标签顺序保持一致
+RETRY_STATUS_ORDER = (
+    "FAIL",
+    "ERROR",
+    "MAX_TURNS_EXCEEDED",
+    "REPETITION_ABORT",
+    "ABORTED",
+)
+
+
+def _case_retry_skip_reason(
+    task_case_ids: set[int],
+    latest: dict[int, ExecutionRecord],
+    retrying: set[int],
+    case_id: int,
+) -> str | None:
+    """返回该用例不能提交重试的原因；可提交时返回 None。"""
+    if case_id not in task_case_ids:
+        return "该用例不在当前批次中"
+    if case_id in retrying:
+        return "该用例已提交重试，请等待执行完成"
+    record = latest.get(case_id)
+    if record is None:
+        return "该用例在当前批次尚无执行记录"
+    if record.status in {"RUNNING", "PENDING"}:
+        return "该用例正在执行中，请稍后再试"
+    if record.status not in RETRYABLE_STATUSES:
+        return "该用例最近一次执行不处于可重试状态"
+    return None
+
+
 async def _task_out(db: AsyncSession, task: BatchTask, *, run_count: int = 0) -> TaskOut:
     unfinished = await _unfinished_counts(db, [task])
     return task_to_out(
@@ -170,6 +206,7 @@ async def _task_out(db: AsyncSession, task: BatchTask, *, run_count: int = 0) ->
         env_name=await _env_name(db, task.environment_id),
         run_count=run_count,
         unfinished_cases=unfinished.get(task.id, 0),
+        retrying_cases=scheduler.retrying_case_ids(task.id),
     )
 
 
@@ -712,6 +749,94 @@ async def resume_task(task_id: int, db: AsyncSession = Depends(get_db)) -> Messa
     )
 
 
+@router.get(
+    "/{task_id}/retry-candidates",
+    response_model=TaskRetryCandidates,
+    summary="可重试用例（按状态分组）",
+)
+async def retry_candidates(
+    task_id: int, db: AsyncSession = Depends(get_db)
+) -> TaskRetryCandidates:
+    """汇总当前批次中可单用例重试的条目，供前端「按状态勾选」。"""
+    task = await _get_task(db, task_id)
+    latest = await _latest_by_case(db, task_id)
+    retrying = set(scheduler.retrying_case_ids(task_id))
+    buckets: dict[str, list[int]] = {}
+    for raw in task.case_ids or []:
+        case_id = int(raw)
+        record = latest.get(case_id)
+        if record is None or case_id in retrying:
+            continue
+        if record.status not in RETRYABLE_STATUSES:
+            continue
+        buckets.setdefault(str(record.status), []).append(case_id)
+    groups = [
+        RetryCandidateGroup(status=status, case_ids=buckets[status])
+        for status in RETRY_STATUS_ORDER
+        if buckets.get(status)
+    ]
+    # 兜底：新增状态未列入排序时也要出现在结果里，避免「有候选但勾不到」。
+    for status, case_ids in buckets.items():
+        if status not in RETRY_STATUS_ORDER:
+            groups.append(RetryCandidateGroup(status=status, case_ids=case_ids))
+    return TaskRetryCandidates(
+        groups=groups,
+        total=sum(len(case_ids) for case_ids in buckets.values()),
+        retrying_cases=sorted(retrying),
+    )
+
+
+@router.post(
+    "/{task_id}/cases/retry",
+    response_model=CaseRetryResult,
+    summary="批量重试指定用例",
+    dependencies=[Depends(require_permission("execution:retry"))],
+)
+async def retry_cases(
+    task_id: int,
+    payload: CaseRetryRequest,
+    db: AsyncSession = Depends(get_db),
+) -> CaseRetryResult:
+    """批量提交单用例重试，由调度器按提交顺序排队执行。
+
+    只有最近一次执行处于失败/异常类状态的用例会被受理；不符合条件的用例
+    在 ``skipped`` 中返回原因，不影响同批其他用例。
+    """
+    task = await _get_task(db, task_id)
+    if scheduler.is_batch_running(task_id):
+        raise ConflictError("任务正在运行，无法发起单用例重试")
+    task_case_ids = {int(item) for item in (task.case_ids or [])}
+    latest = await _latest_by_case(db, task_id)
+    retrying = set(scheduler.retrying_case_ids(task_id))
+    accepted: list[int] = []
+    skipped: list[CaseRetrySkipped] = []
+    for case_id in dict.fromkeys(int(item) for item in payload.case_ids):
+        reason = _case_retry_skip_reason(task_case_ids, latest, retrying, case_id)
+        if reason is not None:
+            skipped.append(CaseRetrySkipped(case_id=case_id, reason=reason))
+            continue
+        if not await scheduler.retry_case(task_id, case_id):
+            skipped.append(
+                CaseRetrySkipped(
+                    case_id=case_id,
+                    reason="任务正在运行或已终止，无法发起单用例重试",
+                )
+            )
+            continue
+        accepted.append(case_id)
+        retrying.add(case_id)
+    if not accepted:
+        reason = skipped[0].reason if skipped else "没有可重试的用例"
+        raise ConflictError(reason)
+    suffix = f"，跳过 {len(skipped)} 条不符合重试条件的用例" if skipped else ""
+    return CaseRetryResult(
+        accepted=accepted,
+        skipped=skipped,
+        retrying_cases=scheduler.retrying_case_ids(task_id),
+        message=f"已提交 {len(accepted)} 条用例重试{suffix}",
+    )
+
+
 @router.post(
     "/{task_id}/cases/{case_id}/retry",
     response_model=MessageResponse,
@@ -724,13 +849,16 @@ async def retry_case(
     """在当前批次内单独重跑一条用例，作为该用例的最新一次尝试。
 
     用于自动重试后仍异常、但仍希望每个用例都有最终状态的场景。
-    仅当任务未运行、且该用例最近一次执行为失败/异常类状态时允许。
+    整批执行期间不允许提交；多条单用例重试可连续提交，由调度器排队顺序执行。
+    仅当该用例最近一次执行为失败/异常类状态时允许。
     """
     task = await _get_task(db, task_id)
-    if scheduler.is_running(task_id):
+    if scheduler.is_batch_running(task_id):
         raise ConflictError("任务正在运行，无法发起单用例重试")
     if int(case_id) not in {int(item) for item in (task.case_ids or [])}:
         raise NotFoundError("该用例不在当前批次中")
+    if int(case_id) in scheduler.retrying_case_ids(task_id):
+        raise ConflictError("该用例已提交重试，请等待执行完成")
     latest = (
         await db.execute(
             select(ExecutionRecord)
@@ -749,7 +877,7 @@ async def retry_case(
     if latest.status not in RETRYABLE_STATUSES:
         raise ConflictError("该用例最近一次执行不处于可重试状态")
     if not await scheduler.retry_case(task_id, case_id):
-        raise ConflictError("任务正在运行，无法发起单用例重试")
+        raise ConflictError("任务正在运行或已终止，无法发起单用例重试")
     return MessageResponse(message="已提交单用例重试，结果将实时更新")
 
 

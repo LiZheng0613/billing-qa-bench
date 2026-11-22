@@ -14,6 +14,7 @@ from billing_qa.db.session import SessionLocal
 from billing_qa.models.task import BatchTask
 from billing_qa.schemas.task import TaskProgressEvent
 from billing_qa.services.engine.metrics import compute_task_metrics
+from billing_qa.services.engine.scheduler import scheduler
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["实时推送"])
@@ -39,6 +40,7 @@ async def _initial_event(task_id: int) -> dict | None:
             error_count=metrics.status_distribution.ERROR,
             max_turns_count=metrics.status_distribution.MAX_TURNS_EXCEEDED,
             metrics=metrics,
+            retrying_cases=scheduler.retrying_case_ids(task.id),
             message=task.error_message,
             timestamp=datetime.now(),
         )

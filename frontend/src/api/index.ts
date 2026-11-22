@@ -15,6 +15,7 @@ import type {
   CaseAIDraftResponse,
   CasePayload,
   CaseReviewPayload,
+  CaseRetryResult,
   CaseRevision,
   CaseTrend,
   DataSource,
@@ -64,6 +65,7 @@ import type {
   SystemUser,
   SystemUserDetail,
   TaskMetrics,
+  TaskRetryCandidates,
   TaskRunsPage,
   TaskScheduleType,
   TemplateStrategy,
@@ -385,6 +387,10 @@ export const api = {
     resume: (id: number) => http.post<MessageResponse>(`/tasks/${id}/resume`),
     retryCase: (taskId: number, caseId: number) =>
       http.post<MessageResponse>(`/tasks/${taskId}/cases/${caseId}/retry`),
+    retryCases: (taskId: number, caseIds: number[]) =>
+      http.post<CaseRetryResult>(`/tasks/${taskId}/cases/retry`, { case_ids: caseIds }),
+    retryCandidates: (taskId: number) =>
+      http.get<TaskRetryCandidates>(`/tasks/${taskId}/retry-candidates`),
     metrics: (id: number) => http.get<TaskMetrics>(`/tasks/${id}/metrics`),
     runs: (id: number, query?: { page?: number; page_size?: number }) =>
       http.get<TaskRunsPage>(`/tasks/${id}/runs`, query),

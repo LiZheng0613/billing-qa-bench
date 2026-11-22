@@ -1011,6 +1011,32 @@ export interface BatchTask {
   run_count?: number
   /** 未完成用例数（未执行 / 执行中 / 已终止），用于判断是否可续做 */
   unfinished_cases?: number
+  /** 正在排队或执行中的单用例重试（用例 id 列表） */
+  retrying_cases?: number[]
+}
+
+/** 按执行状态聚合的可重试用例（用于「按状态勾选」）。 */
+export interface RetryCandidateGroup {
+  status: string
+  case_ids: number[]
+}
+
+export interface TaskRetryCandidates {
+  groups: RetryCandidateGroup[]
+  total: number
+  retrying_cases: number[]
+}
+
+export interface CaseRetrySkipped {
+  case_id: number
+  reason: string
+}
+
+export interface CaseRetryResult {
+  accepted: number[]
+  skipped: CaseRetrySkipped[]
+  retrying_cases: number[]
+  message: string
 }
 
 export interface StatusDistribution {
@@ -1083,6 +1109,7 @@ export interface TaskProgressEvent {
   max_turns_count?: number
   metrics?: TaskMetrics | null
   execution?: CaseExecutionItem | null
+  retrying_cases?: number[] | null
   message?: string | null
   timestamp: string
 }

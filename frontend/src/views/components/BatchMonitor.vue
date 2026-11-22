@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import StatusPill from '../../components/StatusPill.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import PaginationBar from '../../components/PaginationBar.vue'
-import type { BatchTask, CaseExecutionItem, TaskMetrics } from '../../types'
+import type { BatchTask, CaseExecutionItem, TaskMetrics, TaskRetryCandidates } from '../../types'
 import {
   formatDateTime,
   formatMs,
@@ -36,14 +36,14 @@ const props = withDefaults(
     executionMaxScore?: number | null
     executionSort?: '' | 'score_desc' | 'score_asc'
     exporting?: boolean
+    retryCandidates?: TaskRetryCandidates | null
   }>(),
-  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, executionPageSizeOptions: () => [10, 20, 30, 50], latestPerCase: true, executionStatus: '', executionKeyword: '', executionMinScore: null, executionMaxScore: null, executionSort: '', exporting: false },
+  { live: false, executionTotal: 0, executionPage: 1, executionPageSize: 30, executionPageSizeOptions: () => [10, 20, 30, 50], latestPerCase: true, executionStatus: '', executionKeyword: '', executionMinScore: null, executionMaxScore: null, executionSort: '', exporting: false, retryCandidates: null },
 )
 
 const emit = defineEmits<{
   (e: 'start'): void
   (e: 'abort'): void
-  (e: 'retry'): void
   (e: 'resume'): void
   (e: 'run-now'): void
   (e: 'stop-plan'): void
@@ -51,6 +51,7 @@ const emit = defineEmits<{
   (e: 'select-execution', executionId: number): void
   (e: 'open-case', caseId: number): void
   (e: 'retry-case', caseId: number): void
+  (e: 'retry-cases', caseIds: number[]): void
   (e: 'page-change', page: number): void
   (e: 'page-size-change', size: number): void
   (e: 'mode-change', latestPerCase: boolean): void
@@ -102,12 +103,6 @@ const canAbort = computed(
     !isPlanRoot.value &&
     Boolean(props.task && ['RUNNING', 'PENDING'].includes(props.task.status)),
 )
-const canRetry = computed(
-  () =>
-    !planWaiting.value &&
-    !isPlan.value &&
-    Boolean(props.task && ['COMPLETED', 'ABORTED', 'FAILED'].includes(props.task.status)),
-)
 // 续做：非计划批次已终止/异常结束，且仍有未完成用例。
 // 与「失败重跑」不同，只补跑未完成用例，已有最终判定的结果保持不变。
 const canResume = computed(
@@ -122,7 +117,7 @@ const canResume = computed(
 )
 
 // 单用例重试：仅「用例最新」视图下展示，避免对历史尝试行误操作；
-// 任务运行中禁用，防止与批次执行并发写入同一用例结果。
+// 整批执行期间禁止单用例重试，避免与批次执行并发写入同一用例结果。
 const SINGLE_RETRYABLE_STATUSES = new Set([
   'FAIL',
   'ERROR',
@@ -133,15 +128,163 @@ const SINGLE_RETRYABLE_STATUSES = new Set([
 const taskRunning = computed(
   () => Boolean(props.task && ['RUNNING', 'PENDING'].includes(props.task.status)),
 )
+// 单用例重试会让任务短暂回到 RUNNING，但此时其他用例仍可继续提交重试；
+// 只有整批执行期间才应隐藏所有重试入口。
+const retryingCaseIds = computed(() => new Set(props.task?.retrying_cases ?? []))
+const singleRetryActive = computed(() => retryingCaseIds.value.size > 0)
+function isCaseRetrying(item: CaseExecutionItem): boolean {
+  return (
+    item.case_id !== null &&
+    item.case_id !== undefined &&
+    retryingCaseIds.value.has(item.case_id)
+  )
+}
 function canRetryCase(item: CaseExecutionItem): boolean {
   return (
     props.latestPerCase &&
-    !taskRunning.value &&
+    (!taskRunning.value || singleRetryActive.value) &&
     item.case_id !== null &&
     item.case_id !== undefined &&
+    !isCaseRetrying(item) &&
     SINGLE_RETRYABLE_STATUSES.has(item.status)
   )
 }
+
+// 批量勾选重试：仅在「用例最新」视图开放，整批执行期间不可选，
+// 但单用例重试队列运行期间仍可继续勾选其他可重试用例。
+const selectionAvailable = computed(
+  () =>
+    props.latestPerCase &&
+    !planWaiting.value &&
+    !isPlan.value &&
+    auth.can('execution:retry') &&
+    (!taskRunning.value || singleRetryActive.value),
+)
+const selectedCaseIds = ref<number[]>([])
+const selectedIdSet = computed(() => new Set(selectedCaseIds.value))
+const pageSelectableIds = computed(() =>
+  props.executions
+    .filter(canRetryCase)
+    .map((item) => item.case_id as number),
+)
+const pageAllSelected = computed(
+  () =>
+    pageSelectableIds.value.length > 0 &&
+    pageSelectableIds.value.every((id) => selectedIdSet.value.has(id)),
+)
+const pageSomeSelected = computed(
+  () =>
+    !pageAllSelected.value &&
+    pageSelectableIds.value.some((id) => selectedIdSet.value.has(id)),
+)
+// 后端按最新执行状态汇总的可重试用例，排除已提交的（实时刷新有延迟时兜底）。
+const candidateGroups = computed(() =>
+  (props.retryCandidates?.groups ?? [])
+    .map((group) => ({
+      status: group.status,
+      caseIds: group.case_ids.filter((id) => !retryingCaseIds.value.has(id)),
+    }))
+    .filter((group) => group.caseIds.length > 0),
+)
+const candidateIdSet = computed(
+  () => new Set(candidateGroups.value.flatMap((group) => group.caseIds)),
+)
+const selectableCandidateTotal = computed(() =>
+  candidateGroups.value.reduce((sum, group) => sum + group.caseIds.length, 0),
+)
+const allCandidatesSelected = computed(
+  () =>
+    selectableCandidateTotal.value > 0 &&
+    candidateGroups.value.every((group) =>
+      group.caseIds.every((id) => selectedIdSet.value.has(id)),
+    ),
+)
+
+function isCaseSelected(item: CaseExecutionItem): boolean {
+  return (
+    item.case_id !== null &&
+    item.case_id !== undefined &&
+    selectedIdSet.value.has(item.case_id)
+  )
+}
+
+function toggleCaseSelection(item: CaseExecutionItem): void {
+  if (!canRetryCase(item) || item.case_id === null || item.case_id === undefined) return
+  const caseId = item.case_id
+  selectedCaseIds.value = selectedIdSet.value.has(caseId)
+    ? selectedCaseIds.value.filter((id) => id !== caseId)
+    : [...selectedCaseIds.value, caseId]
+}
+
+function togglePageSelection(): void {
+  if (pageAllSelected.value) {
+    const pageIds = new Set(pageSelectableIds.value)
+    selectedCaseIds.value = selectedCaseIds.value.filter((id) => !pageIds.has(id))
+    return
+  }
+  selectedCaseIds.value = Array.from(
+    new Set([...selectedCaseIds.value, ...pageSelectableIds.value]),
+  )
+}
+
+function isStatusGroupSelected(group: { caseIds: number[] }): boolean {
+  return group.caseIds.every((id) => selectedIdSet.value.has(id))
+}
+
+/** 按状态整组勾选/取消：覆盖当前批次所有页，不只当前页。 */
+function toggleStatusSelection(group: { caseIds: number[] }): void {
+  const caseIds = new Set(group.caseIds)
+  if (isStatusGroupSelected(group)) {
+    selectedCaseIds.value = selectedCaseIds.value.filter((id) => !caseIds.has(id))
+    return
+  }
+  selectedCaseIds.value = Array.from(
+    new Set([...selectedCaseIds.value, ...group.caseIds]),
+  )
+}
+
+function selectAllCandidates(): void {
+  selectedCaseIds.value = Array.from(candidateIdSet.value)
+}
+
+function clearSelection(): void {
+  selectedCaseIds.value = []
+}
+
+function submitBatchRetry(): void {
+  if (!selectionAvailable.value || selectedCaseIds.value.length === 0) return
+  emit('retry-cases', [...selectedCaseIds.value])
+  // 不清空勾选：确认框取消或接口失败时保留选择；提交成功后由
+  // retrying_cases / 候选清单变化自动把已进入队列的用例移出。
+}
+
+// 只保留仍可重试的勾选项：进入执行的用例、状态已变为 PASS 的用例自动移出。
+watch(
+  [() => props.executions, retryingCaseIds, candidateIdSet, pageSelectableIds],
+  () => {
+    const pageIds = new Set(pageSelectableIds.value)
+    const next = selectedCaseIds.value.filter(
+      (id) =>
+        !retryingCaseIds.value.has(id) &&
+        (pageIds.has(id) || candidateIdSet.value.has(id)),
+    )
+    if (next.length !== selectedCaseIds.value.length) selectedCaseIds.value = next
+  },
+)
+
+watch(
+  () => props.latestPerCase,
+  (value) => {
+    if (!value) selectedCaseIds.value = []
+  },
+)
+
+watch(
+  () => props.task?.id,
+  () => {
+    selectedCaseIds.value = []
+  },
+)
 const canRunNow = computed(() => planWaiting.value && planActive.value)
 const canEnablePlan = computed(() => planWaiting.value && !planActive.value)
 const planActive = computed(
@@ -495,7 +638,6 @@ onBeforeUnmount(clearFilterTimer)
         >
           继续执行
         </button>
-        <button v-if="auth.can('execution:retry') && canRetry" class="btn-ghost btn-xs" @click="emit('retry')">失败重跑</button>
       </div>
     </header>
 
@@ -729,9 +871,75 @@ onBeforeUnmount(clearFilterTimer)
             重置筛选
           </button>
         </div>
+        <div
+          v-if="selectionAvailable"
+          class="mx-5 mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-2 text-xs text-slate-600"
+        >
+          <span class="font-medium text-slate-800">批量重试</span>
+          <span class="text-slate-500">已选 {{ selectedCaseIds.length }} 条</span>
+          <span class="h-3 w-px bg-slate-300" />
+          <span class="text-[11px] text-slate-500">按状态勾选</span>
+          <button
+            v-for="group in candidateGroups"
+            :key="group.status"
+            type="button"
+            class="rounded-full border px-2 py-0.5 text-[11px] transition"
+            :class="
+              isStatusGroupSelected(group)
+                ? 'border-indigo-300 bg-indigo-100 text-indigo-700'
+                : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600'
+            "
+            :title="`${isStatusGroupSelected(group) ? '取消勾选' : '勾选'}全部「${statusLabel(group.status)}」用例（${group.caseIds.length} 条，含其他页）`"
+            @click="toggleStatusSelection(group)"
+          >
+            {{ statusLabel(group.status) }} {{ group.caseIds.length }}
+          </button>
+          <span v-if="retryCandidates && candidateGroups.length === 0" class="text-[11px] text-slate-400">
+            暂无可重试用例
+          </span>
+          <button
+            v-if="retryCandidates && selectableCandidateTotal > 0 && !allCandidatesSelected"
+            type="button"
+            class="text-[11px] text-indigo-600 hover:underline"
+            @click="selectAllCandidates"
+          >
+            全选可重试
+          </button>
+          <button
+            v-if="selectedCaseIds.length"
+            type="button"
+            class="text-[11px] text-slate-500 hover:text-slate-700 hover:underline"
+            @click="clearSelection"
+          >
+            清空
+          </button>
+          <div class="ml-auto flex items-center gap-2">
+            <span class="hidden text-[11px] text-slate-500 sm:inline">
+              勾选后可一次提交，按顺序逐条执行
+            </span>
+            <button
+              class="btn-primary btn-xs"
+              :disabled="selectedCaseIds.length === 0"
+              @click="submitBatchRetry"
+            >
+              重试选中（{{ selectedCaseIds.length }}）
+            </button>
+          </div>
+        </div>
         <table class="table-shell mt-2">
           <thead>
             <tr>
+              <th v-if="selectionAvailable" class="th w-8">
+                <input
+                  type="checkbox"
+                  class="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  :checked="pageAllSelected"
+                  :indeterminate="pageSomeSelected"
+                  :disabled="pageSelectableIds.length === 0"
+                  title="勾选 / 取消本页全部可重试用例"
+                  @change="togglePageSelection"
+                />
+              </th>
               <th class="th">执行号</th>
               <th class="th">用例</th>
               <th class="th">状态</th>
@@ -762,6 +970,17 @@ onBeforeUnmount(clearFilterTimer)
               class="cursor-pointer"
               @click="emit('select-execution', item.id)"
             >
+              <td v-if="selectionAvailable" class="td">
+                <input
+                  type="checkbox"
+                  class="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  :checked="isCaseSelected(item)"
+                  :disabled="!canRetryCase(item)"
+                  :title="canRetryCase(item) ? '勾选该用例' : '该用例当前不可重试'"
+                  @click.stop
+                  @change="toggleCaseSelection(item)"
+                />
+              </td>
               <td class="td font-mono text-xs text-slate-500">#{{ item.id }}</td>
               <td class="td">
                 <button
@@ -806,7 +1025,15 @@ onBeforeUnmount(clearFilterTimer)
               <td class="td text-right">
                 <div class="inline-flex items-center gap-1">
                   <button
-                    v-if="auth.can('execution:retry') && canRetryCase(item)"
+                    v-if="latestPerCase && auth.can('execution:retry') && isCaseRetrying(item)"
+                    class="btn-ghost btn-xs"
+                    disabled
+                    title="该用例正在重试，完成后可再次提交"
+                  >
+                    重试中
+                  </button>
+                  <button
+                    v-else-if="auth.can('execution:retry') && canRetryCase(item)"
                     class="btn-ghost btn-xs"
                     title="在当前批次内重跑该用例，作为最新一次执行结果"
                     @click.stop="emit('retry-case', item.case_id as number)"

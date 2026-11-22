@@ -235,9 +235,12 @@ def task_to_out(
     env_name: str | None = None,
     run_count: int = 0,
     unfinished_cases: int = 0,
+    retrying_cases: list[int] | None = None,
 ) -> TaskOut:
     data = TaskOut.model_validate(task)
     data.environment_name = env_name
     data.run_count = run_count
     data.unfinished_cases = unfinished_cases
+    if retrying_cases is not None:
+        data.retrying_cases = retrying_cases
     return data

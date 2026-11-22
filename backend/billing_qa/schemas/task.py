@@ -134,6 +134,45 @@ class TaskOut(ORMModel):
     run_count: int = 0
     # 未完成用例数（未执行 / 执行中 / 已终止），用于判断是否可续做
     unfinished_cases: int = 0
+    # 正在排队或执行中的单用例重试（用例 id 列表）
+    retrying_cases: list[int] = Field(default_factory=list)
+
+
+class CaseRetryRequest(BaseModel):
+    """批量提交指定用例重试。"""
+
+    case_ids: list[int] = Field(
+        min_length=1, max_length=500, description="要重试的用例 id 列表"
+    )
+
+
+class CaseRetrySkipped(BaseModel):
+    case_id: int
+    reason: str
+
+
+class CaseRetryResult(BaseModel):
+    """批量重试的受理结果：未通过校验的用例单独返回原因。"""
+
+    accepted: list[int] = Field(default_factory=list)
+    skipped: list[CaseRetrySkipped] = Field(default_factory=list)
+    retrying_cases: list[int] = Field(default_factory=list)
+    message: str
+
+
+class RetryCandidateGroup(BaseModel):
+    """按执行状态聚合的可重试用例。"""
+
+    status: str
+    case_ids: list[int] = Field(default_factory=list)
+
+
+class TaskRetryCandidates(BaseModel):
+    """批次内可重试用例清单，供前端「按状态勾选」。"""
+
+    groups: list[RetryCandidateGroup] = Field(default_factory=list)
+    total: int = 0
+    retrying_cases: list[int] = Field(default_factory=list)
 
 
 class StatusDistribution(BaseModel):
@@ -208,6 +247,8 @@ class TaskProgressEvent(BaseModel):
     max_turns_count: int
     metrics: TaskMetrics | None = None
     execution: CaseExecutionItem | None = None
+    # 排队中或执行中的单用例重试（仅 status / snapshot 事件携带）
+    retrying_cases: list[int] | None = None
     message: str | None = None
     timestamp: datetime
 
