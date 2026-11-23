@@ -480,6 +480,87 @@ async def test_execution_pass_rate_window(client: httpx.AsyncClient) -> None:
     assert invalid.status_code == 422
 
 
+async def test_execution_summary_aggregates(client: httpx.AsyncClient) -> None:
+    """大盘聚合接口的各口径需自洽，并与通过率接口保持同一时间窗口径。"""
+    summary = (await client.get("/executions/summary")).json()
+    window = summary["window"]
+    assert window["hours"] == 24
+    # 通过率只统计已判定（pass_flag 非空）的执行，失败数包含在已判定内。
+    assert window["total"] >= window["measured"] >= 0
+    assert window["measured"] == window["passed"] + window["failed"]
+    if window["measured"]:
+        assert window["pass_rate"] == round(window["passed"] / window["measured"] * 100, 2)
+    else:
+        assert window["pass_rate"] is None
+
+    # 同一窗口下与 /executions/pass-rate 的通过率口径一致。
+    pass_rate = (await client.get("/executions/pass-rate")).json()
+    assert pass_rate["total"] == window["total"]
+    assert pass_rate["measured"] == window["measured"]
+    assert pass_rate["pass_rate"] == window["pass_rate"]
+
+    # 每日序列补齐空日，按日期升序，最后一天是今天。
+    assert len(summary["daily"]) == 7
+    dates = [item["date"] for item in summary["daily"]]
+    assert dates == sorted(dates)
+    assert dates[-1] == datetime.now().date().isoformat()
+    for item in summary["daily"]:
+        assert 0 <= item["passed"] <= item["measured"] <= item["total"]
+
+    longer = (await client.get("/executions/summary", params={"days": 14})).json()
+    assert len(longer["daily"]) == 14
+    assert longer["daily"][-1]["date"] == dates[-1]
+
+    # 来源分布应完整覆盖窗口内样本，不做二次截断。
+    assert sum(item["total"] for item in summary["by_source"]) == window["total"]
+    assert sum(item["measured"] for item in summary["by_source"]) == window["measured"]
+    for item in summary["by_source"]:
+        assert item["source"] != "SANDBOX"
+        if item["measured"]:
+            assert item["pass_rate"] == round(item["passed"] / item["measured"] * 100, 2)
+        else:
+            assert item["pass_rate"] is None
+        assert item["measured"] <= item["total"]
+
+    # 失败原因应恰好覆盖窗口内的失败执行。
+    assert sum(item["count"] for item in summary["failure_reasons"]) == window["failed"]
+    counts = [item["count"] for item in summary["failure_reasons"]]
+    assert counts == sorted(counts, reverse=True)
+
+    top = summary["top_failed_cases"]
+    assert len(top) <= 5
+    assert [item["failures"] for item in top] == sorted(
+        (item["failures"] for item in top), reverse=True
+    )
+    if window["failed"]:
+        assert top, "存在失败执行时应至少给出一个高发失败用例"
+
+    # Token 与时延在无样本时应为 0 / None，而不是缺字段。
+    assert summary["tokens"]["simulator"] >= 0
+    assert summary["tokens"]["judge"] >= 0
+    latency = summary["latency"]
+    assert latency["avg_ms"] is None or latency["avg_ms"] >= 0
+    assert latency["p95_ms"] is None or latency["p95_ms"] >= 0
+
+    # 列表新增的 pass_flag / hours 过滤与聚合口径对齐（列表不排除 SANDBOX，故为上限）。
+    failed = (
+        await client.get(
+            "/executions", params={"pass_flag": "false", "hours": 24, "page_size": 50}
+        )
+    ).json()
+    assert failed["total"] <= window["failed"]
+    assert all(item["pass_flag"] is False for item in failed["items"])
+    unfiltered = (await client.get("/executions", params={"page_size": 1})).json()
+    assert failed["total"] <= unfiltered["total"]
+
+    assert (
+        await client.get("/executions/summary", params={"hours": 0})
+    ).status_code == 422
+    assert (
+        await client.get("/executions/summary", params={"days": 31})
+    ).status_code == 422
+
+
 async def test_task_result_export_missing_task(client: httpx.AsyncClient) -> None:
     response = await client.get("/tasks/999999/export")
     assert response.status_code == 404

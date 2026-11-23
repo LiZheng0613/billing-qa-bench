@@ -32,6 +32,7 @@ import type {
   ExecutionDetail,
   ExecutionListItem,
   ExecutionPassRate,
+  ExecutionSummary,
   FactAtomView,
   FactStatItem,
   FactStatsOverview,
@@ -421,11 +422,15 @@ export const api = {
       task_id?: number
       status?: string
       source?: string
+      pass_flag?: boolean
+      hours?: number
       page?: number
       page_size?: number
     }) => http.get<Page<ExecutionListItem>>('/executions', query),
     passRate: (hours = 24) =>
       http.get<ExecutionPassRate>('/executions/pass-rate', { hours }),
+    summary: (query?: { hours?: number; days?: number }) =>
+      http.get<ExecutionSummary>('/executions/summary', query),
     get: (id: number) => http.get<ExecutionDetail>(`/executions/${id}`),
     raw: (id: number) => http.get<RawExecution>(`/executions/${id}/raw`),
   },

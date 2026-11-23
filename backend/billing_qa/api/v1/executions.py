@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import math
+from datetime import datetime, time, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -19,6 +20,16 @@ from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.common import Page
+from billing_qa.schemas.dashboard import (
+    ExecutionDailyPoint,
+    ExecutionFailedCase,
+    ExecutionFailureReason,
+    ExecutionLatencySummary,
+    ExecutionSourceSummary,
+    ExecutionSummary,
+    ExecutionTokenSummary,
+    ExecutionWindowSummary,
+)
 from billing_qa.schemas.task import ExecutionDetail, ExecutionListItem, ExecutionPassRate
 
 router = APIRouter(
@@ -41,6 +52,8 @@ async def list_executions(
     task_id: int | None = None,
     status: str | None = None,
     source: str | None = None,
+    pass_flag: bool | None = None,
+    hours: int | None = Query(default=None, ge=1, le=24 * 30, description="限定最近 N 小时"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -54,6 +67,10 @@ async def list_executions(
         conditions.append(ExecutionRecord.status == status)
     if source:
         conditions.append(ExecutionRecord.source == source)
+    if pass_flag is not None:
+        conditions.append(ExecutionRecord.pass_flag.is_(pass_flag))
+    if hours:
+        conditions.append(ExecutionRecord.started_at >= datetime.now() - timedelta(hours=hours))
     total = (
         await db.execute(select(func.count()).select_from(ExecutionRecord).where(*conditions))
     ).scalar_one()
@@ -117,6 +134,252 @@ async def execution_pass_rate(
         passed=passed,
         pass_rate=round(passed / measured * 100, 2) if measured else None,
     )
+
+
+@router.get(
+    "/summary",
+    response_model=ExecutionSummary,
+    summary="大盘执行聚合",
+)
+async def execution_summary(
+    hours: int = Query(default=24, ge=1, le=24 * 30, description="主窗口（小时）"),
+    days: int = Query(default=7, ge=1, le=30, description="趋势天数"),
+    db: AsyncSession = Depends(get_db),
+) -> ExecutionSummary:
+    """大盘首屏所需的执行聚合：窗口通过率、环比、时延、Token、每日趋势、来源与失败聚焦。
+
+    口径与 ``/executions/pass-rate`` 一致：按 ``started_at`` 归窗，排除沙盒试跑
+    （SANDBOX），通过率只统计已判定（``pass_flag`` 非空）的执行。
+    """
+    now = datetime.now()
+    since = now - timedelta(hours=hours)
+    previous_since = since - timedelta(hours=hours)
+    window_conditions = (
+        ExecutionRecord.started_at >= since,
+        ExecutionRecord.source != ExecutionSource.SANDBOX,
+    )
+
+    row = (
+        await db.execute(
+            select(
+                func.count(ExecutionRecord.id).label("total"),
+                func.count(ExecutionRecord.pass_flag).label("measured"),
+                func.sum(case((ExecutionRecord.pass_flag.is_(True), 1), else_=0)).label(
+                    "passed"
+                ),
+                func.sum(case((ExecutionRecord.pass_flag.is_(False), 1), else_=0)).label(
+                    "failed"
+                ),
+                func.sum(ExecutionRecord.simulator_tokens).label("simulator_tokens"),
+                func.sum(ExecutionRecord.judge_tokens).label("judge_tokens"),
+            ).where(*window_conditions)
+        )
+    ).one()
+    measured = int(row.measured or 0)
+    passed = int(row.passed or 0)
+
+    previous = (
+        await db.execute(
+            select(
+                func.count(ExecutionRecord.pass_flag).label("measured"),
+                func.sum(case((ExecutionRecord.pass_flag.is_(True), 1), else_=0)).label(
+                    "passed"
+                ),
+            ).where(
+                ExecutionRecord.started_at >= previous_since,
+                ExecutionRecord.started_at < since,
+                ExecutionRecord.source != ExecutionSource.SANDBOX,
+            )
+        )
+    ).one()
+    previous_measured = int(previous.measured or 0)
+    previous_passed = int(previous.passed or 0)
+
+    latency_rows = (
+        await db.execute(
+            select(ExecutionRecord.latency_ms, ExecutionRecord.ttft_ms).where(
+                *window_conditions
+            )
+        )
+    ).all()
+    latencies = [
+        float(item.latency_ms) for item in latency_rows if item.latency_ms is not None
+    ]
+    ttfts = [float(item.ttft_ms) for item in latency_rows if item.ttft_ms is not None]
+
+    today = now.date()
+    first_day = today - timedelta(days=days - 1)
+    day_col = func.date(ExecutionRecord.started_at)
+    daily_rows = (
+        await db.execute(
+            select(
+                day_col.label("day"),
+                func.count(ExecutionRecord.id).label("total"),
+                func.count(ExecutionRecord.pass_flag).label("measured"),
+                func.sum(case((ExecutionRecord.pass_flag.is_(True), 1), else_=0)).label(
+                    "passed"
+                ),
+            )
+            .where(
+                ExecutionRecord.started_at >= datetime.combine(first_day, time.min),
+                ExecutionRecord.source != ExecutionSource.SANDBOX,
+            )
+            .group_by(day_col)
+        )
+    ).all()
+    daily_map = {str(item.day): item for item in daily_rows}
+    daily: list[ExecutionDailyPoint] = []
+    for offset in range(days):
+        day = first_day + timedelta(days=offset)
+        key = day.isoformat()
+        item = daily_map.get(key)
+        day_measured = int(item.measured or 0) if item else 0
+        day_passed = int(item.passed or 0) if item else 0
+        daily.append(
+            ExecutionDailyPoint(
+                date=key,
+                total=int(item.total or 0) if item else 0,
+                measured=day_measured,
+                passed=day_passed,
+                pass_rate=(
+                    round(day_passed / day_measured * 100, 2) if day_measured else None
+                ),
+            )
+        )
+
+    source_rows = (
+        await db.execute(
+            select(
+                ExecutionRecord.source.label("source"),
+                func.count(ExecutionRecord.id).label("total"),
+                func.count(ExecutionRecord.pass_flag).label("measured"),
+                func.sum(case((ExecutionRecord.pass_flag.is_(True), 1), else_=0)).label(
+                    "passed"
+                ),
+            )
+            .where(*window_conditions)
+            .group_by(ExecutionRecord.source)
+            .order_by(func.count(ExecutionRecord.id).desc())
+        )
+    ).all()
+    by_source = [
+        ExecutionSourceSummary(
+            source=str(item.source),
+            total=int(item.total or 0),
+            measured=int(item.measured or 0),
+            passed=int(item.passed or 0),
+            pass_rate=(
+                round(int(item.passed or 0) / int(item.measured or 1) * 100, 2)
+                if int(item.measured or 0)
+                else None
+            ),
+        )
+        for item in source_rows
+    ]
+
+    reason_rows = (
+        await db.execute(
+            select(
+                ExecutionRecord.status.label("status"),
+                func.count(ExecutionRecord.id).label("count"),
+            )
+            .where(*window_conditions, ExecutionRecord.pass_flag.is_(False))
+            .group_by(ExecutionRecord.status)
+            .order_by(func.count(ExecutionRecord.id).desc())
+        )
+    ).all()
+    failure_reasons = [
+        ExecutionFailureReason(status=str(item.status), count=int(item.count or 0))
+        for item in reason_rows
+    ]
+
+    failed_case_rows = (
+        await db.execute(
+            select(
+                ExecutionRecord.case_id.label("case_id"),
+                TestCase.code.label("case_code"),
+                TestCase.name.label("case_name"),
+                func.count(ExecutionRecord.id).label("failures"),
+                func.max(ExecutionRecord.started_at).label("last_failed_at"),
+            )
+            .join(TestCase, TestCase.id == ExecutionRecord.case_id)
+            .where(*window_conditions, ExecutionRecord.pass_flag.is_(False))
+            .group_by(ExecutionRecord.case_id, TestCase.code, TestCase.name)
+            .order_by(
+                func.count(ExecutionRecord.id).desc(),
+                func.max(ExecutionRecord.started_at).desc(),
+            )
+            .limit(5)
+        )
+    ).all()
+    case_ids = [int(item.case_id) for item in failed_case_rows]
+    last_status: dict[int, str] = {}
+    if case_ids:
+        status_rows = (
+            await db.execute(
+                select(ExecutionRecord.case_id, ExecutionRecord.status)
+                .where(
+                    ExecutionRecord.case_id.in_(case_ids),
+                    ExecutionRecord.pass_flag.is_(False),
+                    ExecutionRecord.source != ExecutionSource.SANDBOX,
+                    ExecutionRecord.started_at >= since,
+                )
+                .order_by(ExecutionRecord.started_at.desc())
+            )
+        ).all()
+        for item in status_rows:
+            last_status.setdefault(int(item.case_id), str(item.status))
+    top_failed_cases = [
+        ExecutionFailedCase(
+            case_id=int(item.case_id),
+            case_code=item.case_code,
+            case_name=item.case_name,
+            failures=int(item.failures or 0),
+            last_failed_at=item.last_failed_at,
+            last_status=last_status.get(int(item.case_id)),
+        )
+        for item in failed_case_rows
+    ]
+
+    return ExecutionSummary(
+        window=ExecutionWindowSummary(
+            hours=hours,
+            total=int(row.total or 0),
+            measured=measured,
+            passed=passed,
+            failed=int(row.failed or 0),
+            pass_rate=round(passed / measured * 100, 2) if measured else None,
+            previous_pass_rate=(
+                round(previous_passed / previous_measured * 100, 2)
+                if previous_measured
+                else None
+            ),
+            previous_measured=previous_measured,
+        ),
+        latency=ExecutionLatencySummary(
+            p95_ms=_percentile(latencies, 95),
+            avg_ms=round(sum(latencies) / len(latencies), 1) if latencies else None,
+            avg_ttft_ms=round(sum(ttfts) / len(ttfts), 1) if ttfts else None,
+        ),
+        tokens=ExecutionTokenSummary(
+            simulator=int(row.simulator_tokens or 0),
+            judge=int(row.judge_tokens or 0),
+        ),
+        daily=daily,
+        by_source=by_source,
+        failure_reasons=failure_reasons,
+        top_failed_cases=top_failed_cases,
+    )
+
+
+def _percentile(values: list[float], percent: float) -> float | None:
+    """最近秩法百分位，避免依赖数据库方言的分位数函数。"""
+
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, math.ceil(percent / 100 * len(ordered)) - 1))
+    return round(ordered[index], 1)
 
 
 @router.get("/{execution_id}", response_model=ExecutionDetail, summary="执行全链路详情")

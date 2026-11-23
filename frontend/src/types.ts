@@ -1190,6 +1190,68 @@ export interface ExecutionPassRate {
   pass_rate: number | null
 }
 
+export interface ExecutionWindowSummary {
+  hours: number
+  total: number
+  measured: number
+  passed: number
+  failed: number
+  pass_rate: number | null
+  previous_pass_rate: number | null
+  previous_measured: number
+}
+
+export interface ExecutionLatencySummary {
+  p95_ms: number | null
+  avg_ms: number | null
+  avg_ttft_ms: number | null
+}
+
+export interface ExecutionTokenSummary {
+  simulator: number
+  judge: number
+}
+
+export interface ExecutionDailyPoint {
+  date: string
+  total: number
+  measured: number
+  passed: number
+  pass_rate: number | null
+}
+
+export interface ExecutionSourceSummary {
+  source: string
+  total: number
+  measured: number
+  passed: number
+  pass_rate: number | null
+}
+
+export interface ExecutionFailureReason {
+  status: string
+  count: number
+}
+
+export interface ExecutionFailedCase {
+  case_id: number
+  case_code: string | null
+  case_name: string | null
+  failures: number
+  last_failed_at: string | null
+  last_status: string | null
+}
+
+export interface ExecutionSummary {
+  window: ExecutionWindowSummary
+  latency: ExecutionLatencySummary
+  tokens: ExecutionTokenSummary
+  daily: ExecutionDailyPoint[]
+  by_source: ExecutionSourceSummary[]
+  failure_reasons: ExecutionFailureReason[]
+  top_failed_cases: ExecutionFailedCase[]
+}
+
 export interface ExecutionDetail extends ExecutionListItem {
   environment_id: number | null
   /** 本次执行实际使用的环境名称（任务指定环境优先于用例绑定环境） */
