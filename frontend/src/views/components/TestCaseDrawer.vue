@@ -32,6 +32,7 @@ import type {
 import { caseTypeLabel } from '../../utils/format'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
+import SelectButton from '../../components/SelectButton.vue'
 
 // AI 草稿只落在浏览器本地，刷新后可以接着改；不写后端、不自动落库。
 const AI_DRAFT_STORAGE_KEY = 'billing-qa:ai-draft:v1'
@@ -4344,7 +4345,7 @@ function openDraftResult(): void {
                 <div v-else>
                   <label class="label">状态</label>
                   <select v-model="form.status" class="input">
-                    <button><selectedcontent></selectedcontent></button>
+                    <SelectButton />
                     <option value="ACTIVE">启用</option>
                     <option value="DRAFT">草稿</option>
                     <option value="DISABLED">停用</option>
@@ -4353,7 +4354,7 @@ function openDraftResult(): void {
                 <div>
                   <label class="label">优先级</label>
                   <select v-model="form.priority" class="input" :class="{ 'ai-fill': aiHighlight.has('priority') }">
-                    <button><selectedcontent></selectedcontent></button>
+                    <SelectButton />
                     <option value="P0">P0</option>
                     <option value="P1">P1</option>
                     <option value="P2">P2</option>
@@ -4368,7 +4369,7 @@ function openDraftResult(): void {
               <div v-if="!hideEnvironment" class="sm:max-w-[420px]">
                 <label class="label">执行环境</label>
                 <select v-model="form.environment_id" class="input">
-                  <button><selectedcontent></selectedcontent></button>
+                  <SelectButton />
                   <option :value="null">未绑定</option>
                   <option v-for="env in environments" :key="env.id" :value="env.id">
                     {{ env.name }}（{{ env.code }}）
@@ -4696,7 +4697,7 @@ function openDraftResult(): void {
                   <div>
                     <label class="label">输入形态</label>
                     <select v-model="form.inputType" class="input">
-                      <button><selectedcontent></selectedcontent></button>
+                      <SelectButton />
                       <option v-for="item in INPUT_TYPES" :key="item.value" :value="item.value">
                         {{ item.label }}
                       </option>
@@ -4709,7 +4710,7 @@ function openDraftResult(): void {
                   <div>
                     <label class="label">扩展策略</label>
                     <select v-model="form.extrasPolicy" class="input">
-                      <button><selectedcontent></selectedcontent></button>
+                      <SelectButton />
                       <option value="lenient">宽松（有据扩展中性）</option>
                       <option value="strict">严格（无据扩展即失败）</option>
                     </select>
@@ -4720,7 +4721,7 @@ function openDraftResult(): void {
                   <div>
                     <label class="label">风险等级</label>
                     <select v-model="form.riskLevel" class="input" :class="{ 'ai-fill': aiHighlight.has('riskLevel') }">
-                      <button><selectedcontent></selectedcontent></button>
+                      <SelectButton />
                       <option value="LOW">低（LOW）</option>
                       <option value="HIGH">高（HIGH，默认进入待评审）</option>
                     </select>
@@ -4797,7 +4798,7 @@ function openDraftResult(): void {
                         placeholder="业务名称，如 本期账单金额"
                       />
                       <select v-model="fact.kind" class="input">
-                        <button><selectedcontent></selectedcontent></button>
+                        <SelectButton />
                         <option v-for="item in FACT_KINDS" :key="item.value" :value="item.value">
                           {{ item.label }}
                         </option>
@@ -4844,7 +4845,7 @@ function openDraftResult(): void {
                           :id="'ai-field-' + section.key + '-' + index + '-value'"
                           class="input"
                         >
-                          <button><selectedcontent></selectedcontent></button>
+                          <SelectButton />
                           <option value="true">是</option>
                           <option value="false">否</option>
                         </select>
@@ -5122,14 +5123,14 @@ function openDraftResult(): void {
                 <label class="label">用户模拟器模板（USER_SIMULATOR）</label>
                 <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_130px]">
                   <select v-model="form.simulator_template_id" class="input">
-                    <button><selectedcontent></selectedcontent></button>
+                    <SelectButton />
                     <option :value="null">未指定</option>
                     <option v-for="item in simulatorTemplates" :key="item.id" :value="item.id">
                       {{ item.name }} · v{{ item.current_version }}
                     </option>
                   </select>
                   <select v-model="form.simulatorStrategy" class="input">
-                    <button><selectedcontent></selectedcontent></button>
+                    <SelectButton />
                     <option value="LATEST">跟随最新</option>
                     <option value="PINNED">锁定版本</option>
                   </select>
@@ -5138,7 +5139,7 @@ function openDraftResult(): void {
                     v-model="form.simulatorVersion"
                     class="input"
                   >
-                    <button><selectedcontent></selectedcontent></button>
+                    <SelectButton />
                     <option :value="null">选择版本</option>
                     <option v-for="version in simulatorVersions" :key="version" :value="version">
                       v{{ version }}
@@ -5151,19 +5152,19 @@ function openDraftResult(): void {
                 <label class="label">LLM 裁判模板（LLM_JUDGE）</label>
                 <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_130px]">
                   <select v-model="form.judge_template_id" class="input">
-                    <button><selectedcontent></selectedcontent></button>
+                    <SelectButton />
                     <option :value="null">未指定</option>
                     <option v-for="item in judgeTemplates" :key="item.id" :value="item.id">
                       {{ item.name }} · v{{ item.current_version }}
                     </option>
                   </select>
                   <select v-model="form.judgeTemplateStrategy" class="input">
-                    <button><selectedcontent></selectedcontent></button>
+                    <SelectButton />
                     <option value="LATEST">跟随最新</option>
                     <option value="PINNED">锁定版本</option>
                   </select>
                   <select v-if="form.judgeTemplateStrategy === 'PINNED'" v-model="form.judgeVersion" class="input">
-                    <button><selectedcontent></selectedcontent></button>
+                    <SelectButton />
                     <option :value="null">选择版本</option>
                     <option v-for="version in judgeVersions" :key="version" :value="version">
                       v{{ version }}
@@ -5176,7 +5177,7 @@ function openDraftResult(): void {
                 <div>
                   <label class="label">裁判策略</label>
                   <select v-model="form.judgeStrategy" class="input">
-                    <button><selectedcontent></selectedcontent></button>
+                    <SelectButton />
                     <option value="AVG">平均分（AVG）</option>
                     <option value="VETO">一票否决（VETO）</option>
                   </select>

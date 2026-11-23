@@ -34,6 +34,7 @@ import {
 import { useDebugStore } from '../stores/debug'
 import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toast'
+import SelectButton from '../components/SelectButton.vue'
 
 const router = useRouter()
 const toast = useToastStore()
@@ -549,7 +550,7 @@ onMounted(() => {
       <div class="w-40">
         <label class="label">用例类型</label>
         <select v-model="caseType" class="input" @change="applyFilters">
-          <button><selectedcontent></selectedcontent></button>
+          <SelectButton />
           <option value="">全部类型</option>
           <option value="SINGLE">单轮</option>
           <option value="STATIC_MULTI">静态多轮</option>
@@ -559,7 +560,7 @@ onMounted(() => {
       <div class="w-32">
         <label class="label">状态</label>
         <select v-model="status" class="input" @change="applyFilters">
-          <button><selectedcontent></selectedcontent></button>
+          <SelectButton />
           <option value="">全部</option>
           <option value="ACTIVE">启用</option>
           <option value="DRAFT">草稿</option>
@@ -569,7 +570,7 @@ onMounted(() => {
       <div class="w-36">
         <label class="label">判分方式</label>
         <select v-model="gradingMode" class="input" @change="applyFilters">
-          <button><selectedcontent></selectedcontent></button>
+          <SelectButton />
           <option value="">全部</option>
           <option value="LEGACY">4 维评分</option>
           <option value="ANSWER_CONTRACT">答案契约</option>
@@ -578,7 +579,7 @@ onMounted(() => {
       <div class="w-32">
         <label class="label">评审状态</label>
         <select v-model="reviewStatus" class="input" @change="applyFilters">
-          <button><selectedcontent></selectedcontent></button>
+          <SelectButton />
           <option value="">全部</option>
           <option value="PENDING">待评审</option>
           <option value="APPROVED">已通过</option>
@@ -812,7 +813,7 @@ onMounted(() => {
           <div>
             <label class="label">执行环境</label>
             <select v-model="batchForm.environment_id" class="input">
-              <button><selectedcontent></selectedcontent></button>
+              <SelectButton />
               <option :value="null">不绑定环境（使用用例配置）</option>
               <option v-for="env in environments" :key="env.id" :value="env.id">
                 {{ env.name }}（{{ env.code }}）

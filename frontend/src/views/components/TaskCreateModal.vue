@@ -17,6 +17,7 @@ import {
   toDatetimeLocal,
 } from '../../utils/schedule'
 import { useToastStore } from '../../stores/toast'
+import SelectButton from '../../components/SelectButton.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -270,7 +271,7 @@ watch(
           <div>
             <label class="label">执行环境</label>
             <select v-model="form.environment_id" class="input">
-              <button><selectedcontent></selectedcontent></button>
+              <SelectButton />
               <option :value="null">不绑定环境（使用用例配置）</option>
               <option v-for="env in environments" :key="env.id" :value="env.id">
                 {{ env.name }}（{{ env.code }}）

@@ -35,6 +35,7 @@ import {
 } from '../utils/format'
 import { useToastStore } from '../stores/toast'
 import { useAuthStore } from '../stores/auth'
+import SelectButton from '../components/SelectButton.vue'
 
 const toast = useToastStore()
 const auth = useAuthStore()
@@ -1367,7 +1368,7 @@ onMounted(() => {
           <div>
             <label class="label">请求方法</label>
             <select v-model="envForm.api_method" class="input">
-              <button><selectedcontent></selectedcontent></button>
+              <SelectButton />
               <option value="POST">POST</option>
               <option value="GET">GET</option>
               <option value="PUT">PUT</option>
@@ -2009,7 +2010,7 @@ onMounted(() => {
           <div>
             <label class="label">角色</label>
             <select v-model="modelForm.role" class="input">
-              <button><selectedcontent></selectedcontent></button>
+              <SelectButton />
               <option value="SIMULATOR">模拟器模型（SIMULATOR）</option>
               <option value="JUDGE">裁判模型（JUDGE）</option>
               <option value="CASE_AUTHOR">用例编写模型（CASE_AUTHOR）</option>
@@ -2115,7 +2116,7 @@ onMounted(() => {
               <div>
                 <label class="label">模型</label>
                 <select v-model="modelForm.opencode_model" class="input font-mono">
-                  <button><selectedcontent></selectedcontent></button>
+                  <SelectButton />
                   <option value="">跟随 Serve 默认模型</option>
                   <optgroup
                     v-for="group in catalogModelGroups"
@@ -2153,7 +2154,7 @@ onMounted(() => {
               <div>
                 <label class="label">Agent</label>
                 <select v-model="modelForm.opencode_agent" class="input font-mono">
-                  <button><selectedcontent></selectedcontent></button>
+                  <SelectButton />
                   <option value="">跟随 Serve 默认 Agent</option>
                   <option v-for="agent in catalogAgentOptions" :key="agent.id" :value="agent.id">
                     {{ agent.name }}（{{ agent.id }}）

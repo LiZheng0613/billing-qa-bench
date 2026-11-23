@@ -25,6 +25,7 @@ import type {
   GraderEval,
   TestCase,
 } from '../types'
+import SelectButton from '../components/SelectButton.vue'
 
 type TabKey =
   | 'stats'
@@ -994,7 +995,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
           <div class="min-w-[280px] flex-1">
             <label class="label">契约用例</label>
             <select v-model.number="factCaseId" class="input" @change="loadCaseFacts">
-              <button><selectedcontent></selectedcontent></button>
+              <SelectButton />
               <option :value="null">选择契约用例</option>
               <option v-for="item in factCases" :key="item.id" :value="item.id">
                 {{ item.code }} · {{ item.name }}
@@ -1120,7 +1121,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
         <div class="grid gap-2 sm:grid-cols-2">
           <input v-model="candidateForm.raw_question" class="input" placeholder="候选问题原文" />
           <select v-model="candidateForm.source" class="input">
-            <button><selectedcontent></selectedcontent></button>
+            <SelectButton />
             <option value="MANUAL">手工录入</option>
             <option value="PRODUCTION">生产日志</option>
             <option value="TRACE">执行轨迹</option>
@@ -1137,7 +1138,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
 
       <div class="flex flex-wrap items-center gap-2">
         <select v-model="candidateFilter.status" class="input w-36" @change="loadCandidates">
-          <button><selectedcontent></selectedcontent></button>
+          <SelectButton />
           <option value="">全部状态</option>
           <option value="NEW">待分诊</option>
           <option value="TRIAGED">已分诊</option>
@@ -1145,7 +1146,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
           <option value="REJECTED">已拒绝</option>
         </select>
         <select v-model="candidateFilter.source" class="input w-36" @change="loadCandidates">
-          <button><selectedcontent></selectedcontent></button>
+          <SelectButton />
           <option value="">全部来源</option>
           <option value="MANUAL">手工录入</option>
           <option value="PRODUCTION">生产日志</option>
@@ -1300,7 +1301,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
           />
           <input v-model="caliberForm.name" class="input" placeholder="口径名称" />
           <select v-model="caliberForm.canonical_source" class="input">
-            <button><selectedcontent></selectedcontent></button>
+            <SelectButton />
             <option value="BUSINESS_UI">业务界面</option>
             <option value="BILLING_SYSTEM">计费系统</option>
             <option value="CRM">CRM</option>
@@ -1395,7 +1396,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
           />
           <input v-model="sourceForm.name" class="input" placeholder="数据源名称" />
           <select v-model="sourceForm.kind" class="input">
-            <button><selectedcontent></selectedcontent></button>
+            <SelectButton />
             <option value="CYPHER_TOOL">Cypher 执行器工具</option>
             <option value="SQL_DB">只读 SQL</option>
             <option value="HTTP_API">业务查询接口</option>
@@ -1538,7 +1539,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
           />
           <input v-model="capabilityForm.name" class="input" placeholder="能力名称" />
           <select v-model.number="capabilityForm.source_id" class="input">
-            <button><selectedcontent></selectedcontent></button>
+            <SelectButton />
             <option :value="null">未绑定数据源</option>
             <option v-for="item in sources" :key="item.id" :value="item.id">
               {{ item.name }}（{{ item.code }}）
@@ -1648,7 +1649,7 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
         <p class="text-sm font-medium text-slate-800">执行取证（生成 GoldQuery）</p>
         <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <select v-model.number="evidenceForm.capability_id" class="input">
-            <button><selectedcontent></selectedcontent></button>
+            <SelectButton />
             <option :value="null">选择能力</option>
             <option v-for="item in capabilities" :key="item.id" :value="item.id">
               {{ item.name }}

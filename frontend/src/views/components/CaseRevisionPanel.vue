@@ -10,6 +10,7 @@ import { errorMessage } from '../../utils/errors'
 import { formatDateTime, safeJson, statusLabel } from '../../utils/format'
 import { useToastStore } from '../../stores/toast'
 import { useAuthStore } from '../../stores/auth'
+import SelectButton from '../../components/SelectButton.vue'
 
 const props = defineProps<{ modelValue: boolean; caseData: TestCase | null }>()
 const emit = defineEmits<{
@@ -119,7 +120,7 @@ watch(
         <div>
           <label class="label">基线版本</label>
           <select v-model="fromVersion" class="input">
-            <button><selectedcontent></selectedcontent></button>
+            <SelectButton />
             <option v-for="version in versions" :key="version" :value="version">v{{ version }}</option>
           </select>
         </div>
@@ -127,7 +128,7 @@ watch(
         <div>
           <label class="label">目标版本</label>
           <select v-model="toVersion" class="input">
-            <button><selectedcontent></selectedcontent></button>
+            <SelectButton />
             <option v-for="version in versions" :key="version" :value="version">v{{ version }}</option>
           </select>
         </div>

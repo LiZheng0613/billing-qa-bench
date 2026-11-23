@@ -23,6 +23,7 @@ import {
 } from '../utils/schedule'
 import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toast'
+import SelectButton from '../components/SelectButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -455,7 +456,7 @@ onBeforeUnmount(() => {
       <div class="w-36">
         <label class="label">任务状态</label>
         <select v-model="statusFilter" class="input" @change="applyFilters">
-          <button><selectedcontent></selectedcontent></button>
+          <SelectButton />
           <option v-for="item in STATUS_OPTIONS" :key="item.value" :value="item.value">
             {{ item.label }}
           </option>
@@ -464,7 +465,7 @@ onBeforeUnmount(() => {
       <div class="w-36">
         <label class="label">执行方式</label>
         <select v-model="scheduleFilter" class="input" @change="applyFilters">
-          <button><selectedcontent></selectedcontent></button>
+          <SelectButton />
           <option v-for="item in SCHEDULE_OPTIONS" :key="item.value" :value="item.value">
             {{ item.label }}
           </option>

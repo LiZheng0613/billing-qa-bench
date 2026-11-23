@@ -9,6 +9,7 @@ import type { CaseExecutionItem, RunCompare, RunCompareSide, TestCase } from '..
 import { errorMessage } from '../../utils/errors'
 import { formatDateTime, formatScore, safeJson, statusLabel } from '../../utils/format'
 import { useToastStore } from '../../stores/toast'
+import SelectButton from '../../components/SelectButton.vue'
 
 const props = defineProps<{ modelValue: boolean; caseData: TestCase | null }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void }>()
@@ -110,7 +111,7 @@ watch([runA, runB], () => {
         <div>
           <label class="label">基线执行 A</label>
           <select v-model="runA" class="input">
-            <button><selectedcontent></selectedcontent></button>
+            <SelectButton />
             <option v-for="item in executions" :key="item.id" :value="item.id">
               {{ executionLabel(item) }}
             </option>
@@ -119,7 +120,7 @@ watch([runA, runB], () => {
         <div>
           <label class="label">对比执行 B</label>
           <select v-model="runB" class="input">
-            <button><selectedcontent></selectedcontent></button>
+            <SelectButton />
             <option v-for="item in executions" :key="item.id" :value="item.id">
               {{ executionLabel(item) }}
             </option>

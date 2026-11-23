@@ -22,6 +22,7 @@ import { parseJsonObject, templateTypeLabel } from '../utils/format'
 import { matchesAnyKeyword } from '../utils/search'
 import { useToastStore } from '../stores/toast'
 import { useAuthStore } from '../stores/auth'
+import SelectButton from '../components/SelectButton.vue'
 
 const toast = useToastStore()
 const auth = useAuthStore()
@@ -453,7 +454,7 @@ onMounted(() => {
           <input v-model="keyword" class="input !py-1.5 text-xs" placeholder="搜索编码 / 名称（分号分隔多词）" @keyup.enter="loadTemplates" />
           <div class="flex gap-2">
             <select v-model="typeFilter" class="input !py-1.5 text-xs" @change="loadTemplates">
-              <button><selectedcontent></selectedcontent></button>
+              <SelectButton />
               <option value="">全部类型</option>
               <option value="USER_SIMULATOR">用户模拟器</option>
               <option value="LLM_JUDGE">LLM 裁判</option>
@@ -519,7 +520,7 @@ onMounted(() => {
         <div>
           <label class="label">模板类型</label>
           <select v-model="createForm.template_type" class="input">
-            <button><selectedcontent></selectedcontent></button>
+            <SelectButton />
             <option value="USER_SIMULATOR">用户模拟器（动态多轮）</option>
             <option value="LLM_JUDGE">LLM 裁判（评分）</option>
             <option value="CASE_AUTHOR">AI 用例编写（草稿生成）</option>
@@ -656,7 +657,7 @@ onMounted(() => {
             <div>
               <label class="label">执行角色</label>
               <select v-model="sandboxForm.mode" class="input">
-                <button><selectedcontent></selectedcontent></button>
+                <SelectButton />
                 <option value="SIMULATOR">用户模拟器</option>
                 <option value="JUDGE">LLM 裁判</option>
                 <option value="CASE_AUTHOR">AI 用例编写</option>
@@ -666,7 +667,7 @@ onMounted(() => {
             <div v-if="sandboxForm.mode !== 'SELF_CHECK'">
               <label class="label">使用模型</label>
               <select v-model="sandboxForm.model_id" class="input">
-                <button><selectedcontent></selectedcontent></button>
+                <SelectButton />
                 <option :value="null">按角色默认</option>
                 <option v-for="item in sandboxModels" :key="item.id" :value="item.id">
                   {{ item.name }}（{{ item.model_name }}）

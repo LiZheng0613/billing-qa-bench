@@ -16,6 +16,7 @@ import {
 import { canStopPlanTask, isPlanRootTask, isPlanStopped, taskScheduleLabel } from '../../utils/schedule'
 import { hasKeyword } from '../../utils/search'
 import { useAuthStore } from '../../stores/auth'
+import SelectButton from '../../components/SelectButton.vue'
 
 const auth = useAuthStore()
 
@@ -785,7 +786,7 @@ onBeforeUnmount(clearFilterTimer)
           <div class="w-40">
             <label class="label">执行状态</label>
             <select v-model="filterStatus" class="input !py-1.5 text-xs" @change="emitFilters">
-              <button><selectedcontent></selectedcontent></button>
+              <SelectButton />
               <option value="">全部状态</option>
               <option v-for="option in statusFilterOptions" :key="option.value" :value="option.value">
                 {{ option.label }}{{ latestPerCase ? `（${option.count}）` : '' }}
@@ -824,7 +825,7 @@ onBeforeUnmount(clearFilterTimer)
                 class="input !py-1.5 text-xs"
                 @change="onScorePresetChange"
               >
-                <button><selectedcontent></selectedcontent></button>
+                <SelectButton />
                 <option value="">全部得分</option>
                 <option value="gte90">≥ 90</option>
                 <option value="gte60">≥ 60</option>
@@ -861,7 +862,7 @@ onBeforeUnmount(clearFilterTimer)
           <div class="w-40">
             <label class="label">排序方式</label>
             <select v-model="filterSort" class="input !py-1.5 text-xs" @change="emitFilters">
-              <button><selectedcontent></selectedcontent></button>
+              <SelectButton />
               <option value="">默认排序</option>
               <option value="score_desc">得分从高到低</option>
               <option value="score_asc">得分从低到高</option>
