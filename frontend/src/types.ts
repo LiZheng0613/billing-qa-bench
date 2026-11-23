@@ -237,6 +237,12 @@ export interface ExtractionRule {
   occurrence?: 'first' | 'last' | number
   /** 命中节点上的相对路径，按序尝试（同级 $.message -> 下层 $..message） */
   take?: string[]
+  /** 拼接取值：多字段非空值按 separator 拼接，字段路径支持 parent:: 前缀取上级 */
+  take_join?: {
+    fields: string[]
+    /** 分隔符，默认 '\n' */
+    separator?: string
+  }
   /** 最近 dict 祖先上的相对路径（上级场景） */
   take_parent?: string[]
 }

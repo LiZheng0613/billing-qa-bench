@@ -306,6 +306,10 @@ def test_validate_extractors_accepts_valid_config() -> None:
                     "path": "$..[?(@.type=='chart')]",
                     "occurrence": "last",
                     "take": ["$.message", "$..message"],
+                    "take_join": {
+                        "fields": ["$.message", "$.payload.detail", "parent::$.remark"],
+                        "separator": "\n",
+                    },
                     "take_parent": ["$.message"],
                 },
                 {"path": "$..context", "occurrence": "last"},
@@ -331,6 +335,30 @@ def test_validate_extractors_rejects_bad_spec() -> None:
         {"final_answer": {"rules": [{}], "unknown_key": 1}},  # 规格未知键
         {"final_answer": {"rules": [{"path": "$.a", "foo": 1}]}},  # 规则未知键
         {"final_answer": {"rules": [{"path": "$.a", "occurrence": -1}]}},  # 负下标
+        {"final_answer": {"rules": [{"path": "$.a", "take_join": ["$.b"]}]}},  # take_join 非对象
+        {"final_answer": {"rules": [{"path": "$.a", "take_join": {}}]}},  # 缺 fields
+        {"final_answer": {"rules": [{"path": "$.a", "take_join": {"fields": []}}]}},  # 空 fields
+        {
+            "final_answer": {"rules": [{"path": "$.a", "take_join": {"fields": "message"}}]}
+        },  # fields 非数组
+        {
+            "final_answer": {"rules": [{"path": "$.a", "take_join": {"fields": ["message"]}}]}
+        },  # 缺 $ 前缀
+        {
+            "final_answer": {
+                "rules": [{"path": "$.a", "take_join": {"fields": ["parent::message"]}}]
+            }
+        },  # parent:: 后缺 $ 前缀
+        {
+            "final_answer": {
+                "rules": [{"path": "$.a", "take_join": {"fields": ["$.b"], "sep": "x"}}]
+            }
+        },  # take_join 未知键
+        {
+            "final_answer": {
+                "rules": [{"path": "$.a", "take_join": {"fields": ["$.b"], "separator": 1}}]
+            }
+        },  # separator 非字符串
     ]
     for mapping in cases:
         with pytest.raises(ValueError):
@@ -348,3 +376,146 @@ def test_validate_extractors_rejects_non_object() -> None:
         validate_extractors(["$.a"])
     with pytest.raises(ValueError):
         validate_extractors({"final_answer": 123})
+
+
+# ------------------------------------------------------------------ #
+# 拼接取值（take_join）：跨层级 / 跨路径 / 同级
+# ------------------------------------------------------------------ #
+
+
+def test_take_join_same_level_fields() -> None:
+    """同级两字段拼接，默认分隔符为换行。"""
+    frames = [{"type": "chart", "message": "结论A", "remark": "备注B"}]
+    rules = [
+        {"path": "$..[?(@.type=='chart')]", "take_join": {"fields": ["$.message", "$.remark"]}}
+    ]
+    value, _ = evaluate_spec(_ctx(frames), {"rules": rules})
+    assert value == "结论A\n备注B"
+
+
+def test_take_join_cross_level_and_parent() -> None:
+    """跨层级混拼：同级 + 子层 + parent:: 上级。"""
+    frames = [
+        {
+            "summary": "上级备注",
+            "widget": {"type": "chart", "message": "图表结论", "payload": {"detail": "明细说明"}},
+        }
+    ]
+    rules = [
+        {
+            "path": "$..[?(@.type=='chart')]",
+            "take_join": {"fields": ["$.message", "$..detail", "parent::$.summary"]},
+        }
+    ]
+    value, trace = evaluate_spec(_ctx(frames), {"rules": rules})
+    assert value == "图表结论\n明细说明\n上级备注"
+    assert trace["take"] == "join:$.message+$..detail+parent::$.summary"
+
+
+def test_take_join_custom_separator() -> None:
+    """显式分隔符，含空串无缝拼接。"""
+    frames = [{"type": "chart", "code": "A01", "name": "套餐"}]
+    rules = [
+        {
+            "path": "$..[?(@.type=='chart')]",
+            "take_join": {"fields": ["$.code", "$.name"], "separator": " | "},
+        }
+    ]
+    value, _ = evaluate_spec(_ctx(frames), {"rules": rules})
+    assert value == "A01 | 套餐"
+    rules_empty_sep = [
+        {
+            "path": "$..[?(@.type=='chart')]",
+            "take_join": {"fields": ["$.code", "$.name"], "separator": ""},
+        }
+    ]
+    value, _ = evaluate_spec(_ctx(frames), {"rules": rules_empty_sep})
+    assert value == "A01套餐"
+
+
+def test_take_join_skips_missing_fields() -> None:
+    """缺失字段跳过，其余照常拼接（宽容拼接）。"""
+    frames = [{"type": "chart", "message": "只有我", "absent": None}]
+    rules = [
+        {
+            "path": "$..[?(@.type=='chart')]",
+            "take_join": {"fields": ["$.absent", "$.missing", "$.message"]},
+        }
+    ]
+    value, _ = evaluate_spec(_ctx(frames), {"rules": rules})
+    assert value == "只有我"
+
+
+def test_take_join_single_field_degrades_to_direct() -> None:
+    """仅一个字段非空时退化为直取该值。"""
+    frames = [{"type": "chart", "message": "唯一值"}]
+    rules = [
+        {"path": "$..[?(@.type=='chart')]", "take_join": {"fields": ["$.message", "$.absent"]}}
+    ]
+    value, _ = evaluate_spec(_ctx(frames), {"rules": rules})
+    assert value == "唯一值"
+
+
+def test_take_join_all_empty_falls_to_next_rule() -> None:
+    """全部字段为空 -> 规则未命中，走 elif/else 分支。"""
+    frames = [{"type": "chart", "message": ""}, {"type": "text", "context": "上下文兜底"}]
+    rules = [
+        {
+            "id": "IF-chart-join",
+            "path": "$..[?(@.type=='chart')]",
+            "take_join": {"fields": ["$.message", "$.detail"]},
+        },
+        {"id": "ELSE-context", "path": "$..context", "occurrence": "last"},
+    ]
+    value, trace = evaluate_spec(_ctx(frames), {"rules": rules})
+    assert value == "上下文兜底"
+    assert trace["rule"] == "ELSE-context"
+
+
+def test_take_join_after_take_priority() -> None:
+    """take 首个非空命中优先返回，不再拼接。"""
+    frames = [{"type": "chart", "message": "直取值", "remark": "备注"}]
+    rules = [
+        {
+            "path": "$..[?(@.type=='chart')]",
+            "take": ["$.message"],
+            "take_join": {"fields": ["$.message", "$.remark"]},
+        }
+    ]
+    value, trace = evaluate_spec(_ctx(frames), {"rules": rules})
+    assert value == "直取值"
+    assert trace["take"] == "$.message"
+
+
+def test_take_join_serializes_object_values() -> None:
+    """字段值为对象时序列化为 JSON 再拼接。"""
+    frames = [{"type": "chart", "message": {"title": "卡片"}, "note": "尾巴"}]
+    rules = [{"path": "$..[?(@.type=='chart')]", "take_join": {"fields": ["$.message", "$.note"]}}]
+    value, _ = evaluate_spec(_ctx(frames), {"rules": rules})
+    assert value == '{"title": "卡片"}\n尾巴'
+
+
+def test_take_join_with_occurrence_last() -> None:
+    """拼接与 occurrence=last 组合：定位最后一次出现的结构再拼接。"""
+    frames = [
+        {"type": "chart", "message": "第一次", "note": "旧"},
+        {"type": "text", "context": "中间"},
+        {"type": "chart", "message": "第二次", "note": "新"},
+    ]
+    rules = [
+        {
+            "path": "$..[?(@.type=='chart')]",
+            "occurrence": "last",
+            "take_join": {"fields": ["$.message", "$.note"]},
+        }
+    ]
+    value, trace = evaluate_spec(_ctx(frames), {"rules": rules})
+    assert value == "第二次\n新"
+    assert trace["frame_index"] == 2
+
+
+def test_take_join_direct_rule_regression() -> None:
+    """无 take/take_join 的直取规则行为不受影响（回归）。"""
+    rules = [{"path": "$..context", "occurrence": "last"}]
+    value, _ = evaluate_spec(_ctx(FRAMES_B), {"rules": rules})
+    assert value == "最后一次上下文"

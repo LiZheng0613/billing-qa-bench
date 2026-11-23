@@ -15,6 +15,10 @@
           "path": "$..[?(@.type=='chart')]",  # 定位表达式（jsonpath-ng ext 语法）
           "occurrence": "last",            # first(默认) | last | 0-based 下标
           "take": ["$.message", "$..message"],   # 命中节点上的相对路径，按序尝试
+          "take_join": {                   # 拼接取值：多字段非空值按分隔符拼接
+            "fields": ["$.message", "$..detail", "parent::$.remark"],
+            "separator": "\n"
+          },
           "take_parent": ["$.message"]     # 最近 dict 祖先上的相对路径（上级场景）
         },
         {"id": "else-context", "path": "$..context", "occurrence": "last"}
@@ -24,8 +28,11 @@
     }
 
 求值顺序严格为：先按 ``path`` + ``occurrence`` 定位节点，再依次尝试
-``take``（同级/下层）与 ``take_parent``（上级），保证「最后一次出现」
-的语义优先于「较早出现但字段层级更靠前」的命中。
+``take``（同级/下层，首个非空生效）→ ``take_join``（跨层级拼接）→
+``take_parent``（上级兜底），保证「最后一次出现」的语义优先于
+「较早出现但字段层级更靠前」的命中。``take_join.fields`` 每条路径
+不带前缀在命中节点上求值（同级 ``$.x`` / 子层 ``$..x``），带
+``parent::`` 前缀在最近 dict 祖先上求值（上级），支持跨层级混拼。
 
 提取文档由 :class:`ExtractionContext` 构造：``_frames``（SSE 有序帧，
 最多 300 帧）与 ``_content``（聚合文本）排在最前，保证 ``first`` / ``last``
@@ -34,6 +41,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,12 +55,24 @@ logger = get_logger(__name__)
 # 规格级允许的键
 _SPEC_KEYS = {"rules", "fallback_content", "legacy_fallback"}
 # 规则级允许的键
-_RULE_KEYS = {"id", "path", "occurrence", "take", "take_parent"}
+_RULE_KEYS = {"id", "path", "occurrence", "take", "take_join", "take_parent"}
+# take_join 允许的键
+_JOIN_KEYS = {"fields", "separator"}
 
 
 def is_extraction_spec(value: Any) -> bool:
     """extractor 值是否为条件规则对象（含 rules 键的 dict）。"""
     return isinstance(value, dict) and "rules" in value
+
+
+def _joinable(rule: dict) -> bool:
+    """规则是否配置了可用的拼接取值（take_join.fields 非空列表）。"""
+    join_spec = rule.get("take_join")
+    return (
+        isinstance(join_spec, dict)
+        and isinstance(join_spec.get("fields"), list)
+        and bool(join_spec["fields"])
+    )
 
 
 @dataclass
@@ -113,6 +133,48 @@ def _relative_value(root: Any, expression: str) -> Any:
     return matches[0].value if matches else None
 
 
+def _to_text(value: Any) -> str:
+    """拼接前统一转文本；dict/list 序列化为 JSON。"""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _split_parent_prefix(expression: str) -> tuple[bool, str]:
+    """拆出 ``parent::`` 前缀：返回 (是否上级, 剩余相对路径)。"""
+    if expression.startswith("parent::"):
+        return True, expression[len("parent::") :]
+    return False, expression
+
+
+def _join_fields(
+    chosen: Any,
+    ancestor: dict | None,
+    fields: list[str],
+    separator: str,
+) -> Any | None:
+    """拼接取值：逐条求相对路径，收集非空值按分隔符拼接。
+
+    每条 field 支持三级导航：不带前缀在命中节点上求值（同级 ``$.x`` /
+    子层 ``$..x``）；带 ``parent::`` 前缀在最近 dict 祖先上求值（上级）。
+    缺失字段跳过（宽容拼接）；全部为空返回 None（规则未命中）。
+    """
+    values: list[str] = []
+    for raw in fields:
+        is_parent, relative = _split_parent_prefix(str(raw))
+        root = ancestor if is_parent else chosen.value
+        if root is None:
+            continue
+        value = _relative_value(root, relative)
+        if _is_non_empty(value):
+            values.append(_to_text(value))
+    if not values:
+        return None
+    return separator.join(values) if len(values) > 1 else values[0]
+
+
 def _locate_source(match: Any, frames: list[Any]) -> tuple[str, int | None]:
     """判断命中节点来自第几帧（对象同一性判断）；非帧内命中标记为 payload。"""
     node: Any = match
@@ -166,8 +228,8 @@ def evaluate_rules(
             "source": source,
             "frame_index": frame_index,
         }
-        # 直取规则：无 take / take_parent 时返回匹配值本身
-        if not take_list and not parent_list:
+        # 直取规则：无 take / take_join / take_parent 时返回匹配值本身
+        if not take_list and not parent_list and not _joinable(rule):
             if _is_non_empty(chosen.value):
                 return chosen.value, {**trace_base, "take": None}
             continue
@@ -176,8 +238,19 @@ def evaluate_rules(
             value = _relative_value(chosen.value, str(relative))
             if _is_non_empty(value):
                 return value, {**trace_base, "take": str(relative)}
-        # 上级：对最近 dict 祖先重定根求值
         ancestor = _nearest_dict_ancestor(chosen)
+        # 拼接取值：跨层级（同级 / 子层 / parent:: 上级）多字段拼接
+        join_spec = rule.get("take_join")
+        if isinstance(join_spec, dict) and isinstance(join_spec.get("fields"), list):
+            fields = [str(item) for item in join_spec["fields"]]
+            separator = join_spec.get("separator", "\n")
+            if not isinstance(separator, str):
+                separator = "\n"
+            value = _join_fields(chosen, ancestor, fields, separator)
+            if _is_non_empty(value):
+                joined = "+".join(fields)
+                return value, {**trace_base, "take": f"join:{joined}"}
+        # 上级：对最近 dict 祖先重定根求值
         for relative in parent_list:
             if ancestor is None:
                 break
@@ -273,6 +346,32 @@ def validate_extractors(mapping: Any) -> Any:
                     raise ValueError(f"{rule_where}.{key} 需为非空字符串数组")
                 for item in items:
                     _validate_relative(item, f"{rule_where}.{key}")
+            join_spec = rule.get("take_join")
+            if join_spec is not None:
+                join_where = f"{rule_where}.take_join"
+                if not isinstance(join_spec, dict):
+                    raise ValueError(f"{join_where} 需为对象")
+                join_unknown = set(join_spec) - _JOIN_KEYS
+                if join_unknown:
+                    raise ValueError(
+                        f"{join_where} 含未知配置项: {', '.join(sorted(join_unknown))}"
+                    )
+                join_fields = join_spec.get("fields")
+                if (
+                    not isinstance(join_fields, list)
+                    or not join_fields
+                    or not all(isinstance(item, str) and item.strip() for item in join_fields)
+                ):
+                    raise ValueError(f"{join_where}.fields 需为非空字符串数组")
+                for item in join_fields:
+                    is_parent, relative = _split_parent_prefix(item)
+                    where = f"{join_where}.fields"
+                    if is_parent:
+                        where += "（parent:: 前缀）"
+                    _validate_relative(relative, where)
+                separator = join_spec.get("separator")
+                if separator is not None and not isinstance(separator, str):
+                    raise ValueError(f"{join_where}.separator 需为字符串")
         for key in ("fallback_content", "legacy_fallback"):
             flag = value.get(key)
             if flag is not None and not isinstance(flag, bool):

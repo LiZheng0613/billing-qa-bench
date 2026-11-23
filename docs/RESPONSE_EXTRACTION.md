@@ -57,16 +57,18 @@
 | `path` | 字符串 | **必填** | 定位表达式，jsonpath-ng 扩展语法：支持 `[?(@.type=='chart')]` 过滤、`$..` 递归、`` `parent` `` 上级操作符、`&&` / `\|\|` / `!=` / 数值比较 |
 | `occurrence` | `first` / `last` / 下标 | `first` | 定位表达式的匹配集中取哪一个；**`last` 即「最后一次出现」** |
 | `take` | 字符串数组 | — | 命中节点上的**相对路径**，按序尝试第一个非空值生效（同级 `$.message` → 下层 `$..message`） |
-| `take_parent` | 字符串数组 | — | 命中节点的**最近对象祖先**上的相对路径（上级场景），在 `take` 全部未命中后尝试 |
+| `take_join` | 对象 | — | **拼接取值**：`{"fields": [...], "separator": "\n"}`，多字段非空值按分隔符拼接，支持跨层级（见 2.5） |
+| `take_parent` | 字符串数组 | — | 命中节点的**最近对象祖先**上的相对路径（上级场景），在 `take` / `take_join` 之后尝试 |
 | （不配 take） | — | — | 直取规则：返回匹配值本身（如 `$..context`） |
 
 **求值顺序（严格）：**
 
 1. `path` 在响应文档上求值 → 得到匹配集；
 2. `occurrence` 从匹配集中选中一个节点；
-3. 依次尝试 `take` 里的相对路径（同级 / 下层）；
-4. 依次尝试 `take_parent` 里的相对路径（上级）；
-5. 该规则无产出 → 进入下一条规则（elif / else）；全部未命中 → 规格级兜底。
+3. 依次尝试 `take` 里的相对路径（同级 / 下层），**首个非空值生效**；
+4. `take_join` 拼接取值：收集各字段非空值拼接，**有产出即生效**；
+5. 依次尝试 `take_parent` 里的相对路径（上级）；
+6. 该规则无产出 → 进入下一条规则（elif / else）；全部未命中 → 规格级兜底。
 
 先定位、后取值的顺序保证：**「最后一次 chart」的语义优先于「较早 chart 的同级 message」**。
 
@@ -98,6 +100,37 @@
 | 取命中节点的上级 message | `"take_parent": ["$.message"]` 或 `"path": "$..[?(@.type=='chart')].`parent`.message"` |
 | 没配 take（直取） | `{"path": "$..context", "occurrence": "last"}` |
 | 只扫 SSE 帧 | `"path": "$._frames[?(@.type=='chart')]"` |
+
+### 2.5 拼接取值（take_join）
+
+当取值需要**多个字段拼接**（如「结论 + 明细」合成最终答案）时，使用 `take_join`：
+
+```json
+{
+  "id": "IF-最后一次chart-拼接",
+  "path": "$..[?(@.type=='chart')]",
+  "occurrence": "last",
+  "take_join": {
+    "fields": ["$.message", "$.payload.detail", "parent::$.remark"],
+    "separator": "\n"
+  }
+}
+```
+
+**字段语义：**
+
+| 字段 | 说明 |
+| --- | --- |
+| `fields` | 参与拼接的相对路径数组，**每条独立支持三级导航**：不带前缀在命中节点上求值（同级 `$.message`、子层 `$..detail` / `$.payload.detail`）；带 `parent::` 前缀在最近对象祖先上求值（上级）——可跨层级、跨路径混拼 |
+| `separator` | 拼接分隔符，默认 `"\n"`；可显式传 `""`（无缝拼接）、`" | "` 等 |
+
+**求值规则：**
+
+- 逐条求值，**缺失/为空的字段直接跳过**（宽容拼接），非空值按 `separator` 拼接；
+- 只有一个字段非空 → 退化为直取该值；全部为空 → 该规则未命中，进入下一条规则；
+- 值非字符串时先转文本（对象/数组序列化为 JSON）再拼接；
+- 求值顺序在 `take` 之后、`take_parent` 之前：`take` 首个非空命中则直接返回，不会拼接；
+- Trace 里 `take` 记为 `join:$.message+$.payload.detail+parent::$.remark`，可看出拼接来源。
 
 ---
 
@@ -250,6 +283,9 @@ else:
 
 **Q：chart 的 message 是对象（富文本卡片）怎么办？**
 提取到非字符串值时，`final_answer` 会按 JSON 序列化成文本参与判分；如需取其中字段，把相对路径写细即可，例如 `"take": ["$.message.content"]`。
+
+**Q：取值需要把两个字段拼在一起怎么办？**
+用规则级的 `take_join`：`"take_join": {"fields": ["$.message", "parent::$.remark"], "separator": "\n"}`。多字段非空值按分隔符拼接，`fields` 里每条路径支持同级（`$.x`）、子层（`$..x`）与 `parent::` 上级前缀，可跨层级混拼。
 
 **Q：为什么我的规则命中了较早的帧？**
 检查 `occurrence` 是否写了 `"last"`（默认是 `first`）；并确认没有把「定位」和「取值」拆成两条规则——应写在同一条规则内（先定位再 take）。
