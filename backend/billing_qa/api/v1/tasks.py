@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import task_to_out
 from billing_qa.core.authz import require_module_access, require_permission
+from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.schedule_time import normalize_local, normalize_weekdays, parse_time_text
 from billing_qa.core.search import keyword_condition
@@ -59,6 +60,7 @@ from billing_qa.services.io.execution_excel import (
     build_task_results_xlsx,
     case_status_label,
     case_type_label,
+    enrich_result_rows,
     error_kind_label,
     format_datetime,
     grading_mode_label,
@@ -66,11 +68,18 @@ from billing_qa.services.io.execution_excel import (
     review_status_label,
     risk_level_label,
     root_cause_label,
+    schedule_type_label,
     self_check_status_label,
     source_label,
     status_label,
 )
 from billing_qa.services.io.execution_jsonl import build_task_results_jsonl
+from billing_qa.services.io.multi_round_report import (
+    EXCEL_MAX_ROWS,
+    RoundData,
+    build_rounds_jsonl,
+    build_rounds_xlsx,
+)
 
 router = APIRouter(
     prefix="/tasks",
@@ -1318,6 +1327,7 @@ async def _collect_task_results(
                 "execution_id": record.id,
                 "trace_uid": record.trace_uid,
                 "case_id": record.case_id,
+                "case_version": record.case_version,
                 "case_code": _snapshot_value(snapshot, "code", case.code if case else None),
                 "case_name": _snapshot_value(snapshot, "name", case.name if case else None),
                 "case_type": case_type_label(
@@ -1414,13 +1424,119 @@ async def _collect_task_results(
                 "case_snapshot": snapshot,
             }
         )
-    return rows
+    # 追加人读派生字段（裁判结论 / 事实命中 / 诊断摘要 / 建议排查方向等），
+    # Excel 问题清单与多轮报表共用；JSONL 一并保留。
+    return enrich_result_rows(
+        rows, borderline_score=settings.report_borderline_score
+    )
 
 
 def _safe_filename_part(value: str | None) -> str:
     text = (value or "task").strip()
     safe = re.sub(r"[^0-9A-Za-z_.-]+", "_", text).strip("._")
     return safe or "task"
+
+
+async def _case_history_rates(
+    db: AsyncSession, case_ids: set[int], *, limit: int
+) -> dict[int, str]:
+    """「近 N 次通过率(全库)」：该用例在所有任务中的最近 N 次执行通过率。"""
+    if not case_ids:
+        return {}
+    rows = (
+        (
+            await db.execute(
+                select(ExecutionRecord.case_id, ExecutionRecord.pass_flag, ExecutionRecord.id)
+                .where(ExecutionRecord.case_id.in_(case_ids))
+                .order_by(ExecutionRecord.case_id, ExecutionRecord.id.desc())
+            )
+        )
+        .all()
+    )
+    counts: dict[int, list[bool]] = {}
+    for case_id, pass_flag, _record_id in rows:
+        history = counts.setdefault(int(case_id), [])
+        if len(history) < limit:
+            history.append(bool(pass_flag))
+    return {
+        case_id: f"{sum(history) / len(history) * 100:.0f}%（{sum(history)}/{len(history)}）"
+        for case_id, history in counts.items()
+    }
+
+
+def _is_multi_round_root(task: BatchTask) -> bool:
+    """立即执行的连续多轮任务：根本身就是第 1 轮。"""
+    return (
+        task.schedule_type == TaskScheduleType.IMMEDIATE.value
+        and max(1, int(task.repeat_rounds or 1)) > 1
+        and task.started_at is not None
+    )
+
+
+def _round_conditions(root: BatchTask) -> list:
+    """计划根下的全部轮次批次条件（含立即多轮根本身）。"""
+    if _is_multi_round_root(root):
+        return [or_(BatchTask.schedule_source_id == root.id, BatchTask.id == root.id)]
+    return [BatchTask.schedule_source_id == root.id]
+
+
+async def _plan_context(db: AsyncSession, task: BatchTask) -> dict[str, Any] | None:
+    """单批次执行概览的「同计划参照」：其他轮次通过率与累计通过率。"""
+    root_id = task.schedule_source_id
+    if root_id is None and not _is_multi_round_root(task):
+        return None
+    root = task if root_id is None else await _get_task(db, root_id)
+    rounds = (
+        (
+            await db.execute(
+                select(BatchTask)
+                .where(*_round_conditions(root))
+                .order_by(BatchTask.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(rounds) <= 1:
+        return None
+    rows: list[tuple[str, Any]] = [
+        ("所属计划", f"{root.name}（{schedule_type_label(root.schedule_type)}）"),
+    ]
+    previous: list[str] = []
+    others: list[str] = []
+    total_pass = 0
+    total_finished = 0
+    for item in rounds:
+        pass_rate: float | None = None
+        if item.finished_cases:
+            pass_rate = round(item.pass_count / item.finished_cases * 100, 1)
+        total_pass += item.pass_count
+        total_finished += item.finished_cases
+        if item.id == task.id:
+            continue
+        text = f"第 {item.round_index} 轮 {item.code}：{pass_rate}%"
+        if item.round_index is not None and task.round_index is not None:
+            if item.round_index < task.round_index:
+                previous.append(text)
+                continue
+        others.append(text)
+    rows.append(
+        (
+            "同计划上一轮通过率",
+            previous[-1].split("：", 1)[1] if previous else "—（本轮为第 1 轮）",
+        )
+    )
+    if others:
+        rows.append(("同计划其他轮次通过率", " · ".join(others)))
+    if total_finished:
+        rows.append(
+            (
+                "同计划累计通过率",
+                f"{round(total_pass / total_finished * 100, 1)}%"
+                f"（含全部 {len(rounds)} 轮）",
+            )
+        )
+    return {"rows": rows}
 
 
 @router.get(
@@ -1439,6 +1555,10 @@ async def export_task_results(
             "导出格式：xlsx 受 Excel 单元格 32767 字符上限约束会截断超长字段；"
             "jsonl 不截断，完整保留轮次轨迹等大字段"
         ),
+    ),
+    include_raw: bool = Query(
+        default=False,
+        description="xlsx 是否附加「原始明细」页（完整字段 + JSON，含超长文本）",
     ),
     db: AsyncSession = Depends(get_db),
     operator: str = Depends(get_current_operator),
@@ -1476,6 +1596,15 @@ async def export_task_results(
             scope_label=scope_label,
             exported_by=operator,
             exported_at=exported_at,
+            include_raw=include_raw,
+            plan_context=await _plan_context(db, task),
+            history_rates=await _case_history_rates(
+                db,
+                {row["case_id"] for row in rows if row.get("case_id") is not None},
+                limit=settings.report_near_history_count,
+            ),
+            base_url=settings.report_base_url,
+            borderline_score=settings.report_borderline_score,
         )
         filename = (
             f"task_{_safe_filename_part(task.code)}_results_"
@@ -1490,3 +1619,182 @@ async def export_task_results(
             "Access-Control-Expose-Headers": "Content-Disposition",
         },
     )
+
+
+async def _resolve_plan_rounds(
+    db: AsyncSession, task: BatchTask, *, round_scope: str
+) -> tuple[BatchTask, list[BatchTask]]:
+    """解析计划根与轮次链；round_scope=latest 只取最近一次触发的链。"""
+    root = task if task.schedule_source_id is None else await _get_task(
+        db, task.schedule_source_id
+    )
+    rounds = (
+        (
+            await db.execute(
+                select(BatchTask)
+                .where(*_round_conditions(root))
+                .order_by(BatchTask.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rounds:
+        raise ValidationError("该计划暂无执行结果，无法导出多轮报表")
+    rounds = [item for item in rounds if item.started_at is not None or item.id == root.id]
+    if not rounds:
+        raise ValidationError("该计划暂无已执行的轮次，无法导出多轮报表")
+    if round_scope != "all" and len(rounds) > 1:
+        # 按 round_prev_id 分链：无前轮的为链头，取最近触发的一条链。
+        by_id = {item.id: item for item in rounds}
+        chains: dict[int, list[BatchTask]] = {}
+        for item in rounds:
+            head = item
+            visited = set()
+            while head.round_prev_id is not None and head.round_prev_id in by_id:
+                if head.id in visited:
+                    break
+                visited.add(head.id)
+                head = by_id[head.round_prev_id]
+            chains.setdefault(head.id, []).append(item)
+        latest_chain = max(
+            chains.values(),
+            key=lambda chain: max(
+                (item.started_at or item.created_at) for item in chain
+            ),
+        )
+        rounds = sorted(latest_chain, key=lambda item: item.id)
+    return root, rounds
+
+
+@router.get(
+    "/{task_id}/export/rounds",
+    summary="导出计划多轮次执行报表（Excel / JSONL）",
+    dependencies=[Depends(require_permission("task:export"))],
+)
+async def export_task_rounds(
+    task_id: int,
+    format: Literal["xlsx", "jsonl"] = Query(
+        default="xlsx",
+        description="xlsx=人读报表（概览/轮次对比/问题清单/稳定性/明细/口径说明）；jsonl=程序消费完整数据",
+    ),
+    round_scope: Literal["latest", "all"] = Query(
+        default="latest",
+        description="latest=最近一次轮次链；all=计划下全部历次执行（按轮次链分组）",
+    ),
+    include_raw: bool = Query(
+        default=False,
+        description="xlsx 是否附加「原始明细」页（完整字段 + JSON，文件显著变大）",
+    ),
+    include_attempts: bool = Query(
+        default=False,
+        description="是否展开失败重跑的每次尝试（默认每轮每用例取最新一次尝试）",
+    ),
+    db: AsyncSession = Depends(get_db),
+    operator: str = Depends(get_current_operator),
+) -> Response:
+    """跨轮聚合报表：轮次对比、用例稳定性、跨轮问题清单与多轮明细。"""
+    task = await _get_task(db, task_id)
+    root, rounds = await _resolve_plan_rounds(db, task, round_scope=round_scope)
+
+    round_data: list[RoundData] = []
+    case_ids: set[int] = set()
+    for chain_index, group in _group_chains(rounds).items():
+        for item in group:
+            rows = await _collect_task_results(
+                db, item, latest_per_case=not include_attempts
+            )
+            if not rows and item.status in ("PENDING", "RUNNING"):
+                continue  # 尚未产生结果的轮次不进入报表
+            case_ids.update(row["case_id"] for row in rows if row.get("case_id") is not None)
+            round_data.append(
+                RoundData(
+                    task=item,
+                    metrics=await compute_task_metrics(db, item),
+                    rows=rows,
+                    chain_index=chain_index,
+                    round_seq=len(round_data) + 1,
+                )
+            )
+    if not round_data:
+        raise ValidationError("该计划暂无执行结果，无法导出多轮报表")
+    total_rows = sum(len(rd.rows) for rd in round_data)
+    if include_raw and format == "xlsx" and total_rows > EXCEL_MAX_ROWS:
+        raise ValidationError(
+            f"原始明细 {total_rows} 行超过 Excel 上限，请关闭「包含原始明细」或改用 JSONL 导出"
+        )
+
+    exported_at = now()
+    scope_label = (
+        "最近一次轮次链（round_scope=latest）"
+        if round_scope == "latest"
+        else "全部历次执行（round_scope=all，按轮次链分组）"
+    )
+    environment_name = await _env_name(db, root.environment_id)
+    history_rates = await _case_history_rates(
+        db, case_ids, limit=settings.report_near_history_count
+    )
+    if format == "jsonl":
+        content = build_rounds_jsonl(
+            root,
+            round_data,
+            environment_name=environment_name,
+            scope_label=scope_label,
+            exported_by=operator,
+            exported_at=exported_at,
+            borderline_score=settings.report_borderline_score,
+            history_rates=history_rates,
+        )
+        filename = (
+            f"task_{_safe_filename_part(root.code)}_rounds_"
+            f"{exported_at:%Y%m%d_%H%M%S}.jsonl"
+        )
+        media_type = "application/x-ndjson; charset=utf-8"
+    else:
+        content = build_rounds_xlsx(
+            root,
+            round_data,
+            environment_name=environment_name,
+            scope_label=scope_label,
+            exported_by=operator,
+            exported_at=exported_at,
+            include_raw=include_raw,
+            base_url=settings.report_base_url,
+            borderline_score=settings.report_borderline_score,
+            history_rates=history_rates,
+        )
+        filename = (
+            f"task_{_safe_filename_part(root.code)}_rounds_"
+            f"{exported_at:%Y%m%d_%H%M%S}.xlsx"
+        )
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
+
+
+def _group_chains(rounds: list[BatchTask]) -> dict[int, list[BatchTask]]:
+    """按轮次链分组并按触发顺序编号：{链序号: [按轮次顺序的批次]}。"""
+    by_id = {item.id: item for item in rounds}
+    chains: dict[int, list[BatchTask]] = {}
+    for item in rounds:
+        head = item
+        visited = set()
+        while head.round_prev_id is not None and head.round_prev_id in by_id:
+            if head.id in visited:
+                break
+            visited.add(head.id)
+            head = by_id[head.round_prev_id]
+        chains.setdefault(head.id, []).append(item)
+    heads = sorted(
+        chains.keys(), key=lambda head_id: by_id[head_id].id
+    )
+    return {
+        index: sorted(chains[head_id], key=lambda item: item.id)
+        for index, head_id in enumerate(heads, start=1)
+    }

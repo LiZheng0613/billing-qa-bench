@@ -24,7 +24,9 @@ from billing_qa.schemas.task import TaskMetrics
 from billing_qa.services.io.execution_excel import TASK_RESULT_COLUMNS
 
 JSONL_SCHEMA_NAME = "billing-qa/task-results"
-JSONL_SCHEMA_VERSION = 1
+# v2：行数据新增人读派生字段（judge_conclusion / error_tags / fact_hit / fact_miss /
+# rule_failures / diag_summary / sql_excerpt / last_qa / suggest_action / case_version）。
+JSONL_SCHEMA_VERSION = 2
 
 # 行字段输出顺序：与 TASK_RESULT_COLUMNS 保持一致，便于人工阅读与 Excel 对照；
 # 行 dict 里额外的调试字段（如 self_check_status_code）追加在末尾，不丢弃。

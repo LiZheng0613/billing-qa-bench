@@ -337,6 +337,16 @@ export const api = {
         on_conflict: options.onConflict ?? 'upsert',
       })
     },
+    /** 单用例历史执行导出（趋势报表）：xlsx 为人读报表，jsonl 不截断。 */
+    exportHistory: (
+      id: number,
+      filename: string,
+      options: { format?: 'xlsx' | 'jsonl'; include_sandbox?: boolean } = {},
+    ) =>
+      downloadFile(`/cases/${id}/export/executions`, filename, {
+        format: options.format ?? 'xlsx',
+        include_sandbox: options.include_sandbox ?? false,
+      }),
   },
 
   // ---------------------------------------------------------------- 批量任务
@@ -409,10 +419,34 @@ export const api = {
         page_size?: number
       },
     ) => http.get<Page<CaseExecutionItem>>(`/tasks/${id}/executions`, query),
-    exportResults: (id: number, latestPerCase: boolean, filename: string, format: 'xlsx' | 'jsonl' = 'xlsx') =>
+    exportResults: (
+      id: number,
+      latestPerCase: boolean,
+      filename: string,
+      format: 'xlsx' | 'jsonl' = 'xlsx',
+      includeRaw = false,
+    ) =>
       downloadFile(`/tasks/${id}/export`, filename, {
         latest_per_case: latestPerCase,
         format,
+        include_raw: includeRaw,
+      }),
+    /** 计划多轮次报表：id 可为计划根或任意子批次，后端自动解析到所属计划。 */
+    exportRounds: (
+      id: number,
+      filename: string,
+      options: {
+        format?: 'xlsx' | 'jsonl'
+        round_scope?: 'latest' | 'all'
+        include_raw?: boolean
+        include_attempts?: boolean
+      } = {},
+    ) =>
+      downloadFile(`/tasks/${id}/export/rounds`, filename, {
+        format: options.format ?? 'xlsx',
+        round_scope: options.round_scope ?? 'latest',
+        include_raw: options.include_raw ?? false,
+        include_attempts: options.include_attempts ?? false,
       }),
   },
 

@@ -10,6 +10,7 @@ import PageHeader from '../components/PageHeader.vue'
 import PaginationBar from '../components/PaginationBar.vue'
 import StatusPill from '../components/StatusPill.vue'
 import BatchMonitor from './components/BatchMonitor.vue'
+import MultiRoundExportModal from './components/MultiRoundExportModal.vue'
 import TaskCreateModal from './components/TaskCreateModal.vue'
 import type {
   BatchTask,
@@ -60,6 +61,7 @@ const executionMaxScore = ref<number | null>(null)
 const executionSort = ref<'' | 'score_desc' | 'score_asc'>('')
 const live = ref(false)
 const showCopy = ref(false)
+const showRoundsExport = ref(false)
 const loading = ref(true)
 const notFound = ref(false)
 const exporting = ref(false)
@@ -917,6 +919,15 @@ onBeforeUnmount(() => {
             >
               停止计划
             </button>
+            <button
+              v-if="auth.can('task:export')"
+              class="btn-ghost btn-xs"
+              :disabled="runsTotal === 0"
+              title="聚合本计划各轮次：轮次对比、用例稳定性、跨轮问题清单与多轮明细"
+              @click="showRoundsExport = true"
+            >
+              导出多轮报表
+            </button>
           </div>
         </header>
         <div class="grid grid-cols-2 gap-4 px-5 py-4 sm:grid-cols-3 xl:grid-cols-6">
@@ -1161,4 +1172,6 @@ onBeforeUnmount(() => {
   </div>
 
   <TaskCreateModal v-model="showCopy" :copy-from="task" @created="onCopied" />
+  <!-- 多轮报表：计划视图用计划根，子批次视图由后端自动解析到所属计划 -->
+  <MultiRoundExportModal v-model="showRoundsExport" :task="plan ?? task" />
 </template>

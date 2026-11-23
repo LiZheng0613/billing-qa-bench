@@ -163,7 +163,7 @@ def test_build_task_results_workbook() -> None:
     )
 
     workbook = load_workbook(BytesIO(content))
-    assert workbook.sheetnames == ["执行概览", "用例结果"]
+    assert workbook.sheetnames == ["执行概览", "问题清单", "用例结果", "口径说明"]
 
     overview = workbook["执行概览"]
     overview_map = {
@@ -179,15 +179,46 @@ def test_build_task_results_workbook() -> None:
     assert overview_map["连续轮次总数"] == 3
     assert overview_map["当前轮次"] == 2
 
+    # 问题清单：只含非通过 / 风险用例，一页给出定位 + 建议排查方向。
+    issues = workbook["问题清单"]
+    issue_headers = [cell.value for cell in issues[1]]
+    assert "风险类型" in issue_headers
+    assert "建议排查方向" in issue_headers
+    assert "处理人（跟进）" in issue_headers
+    assert issues.max_row == 2  # 仅 DEMO-002 失败
+    assert (
+        issues.cell(row=2, column=issue_headers.index("用例编号") + 1).value == "DEMO-002"
+    )
+    assert issues.cell(row=2, column=issue_headers.index("风险类型") + 1).value == "失败"
+
     results = workbook["用例结果"]
     headers = [cell.value for cell in results[1]]
     assert "用例编号" in headers
     assert "最终答案" in headers
-    assert "完整轮次轨迹(JSON)" in headers
-    assert "完整用例快照(JSON)" in headers
+    # 长JSON列只在可选的「原始明细」页，用例结果页保留关键字段。
+    assert "完整轮次轨迹(JSON)" not in headers
+    assert "完整用例快照(JSON)" not in headers
     assert results.max_row == 3
     assert results.cell(row=2, column=headers.index("用例编号") + 1).value == "DEMO-001"
     assert results.cell(row=3, column=headers.index("状态码") + 1).value == "FAIL"
+
+
+def test_build_task_results_workbook_with_raw_sheet() -> None:
+    content = build_task_results_xlsx(
+        _task(),
+        _metrics(),
+        [_row()],
+        include_raw=True,
+        exported_by="admin",
+    )
+    workbook = load_workbook(BytesIO(content))
+    assert "原始明细" in workbook.sheetnames
+    raw = workbook["原始明细"]
+    headers = [cell.value for cell in raw[1]]
+    assert "完整轮次轨迹(JSON)" in headers
+    assert "完整用例快照(JSON)" in headers
+    assert "追问自检请求(JSON)" in headers
+    assert raw.max_row == 2
 
 
 def test_self_check_fields_exported() -> None:
@@ -207,7 +238,7 @@ def test_self_check_fields_exported() -> None:
         self_check_request={"method": "POST", "sessionid": "sess-9dbf4c787df8"},
         self_check_response={"answer": "【自检结论】…", "intent": "SELF_CHECK"},
     )
-    content = build_task_results_xlsx(_task(), _metrics(), [row])
+    content = build_task_results_xlsx(_task(), _metrics(), [row], include_raw=True)
     workbook = load_workbook(BytesIO(content))
     results = workbook["用例结果"]
     headers = [cell.value for cell in results[1]]
@@ -215,17 +246,25 @@ def test_self_check_fields_exported() -> None:
     def value(name: str) -> object:
         return results.cell(row=2, column=headers.index(name) + 1).value
 
-    assert value("追问自检状态") == "已追问"
-    assert value("追问自检触发原因") == "LLM 裁决不通过"
     assert value("追问自检结论") == row["self_check_conclusion"]
-    assert value("追问自检会话") == "sess-9dbf4c787df8"
-    assert value("追问自检模板") == "SELF_CHECK_DEFAULT@v1"
-    assert value("追问自检时延(ms)") == 62.5
-    assert value("追问自检时间") == "2026-01-02 10:00:02"
-    assert value("追问自检备注") == "原对话未回填会话值；已按新会话处理"
-    assert value("追问自检 Prompt(渲染后)") == "## Role\n你是智能客服系统…"
-    assert '"SELF_CHECK"' in str(value("追问自检响应(JSON)"))
-    assert "sessionid" in str(value("追问自检请求(JSON)"))
+
+    # 自检完整字段在「原始明细」页。
+    raw = workbook["原始明细"]
+    raw_headers = [cell.value for cell in raw[1]]
+
+    def raw_value(name: str) -> object:
+        return raw.cell(row=2, column=raw_headers.index(name) + 1).value
+
+    assert raw_value("追问自检状态") == "已追问"
+    assert raw_value("追问自检触发原因") == "LLM 裁决不通过"
+    assert raw_value("追问自检会话") == "sess-9dbf4c787df8"
+    assert raw_value("追问自检模板") == "SELF_CHECK_DEFAULT@v1"
+    assert raw_value("追问自检时延(ms)") == 62.5
+    assert raw_value("追问自检时间") == "2026-01-02 10:00:02"
+    assert raw_value("追问自检备注") == "原对话未回填会话值；已按新会话处理"
+    assert raw_value("追问自检 Prompt(渲染后)") == "## Role\n你是智能客服系统…"
+    assert '"SELF_CHECK"' in str(raw_value("追问自检响应(JSON)"))
+    assert "sessionid" in str(raw_value("追问自检请求(JSON)"))
 
     overview = workbook["执行概览"]
     overview_map = {
@@ -256,15 +295,18 @@ def test_long_json_is_truncated_to_excel_limit() -> None:
         _task(),
         _metrics(),
         [_row(final_answer="长" * 40000, case_snapshot={"payload": "大" * 40000})],
+        include_raw=True,
         exported_by="admin",
     )
     workbook = load_workbook(BytesIO(content))
     results = workbook["用例结果"]
     headers = [cell.value for cell in results[1]]
     answer = results.cell(row=2, column=headers.index("最终答案") + 1).value
-    snapshot = results.cell(row=2, column=headers.index("完整用例快照(JSON)") + 1).value
     assert len(answer) <= MAX_CELL_LENGTH
     assert answer.endswith("…(已截断)")
+    raw = workbook["原始明细"]
+    raw_headers = [cell.value for cell in raw[1]]
+    snapshot = raw.cell(row=2, column=raw_headers.index("完整用例快照(JSON)") + 1).value
     assert len(snapshot) <= MAX_CELL_LENGTH
     assert snapshot.endswith("…(已截断)")
 

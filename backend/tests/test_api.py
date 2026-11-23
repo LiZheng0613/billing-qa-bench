@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -18,7 +19,9 @@ from sqlalchemy import delete, text
 
 from billing_qa.db.session import SessionLocal
 from billing_qa.main import app
+from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.task import BatchTask
+from billing_qa.models.test_case import TestCase
 
 pytestmark = pytest.mark.asyncio
 
@@ -426,7 +429,7 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     workbook = load_workbook(BytesIO(exported.content))
-    assert workbook.sheetnames == ["执行概览", "用例结果"]
+    assert workbook.sheetnames == ["执行概览", "问题清单", "用例结果", "口径说明"]
     export_sheet = workbook["用例结果"]
     export_headers = [cell.value for cell in export_sheet[1]]
     assert "用例编号" in export_headers
@@ -438,6 +441,18 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
         ).value
         == target["code"]
     )
+    # 原始明细默认不出现，include_raw=true 才附加。
+    assert "原始明细" not in workbook.sheetnames
+    exported_raw = await client.get(
+        f"/tasks/{task_id}/export",
+        params={"latest_per_case": "true", "include_raw": "true"},
+    )
+    assert exported_raw.status_code == 200, exported_raw.text
+    raw_workbook = load_workbook(BytesIO(exported_raw.content))
+    assert "原始明细" in raw_workbook.sheetnames
+    assert "完整轮次轨迹(JSON)" in [
+        cell.value for cell in raw_workbook["原始明细"][1]
+    ]
     exported_all = await client.get(
         f"/tasks/{task_id}/export", params={"latest_per_case": "false"}
     )
@@ -946,3 +961,299 @@ async def test_sandbox_template_type_guard(client: httpx.AsyncClient) -> None:
         json={"mode": "JUDGE", "variables": {"case_type": "SINGLE"}},
     )
     assert response.status_code in {400, 422}
+
+
+async def test_task_rounds_export_xlsx_and_jsonl(client: httpx.AsyncClient) -> None:
+    """多轮报表端点：计划根与子批次入口、跨轮聚合页与 JSONL 结构。"""
+    if not await _db_ready():
+        pytest.skip("PostgreSQL 不可用")
+    cases = (await client.get("/cases", params={"page_size": 200})).json()
+    target = next(item for item in cases["items"] if item["code"] == "DEMO-SINGLE-001")
+    case_id = target["id"]
+    marker = uuid.uuid4().hex[:6]
+    root_id: int | None = None
+    child_id: int | None = None
+    started = datetime.now() - timedelta(minutes=5)
+    try:
+        async with SessionLocal() as db:
+            root = BatchTask(
+                code=f"RT-{marker}",
+                name=f"pytest 多轮导出 {marker}",
+                status="COMPLETED",
+                control_state="FINISHED",
+                case_ids=[case_id],
+                total_cases=1,
+                finished_cases=1,
+                concurrency=1,
+                qps_limit=5.0,
+                schedule_type="IMMEDIATE",
+                schedule_active=False,
+                repeat_rounds=2,
+                round_index=1,
+                created_by="admin",
+                started_at=started,
+                finished_at=started + timedelta(seconds=30),
+            )
+            db.add(root)
+            await db.flush()
+            child = BatchTask(
+                code=f"RT-{marker}-R2",
+                name=f"pytest 多轮导出 {marker} · 第 2/2 轮",
+                status="COMPLETED",
+                control_state="FINISHED",
+                case_ids=[case_id],
+                total_cases=1,
+                finished_cases=1,
+                concurrency=1,
+                qps_limit=5.0,
+                schedule_type="IMMEDIATE",
+                schedule_active=False,
+                repeat_rounds=2,
+                round_index=2,
+                round_prev_id=root.id,
+                schedule_source_id=root.id,
+                created_by="admin",
+                started_at=started + timedelta(minutes=1),
+                finished_at=started + timedelta(minutes=1, seconds=30),
+            )
+            db.add(child)
+            await db.flush()
+            for task_ref, status, score, root_cause in (
+                (root, "PASS", 95.0, None),
+                (child, "FAIL", 40.0, "RETRIEVAL"),
+            ):
+                db.add(
+                    ExecutionRecord(
+                        trace_uid=f"trace-{marker}-{task_ref.round_index}",
+                        task_id=task_ref.id,
+                        case_id=case_id,
+                        case_version=1,
+                        case_snapshot={"code": target["code"]},
+                        status=status,
+                        pass_flag=(status == "PASS"),
+                        total_score=score,
+                        termination_status="OBJECTIVE_MET" if status == "PASS" else None,
+                        turns_used=1,
+                        max_turns=5,
+                        latency_ms=800.0,
+                        ttft_ms=100.0,
+                        simulator_tokens=200,
+                        judge_tokens=80,
+                        root_cause=root_cause,
+                        started_at=task_ref.started_at,
+                        finished_at=task_ref.finished_at,
+                    )
+                )
+            await db.commit()
+            root_id, child_id = int(root.id), int(child.id)
+
+        # 计划根入口：xlsx 多轮报表。
+        exported = await client.get(f"/tasks/{root_id}/export/rounds")
+        assert exported.status_code == 200, exported.text
+        workbook = load_workbook(BytesIO(exported.content))
+        assert workbook.sheetnames == [
+            "综合概览",
+            "轮次对比",
+            "跨轮问题清单",
+            "用例稳定性",
+            "多轮用例明细",
+            "口径说明",
+        ]
+        compare = workbook["轮次对比"]
+        assert compare.max_row == 3  # 2 轮 + 表头
+        headers = [cell.value for cell in compare[1]]
+        assert compare.cell(row=3, column=headers.index("趋势判定") + 1).value == "恶化"
+        assert compare.cell(row=3, column=headers.index("本轮新失败用例") + 1).value == target["code"]
+        stability = workbook["用例稳定性"]
+        stability_headers = [cell.value for cell in stability[1]]
+        assert stability.max_row == 2
+        assert stability.cell(row=2, column=stability_headers.index("稳定性分级") + 1).value == "波动"
+        assert stability.cell(row=2, column=stability_headers.index("状态序列") + 1).value == "通过 → 失败"
+        issues = workbook["跨轮问题清单"]
+        assert issues.max_row == 2
+        assert "原始明细" not in workbook.sheetnames
+
+        # 子批次入口：自动解析到同一计划根。
+        from_child = await client.get(f"/tasks/{child_id}/export/rounds")
+        assert from_child.status_code == 200, from_child.text
+        assert load_workbook(BytesIO(from_child.content)).sheetnames == workbook.sheetnames
+
+        # include_raw=true 附加原始明细。
+        raw_export = await client.get(
+            f"/tasks/{root_id}/export/rounds", params={"include_raw": "true"}
+        )
+        assert raw_export.status_code == 200, raw_export.text
+        assert "原始明细" in load_workbook(BytesIO(raw_export.content)).sheetnames
+
+        # JSONL：meta / round_summary / case_stability / row。
+        jsonl_export = await client.get(
+            f"/tasks/{root_id}/export/rounds", params={"format": "jsonl"}
+        )
+        assert jsonl_export.status_code == 200, jsonl_export.text
+        records = [json.loads(line) for line in jsonl_export.content.decode("utf-8").splitlines()]
+        kinds = [record["kind"] for record in records]
+        assert kinds.count("round_summary") == 2
+        assert kinds.count("case_stability") == 1
+        assert kinds.count("row") == 2
+        assert records[0]["schema"] == "billing-qa/task-rounds"
+
+        # 普通单批次任务没有计划轮次 → 400。
+        plain = await client.post(
+            "/tasks",
+            json={
+                "name": f"pytest 普通任务 {marker}",
+                "case_ids": [case_id],
+                "schedule_type": "IMMEDIATE",
+                "auto_start": False,
+            },
+        )
+        assert plain.status_code == 200, plain.text
+        plain_id = plain.json()["id"]
+        try:
+            rejected = await client.get(f"/tasks/{plain_id}/export/rounds")
+            assert rejected.status_code == 422
+            assert "暂无执行结果" in json.dumps(rejected.json(), ensure_ascii=False)
+        finally:
+            async with SessionLocal() as db:
+                await db.execute(delete(BatchTask).where(BatchTask.id == plain_id))
+                await db.commit()
+    finally:
+        async with SessionLocal() as db:
+            if root_id:
+                await db.execute(
+                    delete(ExecutionRecord).where(
+                        ExecutionRecord.task_id.in_([root_id, child_id])
+                    )
+                )
+                await db.execute(
+                    delete(BatchTask).where(
+                        BatchTask.id.in_([root_id, child_id])
+                    )
+                )
+                await db.commit()
+
+
+async def test_case_history_export_xlsx_and_jsonl(client: httpx.AsyncClient) -> None:
+    """单用例历史执行导出：默认排除草稿试跑、xlsx 三页结构与 JSONL meta/row。"""
+    if not await _db_ready():
+        pytest.skip("PostgreSQL 不可用")
+    marker = uuid.uuid4().hex[:6]
+    case_ids: list[int] = []
+    started = datetime.now() - timedelta(minutes=5)
+    try:
+        async with SessionLocal() as db:
+            case = TestCase(
+                code=f"CHX-{marker}",
+                name=f"pytest 历史导出 {marker}",
+                case_type="SINGLE",
+                status="ACTIVE",
+                priority="P1",
+                tags=["pytest"],
+                current_version=1,
+                dedupe_hash=f"pytest-{marker}",
+                expected_answer="合计 100 元",
+            )
+            empty_case = TestCase(
+                code=f"CHX-{marker}-EMPTY",
+                name=f"pytest 历史导出空 {marker}",
+                case_type="SINGLE",
+                status="ACTIVE",
+                priority="P2",
+                current_version=1,
+                dedupe_hash=f"pytest-{marker}-empty",
+            )
+            db.add_all([case, empty_case])
+            await db.flush()
+            case_ids = [int(case.id), int(empty_case.id)]
+            for offset_minutes, source, status, score in (
+                (0, "BATCH", "PASS", 95.0),
+                (1, "BATCH", "FAIL", 40.0),
+                (2, "SANDBOX", "PASS", 99.0),
+            ):
+                db.add(
+                    ExecutionRecord(
+                        trace_uid=f"trace-{marker}-{offset_minutes}",
+                        case_id=case.id,
+                        case_version=1,
+                        case_snapshot={
+                            "code": case.code,
+                            "expected_answer": "合计 100 元",
+                        },
+                        source=source,
+                        status=status,
+                        pass_flag=(status == "PASS"),
+                        total_score=score,
+                        turns_used=1,
+                        max_turns=5,
+                        latency_ms=800.0,
+                        ttft_ms=100.0,
+                        started_at=started + timedelta(minutes=offset_minutes),
+                        finished_at=started
+                        + timedelta(minutes=offset_minutes, seconds=10),
+                    )
+                )
+            await db.commit()
+            case_id, empty_case_id = case_ids
+
+        # xlsx：默认口径不含草稿试跑 → 2 行明细，时间升序。
+        exported = await client.get(f"/cases/{case_id}/export/executions")
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert f"case_CHX-{marker}_history_" in exported.headers["content-disposition"]
+        workbook = load_workbook(BytesIO(exported.content))
+        assert workbook.sheetnames == ["执行概览", "历史执行明细", "口径说明"]
+        detail = workbook["历史执行明细"]
+        headers = [cell.value for cell in detail[1]]
+        assert detail.max_row == 3  # 表头 + 2 行（草稿被排除）
+        assert detail.cell(row=3, column=headers.index("执行状态") + 1).value == "失败"
+        overview = workbook["执行概览"]
+        overview_map = {
+            overview.cell(row=row, column=1).value: overview.cell(row=row, column=2).value
+            for row in range(1, overview.max_row + 1)
+        }
+        assert overview_map["总执行次数"] == 2
+        assert overview_map["数据口径"] == "全部历史执行（不含草稿试跑）"
+
+        # include_sandbox=true → 3 行。
+        with_sandbox = await client.get(
+            f"/cases/{case_id}/export/executions", params={"include_sandbox": "true"}
+        )
+        assert with_sandbox.status_code == 200, with_sandbox.text
+        sandbox_workbook = load_workbook(BytesIO(with_sandbox.content))
+        assert sandbox_workbook["历史执行明细"].max_row == 4
+
+        # JSONL：meta + 2 行（默认不含草稿）。
+        jsonl_export = await client.get(
+            f"/cases/{case_id}/export/executions", params={"format": "jsonl"}
+        )
+        assert jsonl_export.status_code == 200, jsonl_export.text
+        records = [
+            json.loads(line) for line in jsonl_export.content.decode("utf-8").splitlines()
+        ]
+        assert records[0]["kind"] == "meta"
+        assert records[0]["schema"] == "billing-qa/case-history"
+        assert records[0]["case_code"] == f"CHX-{marker}"
+        assert records[0]["row_count"] == 2
+        assert [record["kind"] for record in records[1:]] == ["row", "row"]
+        assert [record["seq"] for record in records[1:]] == [1, 2]
+
+        # 无执行记录的用例 → 422。
+        rejected = await client.get(f"/cases/{empty_case_id}/export/executions")
+        assert rejected.status_code == 422
+        assert "暂无可导出的执行记录" in json.dumps(
+            rejected.json(), ensure_ascii=False
+        )
+    finally:
+        async with SessionLocal() as db:
+            if case_ids:
+                await db.execute(
+                    delete(ExecutionRecord).where(
+                        ExecutionRecord.case_id.in_(case_ids)
+                    )
+                )
+                await db.execute(
+                    delete(TestCase).where(TestCase.id.in_(case_ids))
+                )
+                await db.commit()

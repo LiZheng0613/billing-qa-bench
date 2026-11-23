@@ -96,6 +96,10 @@ const freezing = ref(false)
 
 const menuRef = ref<HTMLDetailsElement | null>(null)
 
+// 历史执行导出（趋势报表）
+const historyIncludeSandbox = ref(false)
+const historyExporting = ref(false)
+
 const REVIEW_STATUS_META: Record<string, { label: string; className: string }> = {
   NOT_REQUIRED: { label: '无需评审', className: 'bg-slate-100 text-slate-600' },
   PENDING: { label: '待评审', className: 'bg-amber-50 text-amber-700' },
@@ -545,6 +549,28 @@ async function exportCase(): Promise<void> {
     toast.success(`已导出用例 ${current.code}`)
   } catch (exc) {
     toast.error(errorMessage(exc))
+  }
+}
+
+async function exportHistory(format: 'xlsx' | 'jsonl'): Promise<void> {
+  const current = item.value
+  if (!current || historyExporting.value) return
+  historyExporting.value = true
+  try {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')
+    await api.cases.exportHistory(current.id, `case_${current.code}_history_${stamp}.${format}`, {
+      format,
+      include_sandbox: historyIncludeSandbox.value,
+    })
+    toast.success(
+      format === 'jsonl'
+        ? '已导出历史执行完整数据（JSONL，无长度截断）'
+        : '已导出历史执行趋势报表',
+    )
+  } catch (exc) {
+    toast.error(errorMessage(exc))
+  } finally {
+    historyExporting.value = false
   }
 }
 
@@ -1001,14 +1027,43 @@ onBeforeUnmount(() => {
                   共 {{ executionTotal }} 次执行（含批量、调试与重跑）
                 </p>
               </div>
-              <span
-                v-if="hasActiveExecution"
-                class="inline-flex items-center gap-1 text-[11px] text-emerald-600"
-                title="有执行中的记录，进度由服务端实时推送"
-              >
-                <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
-                执行中 · 实时推送
-              </span>
+              <div class="flex flex-wrap items-center gap-2">
+                <span
+                  v-if="hasActiveExecution"
+                  class="inline-flex items-center gap-1 text-[11px] text-emerald-600"
+                  title="有执行中的记录，进度由服务端实时推送"
+                >
+                  <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
+                  执行中 · 实时推送
+                </span>
+                <label
+                  class="inline-flex items-center gap-1 text-[11px] text-slate-500"
+                  title="草稿试跑是调试实验，默认排除（与趋势口径一致）"
+                >
+                  <input
+                    v-model="historyIncludeSandbox"
+                    type="checkbox"
+                    class="h-3.5 w-3.5 rounded border-slate-300 bg-white"
+                  />
+                  含草稿试跑
+                </label>
+                <button
+                  class="btn-ghost btn-xs"
+                  :disabled="historyExporting || !executionTotal"
+                  title="导出该用例全部历史执行的 Excel 趋势报表（概览 / 明细 / 口径说明）"
+                  @click="exportHistory('xlsx')"
+                >
+                  导出趋势 Excel
+                </button>
+                <button
+                  class="btn-ghost btn-xs"
+                  :disabled="historyExporting || !executionTotal"
+                  title="导出完整字段（轮次轨迹 / 裁决明细），不做任何截断，供程序消费"
+                  @click="exportHistory('jsonl')"
+                >
+                  JSONL
+                </button>
+              </div>
             </header>
             <div v-if="executions.length" class="overflow-x-auto">
               <table class="table-shell min-w-[980px]">

@@ -13,11 +13,21 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.api.v1.serializers import build_execution_detail, case_to_out
+# 复用批次导出的行组装 / 文件名助手（tasks.py 不反向依赖本模块，无循环导入）
+from billing_qa.api.v1.tasks import (
+    _judge_notes,
+    _judge_payload,
+    _safe_filename_part,
+    _snapshot_value,
+    _turn_payload,
+)
 from billing_qa.core.authz import require_module_access, require_permission
+from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
 from billing_qa.core.logging import get_logger
 from billing_qa.core.search import keyword_condition
 from billing_qa.core.security import get_current_operator
+from billing_qa.db.base import now
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import (
     CaseType,
@@ -67,6 +77,23 @@ from billing_qa.services.facts import (
     ensure_review_gate,
     find_fact,
     iter_envelope_facts,
+)
+from billing_qa.services.io.case_history_report import (
+    build_case_history_jsonl,
+    build_case_history_xlsx,
+)
+from billing_qa.services.io.execution_excel import (
+    bool_text,
+    case_status_label,
+    case_type_label,
+    enrich_result_rows,
+    error_kind_label,
+    format_datetime,
+    grading_mode_label,
+    root_cause_label,
+    self_check_status_label,
+    source_label,
+    status_label,
 )
 from billing_qa.services.io.case_json import (
     build_export_payload,
@@ -1255,4 +1282,277 @@ async def debug_case(
         raise NotFoundError("调试执行记录生成失败")
     return await build_execution_detail(
         db, record, case_code=case.code, case_name=case.name
+    )
+
+
+# ---------------------------------------------------------------------- #
+# 单用例历史执行导出（趋势报表）
+# ---------------------------------------------------------------------- #
+async def _collect_case_history_rows(
+    db: AsyncSession, case: TestCase, *, include_sandbox: bool
+) -> list[dict[str, Any]]:
+    """收集单用例全部历史执行（时间升序），行结构与批次导出对齐。
+
+    行经 ``enrich_result_rows`` 补充派生字段，Excel 与 JSONL 共用；
+    用例维度字段优先取各次执行绑定的快照（能看到改版前后的差异）。
+    """
+    conditions = [ExecutionRecord.case_id == case.id]
+    if not include_sandbox:
+        conditions.append(ExecutionRecord.source != ExecutionSource.SANDBOX)
+    records = list(
+        (
+            await db.execute(
+                select(ExecutionRecord)
+                .where(*conditions)
+                .order_by(ExecutionRecord.started_at.asc(), ExecutionRecord.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not records:
+        return []
+
+    task_ids = {record.task_id for record in records if record.task_id}
+    task_names: dict[int, str] = {}
+    if task_ids:
+        task_names = {
+            int(task_id): str(name)
+            for task_id, name in (
+                await db.execute(
+                    select(BatchTask.id, BatchTask.name).where(
+                        BatchTask.id.in_(task_ids)
+                    )
+                )
+            ).all()
+        }
+    # 同一批次内该用例的总尝试次数（含环境类自动重试）。
+    attempts_by_task: dict[int, int] = {}
+    for record in records:
+        if record.task_id:
+            attempts_by_task[int(record.task_id)] = (
+                attempts_by_task.get(int(record.task_id), 0) + 1
+            )
+
+    env_ids = {record.environment_id for record in records if record.environment_id}
+    env_names: dict[int, str] = {}
+    if env_ids:
+        env_names = {
+            int(env_id): str(name)
+            for env_id, name in (
+                await db.execute(
+                    select(Environment.id, Environment.name).where(
+                        Environment.id.in_(env_ids)
+                    )
+                )
+            ).all()
+        }
+
+    template_codes = {
+        str(record.self_check["template_code"])
+        for record in records
+        if isinstance(record.self_check, dict)
+        and record.self_check.get("template_code")
+    }
+    template_names: dict[str, str] = {}
+    if template_codes:
+        template_names = {
+            str(code): str(name)
+            for code, name in (
+                await db.execute(
+                    select(PromptTemplate.code, PromptTemplate.name).where(
+                        PromptTemplate.code.in_(template_codes)
+                    )
+                )
+            ).all()
+        }
+
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        snapshot = record.case_snapshot or {}
+        tags = _snapshot_value(snapshot, "tags", case.tags)
+        final_answer = next(
+            (
+                turn.final_answer
+                for turn in reversed(record.turns)
+                if turn.final_answer not in (None, "")
+            ),
+            None,
+        )
+        self_check = record.self_check if isinstance(record.self_check, dict) else None
+        sc = self_check or {}
+        self_check_conclusion = (
+            sc.get("conclusion") or sc.get("skip_reason") or sc.get("error")
+        )
+        template_code = sc.get("template_code")
+        template_version = sc.get("template_version")
+        template_name = (
+            sc.get("template_name")
+            or template_names.get(str(template_code))
+            or ("用例自定义覆写" if template_code == "PROMPT_OVERRIDE" else template_code)
+        )
+        self_check_template = None
+        if template_name:
+            self_check_template = (
+                f"{template_name}@v{template_version}"
+                if template_version
+                else str(template_name)
+            )
+        self_check_notes = (
+            "；".join(str(note) for note in (sc.get("notes") or []) if str(note).strip())
+            or None
+        )
+        rows.append(
+            {
+                "execution_id": record.id,
+                "trace_uid": record.trace_uid,
+                "case_id": record.case_id,
+                "case_version": record.case_version,
+                "case_code": _snapshot_value(snapshot, "code", case.code),
+                "case_name": _snapshot_value(snapshot, "name", case.name),
+                "case_type": case_type_label(
+                    _snapshot_value(snapshot, "case_type", case.case_type)
+                ),
+                "priority": _snapshot_value(snapshot, "priority", case.priority),
+                "case_status": case_status_label(
+                    _snapshot_value(snapshot, "status", case.status)
+                ),
+                "tags": ",".join(tags) if isinstance(tags, list) else tags,
+                "owner": _snapshot_value(snapshot, "owner", case.owner),
+                "dataset_version": _snapshot_value(
+                    snapshot, "dataset_version", case.dataset_version
+                ),
+                "as_of": _snapshot_value(snapshot, "as_of", record.as_of),
+                "grading_mode": grading_mode_label(
+                    record.grading_mode or _snapshot_value(snapshot, "grading_mode")
+                ),
+                "expected_answer": _snapshot_value(
+                    snapshot, "expected_answer", case.expected_answer
+                ),
+                "query": _snapshot_value(snapshot, "query", case.query),
+                "user_goal": _snapshot_value(snapshot, "user_goal", case.user_goal),
+                "task_id": record.task_id,
+                "task_name": task_names.get(int(record.task_id))
+                if record.task_id
+                else None,
+                "source": source_label(record.source),
+                "status": status_label(record.status),
+                "status_code": record.status,
+                "pass_flag": bool_text(record.pass_flag),
+                "total_score": record.total_score,
+                "termination_status": status_label(record.termination_status),
+                "attempt_no": record.attempt_no,
+                "attempt_count": attempts_by_task.get(int(record.task_id), 1)
+                if record.task_id
+                else 1,
+                "error_kind": error_kind_label(record.error_kind),
+                "root_cause": root_cause_label(record.root_cause),
+                "lucky_pass": bool_text(record.lucky_pass),
+                "turns_used": record.turns_used,
+                "max_turns": record.max_turns,
+                "latency_ms": record.latency_ms,
+                "ttft_ms": record.ttft_ms,
+                "simulator_tokens": record.simulator_tokens,
+                "judge_tokens": record.judge_tokens,
+                "total_tokens": int(record.simulator_tokens or 0)
+                + int(record.judge_tokens or 0),
+                "grader_version": record.grader_version,
+                "environment_id": record.environment_id,
+                "environment_name": env_names.get(int(record.environment_id))
+                if record.environment_id
+                else None,
+                "started_at": format_datetime(record.started_at),
+                "finished_at": format_datetime(record.finished_at),
+                "error_message": record.error_message,
+                "judge_notes": _judge_notes(record),
+                "final_answer": final_answer,
+                "self_check_status": self_check_status_label(
+                    str(sc.get("status")) if sc.get("status") else None
+                ),
+                "self_check_status_code": (
+                    str(sc.get("status")) if sc.get("status") else None
+                ),
+                "self_check_trigger": sc.get("trigger"),
+                "self_check_skip_reason": sc.get("skip_reason"),
+                "self_check_conclusion": self_check_conclusion,
+                "self_check_session_id": sc.get("session_id"),
+                "self_check_template": self_check_template,
+                "self_check_latency_ms": sc.get("latency_ms"),
+                "self_check_performed_at": sc.get("performed_at"),
+                "self_check_error": sc.get("error"),
+                "self_check_notes": self_check_notes,
+                "self_check_prompt": sc.get("prompt"),
+                "self_check_request": sc.get("request_payload"),
+                "self_check_response": sc.get("response_raw"),
+                "rule_result": record.rule_result,
+                "judge_result": record.judge_result,
+                "answer_grading": record.answer_grading,
+                "fact_results": record.fact_results,
+                "diagnostics": record.diagnostics,
+                "judges": [_judge_payload(judge) for judge in record.judges],
+                "turns": [_turn_payload(turn) for turn in record.turns],
+                "case_snapshot": snapshot,
+            }
+        )
+    # 追加人读派生字段（裁判结论 / 事实命中 / 诊断摘要 / 建议排查方向等）。
+    return enrich_result_rows(
+        rows, borderline_score=settings.report_borderline_score
+    )
+
+
+@router.get(
+    "/{case_id}/export/executions",
+    summary="导出用例历史执行记录（趋势报表 Excel / 完整 JSONL）",
+    dependencies=[Depends(require_permission("case:export"))],
+)
+async def export_case_executions(
+    case_id: int,
+    format: Literal["xlsx", "jsonl"] = Query(
+        default="xlsx",
+        description=(
+            "导出格式：xlsx 为人读趋势报表（概览 / 历史明细 / 口径说明），"
+            "超长字段按 Excel 上限截断；jsonl 不截断，完整保留轮次轨迹等大字段"
+        ),
+    ),
+    include_sandbox: bool = Query(
+        default=False,
+        description="是否包含草稿试跑（sandbox 调试执行）；默认与用例趋势口径一致：不含",
+    ),
+    db: AsyncSession = Depends(get_db),
+    operator: str = Depends(get_current_operator),
+) -> Response:
+    case = await _get_case(db, case_id, include_deleted=True)
+    rows = await _collect_case_history_rows(db, case, include_sandbox=include_sandbox)
+    if not rows:
+        raise ValidationError("该用例暂无可导出的执行记录")
+    exported_at = now()
+    code_part = _safe_filename_part(case.code)
+    if format == "jsonl":
+        content = build_case_history_jsonl(
+            case,
+            rows,
+            include_sandbox=include_sandbox,
+            exported_by=operator,
+            exported_at=exported_at,
+        )
+        filename = f"case_{code_part}_history_{exported_at:%Y%m%d_%H%M%S}.jsonl"
+        media_type = "application/x-ndjson; charset=utf-8"
+    else:
+        content = build_case_history_xlsx(
+            case,
+            rows,
+            exported_by=operator,
+            exported_at=exported_at,
+            include_sandbox=include_sandbox,
+            base_url=settings.report_base_url,
+        )
+        filename = f"case_{code_part}_history_{exported_at:%Y%m%d_%H%M%S}.xlsx"
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
     )

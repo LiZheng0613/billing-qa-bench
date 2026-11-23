@@ -93,6 +93,15 @@ class Settings(BaseSettings):
     mock_llm_base_url: str = "http://127.0.0.1:8001/v1"
     mock_target_base_url: str = "http://127.0.0.1:8002"
 
+    # ---------- 报表导出 ----------
+    # Excel 报表中「执行号 / Trace UID」超链接的平台基址（前端站点根地址）。
+    # 链接形如 {report_base_url}/trace?execution={id}；留空则不生成超链接。
+    report_base_url: str = "http://localhost:5173"
+    # 压线通过阈值：判分通过但总分低于该值的用例进入问题清单（风险类型=压线通过）。
+    report_borderline_score: float = 70.0
+    # 「近 N 次通过率(全库)」窗口：该用例在所有任务中的最近 N 次执行。
+    report_near_history_count: int = 10
+
     # ---------- 派生属性 ----------
     @property
     def cors_origin_list(self) -> list[str]:
