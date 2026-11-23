@@ -227,6 +227,32 @@ export interface PreHookConfig {
   cache_seconds: number
 }
 
+/** 条件解析规则：按序求值，首个产出非空值的规则生效（if / elif / else） */
+export interface ExtractionRule {
+  /** 规则标识，用于 Trace 命中定位 */
+  id?: string
+  /** 定位表达式（JSONPath，支持 [?(@.type=='chart')] 过滤与 $.. 递归） */
+  path: string
+  /** first（默认）/ last / 0 起始下标 */
+  occurrence?: 'first' | 'last' | number
+  /** 命中节点上的相对路径，按序尝试（同级 $.message -> 下层 $..message） */
+  take?: string[]
+  /** 最近 dict 祖先上的相对路径（上级场景） */
+  take_parent?: string[]
+}
+
+/** 条件解析规格：作为字段提取器的对象形态（字符串形态仍是 JSONPath） */
+export interface ExtractionSpec {
+  rules: ExtractionRule[]
+  /** 全部规则未命中时，流式场景回退聚合文本（默认 true） */
+  fallback_content?: boolean
+  /** 是否再走平台内置兜底路径（仅 final_answer，默认 false） */
+  legacy_fallback?: boolean
+}
+
+/** 字段提取器取值：字符串 JSONPath 或条件规则对象 */
+export type ExtractorValue = string | ExtractionSpec
+
 export interface BasicAuthOut {
   username: string
   password_set: boolean
@@ -271,7 +297,7 @@ export interface Environment {
   headers_template: Record<string, string> | null
   body_template: Record<string, unknown> | null
   is_stream: boolean
-  extractors: Record<string, string> | null
+  extractors: Record<string, ExtractorValue> | null
   pre_hook: PreHookConfig | null
   basic_auth: BasicAuthOut | null
   mtls: MtlsAuthOut | null
@@ -299,7 +325,7 @@ export interface EnvironmentPayload {
   headers_template?: Record<string, string> | null
   body_template?: Record<string, unknown> | null
   is_stream?: boolean
-  extractors?: Record<string, string> | null
+  extractors?: Record<string, ExtractorValue> | null
   pre_hook?: PreHookConfig | null
   basic_auth?: BasicAuthInput | null
   mtls?: MtlsAuthInput | null

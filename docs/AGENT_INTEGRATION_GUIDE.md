@@ -159,6 +159,36 @@
 - 自定义提取器为**整体替换**，请至少保留 `final_answer` 与 `session_id`；
 - 其余字段（`intent` / `generated_sql` / `api_params` 等）按需保留。
 
+**条件解析（流式场景推荐）**：当 Agent 的流式帧里存在多种结构（如 `type=chart`、`type=text`），
+需要「**有 chart 就取最后一次 chart 的 message，否则取最后一次 context**」这类条件逻辑时，
+字段值可以用**条件规则对象**替代字符串 JSONPath：
+
+```json
+{
+  "final_answer": {
+    "rules": [
+      {
+        "id": "IF-最后一次chart",
+        "path": "$..[?(@.type=='chart')]",
+        "occurrence": "last",
+        "take": ["$.message", "$..message"],
+        "take_parent": ["$.message"]
+      },
+      { "id": "ELSE-最后一次context", "path": "$..context", "occurrence": "last" }
+    ],
+    "fallback_content": true
+  },
+  "session_id": "$.data.sessionid"
+}
+```
+
+规则按序求值、首个产出非空值的规则生效（if / elif / else），支持任意深度条件匹配、
+`first` / `last` / 下标选择命中、同级（`take`）与上级（`take_parent`）相对导航、
+SSE 帧序保留（`$._frames`）；命中轨迹写入执行记录「原始报文」的 `extraction` 节点，
+保存时对非法规则直接 422 报错。字符串 JSONPath 形态行为不变，存量环境零迁移。
+
+完整语法、语义顺序、更多样例与排障说明见 [`RESPONSE_EXTRACTION.md`](RESPONSE_EXTRACTION.md)。
+
 ### 2.7 完整环境 JSON 参考
 
 ```json

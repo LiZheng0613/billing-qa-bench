@@ -103,6 +103,7 @@
 | 能力 | 说明 |
 | --- | --- |
 | 协议与形态 | SSE 流式 / JSON 非流式；任何提供 HTTP(S) JSON 或 SSE 接口的智能客服都可接入 |
+| 响应提取 | 字段提取器支持 JSONPath 与**条件规则**两种形态：规则按序命中（if/elif/else）、`occurrence=last` 取最后一次出现、同级 / 上级 / 下层相对导航、SSE 帧序保留，兼容存量字符串配置（见 `docs/RESPONSE_EXTRACTION.md`） |
 | 模板化报文 | 请求头 / 体模板 `{{variable}}` 占位 + Jinja2 表达式（拼接前缀、去空格、Base64 / MD5 / URL 编码、时间戳等） |
 | 鉴权与钩子 | **Basic 鉴权**自动生成 `Authorization` 头；**前置接口钩子**取 `conversationId` / Token（多字段 JSONPath 提取），供主请求与后续轮次复用 |
 | 会话与时间 | 会话由服务端返回回填或客户端生成两种模式；ISO 时间戳每轮刷新 |

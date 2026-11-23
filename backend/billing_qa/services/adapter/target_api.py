@@ -18,9 +18,10 @@ from billing_qa.core.crypto import decrypt_value
 from billing_qa.core.exceptions import TargetApiError
 from billing_qa.core.logging import get_logger
 from billing_qa.models.environment import Environment
+from billing_qa.services.adapter.extraction import ExtractionContext
 from billing_qa.services.adapter.extractor import (
     DEFAULT_EXTRACTORS,
-    extract_all,
+    extract_all_traced,
     extract_final_answer,
     extract_value,
 )
@@ -375,15 +376,16 @@ class TargetApiAdapter:
                             f"SSE 响应为空：status={response.status_code}，未解析到任何数据帧",
                             retryable=True,
                         )
-                    payload: Any = {
-                        **sse_result.merged_metadata,
-                        "_content": sse_result.content,
-                        "_frames": sse_result.frames[-50:],
-                    }
-                    final_answer = extract_final_answer(payload, self.env.extractors)
-                    if not final_answer:
-                        final_answer = sse_result.content
-                    extracted = extract_all(payload, self.env.extractors)
+                    # 条件解析上下文：_frames 置前保证文档序 = 流序（first/last 语义）
+                    extraction_context = ExtractionContext(
+                        payload=sse_result.merged_metadata,
+                        frames=sse_result.frames,
+                        content=sse_result.content,
+                    )
+                    final_answer = extract_final_answer(extraction_context, self.env.extractors)
+                    extracted, extraction_trace = extract_all_traced(
+                        extraction_context, self.env.extractors
+                    )
                     return TargetResponse(
                         final_answer=final_answer or "",
                         latency_ms=latency,
@@ -402,6 +404,7 @@ class TargetApiAdapter:
                             "metadata": sse_result.merged_metadata,
                             "frames": sse_result.frames[-50:],
                             "content": sse_result.content,
+                            "extraction": extraction_trace or None,
                         },
                     )
                 latency = round((time.perf_counter() - started) * 1000, 2)
@@ -418,7 +421,7 @@ class TargetApiAdapter:
                         ) from None
                     payload = {"content": decoded}
                 final_answer = extract_final_answer(payload, self.env.extractors)
-                extracted = extract_all(payload, self.env.extractors)
+                extracted, extraction_trace = extract_all_traced(payload, self.env.extractors)
                 if not final_answer and isinstance(payload, dict):
                     final_answer = str(payload.get("content") or "")
                 return TargetResponse(
@@ -433,7 +436,11 @@ class TargetApiAdapter:
                     tool_calls=extracted.get("tool_calls"),
                     status_code=response.status_code,
                     request_payload=request_payload,
-                    response_payload={"mode": "json", "body": payload},
+                    response_payload={
+                        "mode": "json",
+                        "body": payload,
+                        "extraction": extraction_trace or None,
+                    },
                 )
             except httpx.TimeoutException as exc:
                 raise TargetApiError(

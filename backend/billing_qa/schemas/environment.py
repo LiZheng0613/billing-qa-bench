@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from billing_qa.schemas.common import ORMModel
+from billing_qa.services.adapter.extraction import validate_extractors
 
 
 class EnvVariableIn(BaseModel):
@@ -172,6 +173,12 @@ class EnvironmentBase(BaseModel):
             raise ValueError("base_url 必须以 http:// 或 https:// 开头")
         return value.rstrip("/")
 
+    @field_validator("extractors")
+    @classmethod
+    def _check_extractors(cls, value: dict | None) -> dict | None:
+        """条件规则对象严格校验（非法 422）；字符串表达式保持历史宽松行为。"""
+        return validate_extractors(value)
+
     @field_validator("api_method")
     @classmethod
     def _check_method(cls, value: str) -> str:
@@ -196,6 +203,13 @@ class EnvironmentUpdate(BaseModel):
     body_template: dict | None = None
     is_stream: bool | None = None
     extractors: dict | None = None
+
+    @field_validator("extractors")
+    @classmethod
+    def _check_extractors(cls, value: dict | None) -> dict | None:
+        """条件规则对象严格校验（非法 422）；字符串表达式保持历史宽松行为。"""
+        return validate_extractors(value)
+
     pre_hook: PreHookConfig | None = None
     basic_auth: BasicAuthIn | None = None
     mtls: MtlsAuthIn | None = None

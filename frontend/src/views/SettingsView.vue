@@ -12,6 +12,7 @@ import type {
   EnvDebugChatResult,
   EnvPreviewResult,
   EnvVariableInput,
+  ExtractorValue,
   ModelConfig,
   ModelConnectionType,
   ModelPayload,
@@ -319,7 +320,7 @@ async function submitEnv(): Promise<void> {
 
   let headers: Record<string, string> | null = null
   let body: Record<string, unknown> | null = null
-  let extractors: Record<string, string> | null = null
+  let extractors: Record<string, ExtractorValue> | null = null
   let preHook: PreHookConfig | null = null
   let basicAuth: BasicAuthInput | null = null
   if (envForm.basicAuthEnabled) {
@@ -380,12 +381,8 @@ async function submitEnv(): Promise<void> {
     body = parseOptionalObject(envForm.bodyText, '请求体模板')
     const parsedExtractors = parseOptionalObject(envForm.extractorsText, '字段提取器')
     if (parsedExtractors) {
-      extractors = Object.fromEntries(
-        Object.entries(parsedExtractors).map(([key, value]) => [
-          key,
-          typeof value === 'string' ? value : JSON.stringify(value),
-        ]),
-      )
+      // 保留对象形态（条件解析规则），仅校验顶层为对象；字符串值原样透传
+      extractors = parsedExtractors as Record<string, ExtractorValue>
     }
     if (envForm.preHookEnabled) {
       const parsedPreHook = parseOptionalObject(envForm.preHookText, '前置接口钩子')
@@ -1405,8 +1402,19 @@ onMounted(() => {
             <textarea v-model="envForm.bodyText" class="input font-mono text-xs" rows="6" />
           </div>
           <div>
-            <label class="label">字段提取器（JSONPath，可选）</label>
-            <textarea v-model="envForm.extractorsText" class="input font-mono text-xs" rows="6" />
+            <label class="label">字段提取器（JSONPath / 条件规则，可选）</label>
+            <textarea
+              v-model="envForm.extractorsText"
+              class="input font-mono text-xs"
+              rows="6"
+              placeholder='{"final_answer": "$.data.answer"}'
+            />
+            <p class="mt-1 text-[11px] leading-5 text-slate-500">
+              值支持两种形态：字符串 JSONPath（如 <code>$.data.answer</code>）；或条件规则对象
+              <code>{"rules": [{"path": "$..[?(@.type=='chart')]", "occurrence": "last", "take": ["$.message", "$..message"], "take_parent": ["$.message"]}]}</code>
+              ——规则按序命中，可表达「有 chart 取其 message，否则取最后一次 context」，完整语法见
+              docs/RESPONSE_EXTRACTION.md。
+            </p>
           </div>
         </div>
 
