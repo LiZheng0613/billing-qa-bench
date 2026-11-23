@@ -561,6 +561,83 @@ async def test_execution_summary_aggregates(client: httpx.AsyncClient) -> None:
     ).status_code == 422
 
 
+async def test_execution_environment_summary_aggregates(client: httpx.AsyncClient) -> None:
+    """环境对比接口：分母闭合、每日序列补齐、稳定性指标不越界。"""
+    summary = (await client.get("/executions/environment-summary", params={"days": 7})).json()
+    assert summary["days"] == 7
+    environments = summary["environments"]
+    assert isinstance(environments, list)
+    assert len({item["code"] for item in environments}) == len(environments)
+
+    today = datetime.now().date().isoformat()
+    for item in environments:
+        # 尝试级口径必须自洽：已判定 = 通过 + 失败，且不超过执行总量。
+        assert item["total"] >= item["measured"] == item["passed"] + item["failed"] >= 0
+        if item["measured"]:
+            assert item["pass_rate"] == round(
+                item["passed"] / item["measured"] * 100, 2
+            )
+        else:
+            assert item["pass_rate"] is None
+
+        # 每日序列必须补齐窗口内每一天，且每日汇总回加到环境总计。
+        assert len(item["daily"]) == 7
+        dates = [point["date"] for point in item["daily"]]
+        assert dates == sorted(dates)
+        assert dates[-1] == today
+        assert sum(point["total"] for point in item["daily"]) == item["total"]
+        assert sum(point["measured"] for point in item["daily"]) == item["measured"]
+        assert sum(point["passed"] for point in item["daily"]) == item["passed"]
+        for point in item["daily"]:
+            assert 0 <= point["passed"] <= point["measured"] <= point["total"]
+            if point["measured"]:
+                assert point["pass_rate"] == round(
+                    point["passed"] / point["measured"] * 100, 2
+                )
+
+        # 用例覆盖与抖动是去重口径，不能超过已判定样本。
+        assert 0 <= item["case_passed"] <= item["case_total"] <= item["measured"]
+        assert 0 <= item["flaky_cases"] <= item["case_total"]
+        if item["case_total"]:
+            assert item["case_pass_rate"] == round(
+                item["case_passed"] / item["case_total"] * 100, 2
+            )
+            assert item["flaky_rate"] == round(
+                item["flaky_cases"] / item["case_total"] * 100, 2
+            )
+        else:
+            assert item["case_pass_rate"] is None
+            assert item["flaky_rate"] is None
+
+        # 异常、失败原因都必须落在执行总量 / 判负总量内。
+        assert 0 <= item["error_total"] <= item["total"]
+        if item["total"]:
+            assert item["error_rate"] == round(
+                item["error_total"] / item["total"] * 100, 2
+            )
+        assert sum(reason["count"] for reason in item["failure_reasons"]) == item["failed"]
+        counts = [reason["count"] for reason in item["failure_reasons"]]
+        assert counts == sorted(counts, reverse=True)
+        assert item["volatility"] is None or item["volatility"] >= 0
+        assert item["avg_turns"] is None or item["avg_turns"] >= 0
+        assert item["p95_ms"] is None or item["p95_ms"] >= 0
+        assert item["avg_score"] is None or 0 <= item["avg_score"] <= 100
+
+    longer = (
+        await client.get("/executions/environment-summary", params={"days": 30})
+    ).json()
+    for item in longer["environments"]:
+        assert len(item["daily"]) == 30
+        assert item["daily"][-1]["date"] == today
+
+    assert (
+        await client.get("/executions/environment-summary", params={"days": 0})
+    ).status_code == 422
+    assert (
+        await client.get("/executions/environment-summary", params={"days": 91})
+    ).status_code == 422
+
+
 async def test_task_result_export_missing_task(client: httpx.AsyncClient) -> None:
     response = await client.get("/tasks/999999/export")
     assert response.status_code == 404

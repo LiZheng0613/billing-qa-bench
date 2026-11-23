@@ -10,6 +10,9 @@ import type {
   DataSource,
   Environment,
   ExecutionDailyPoint,
+  ExecutionEnvironmentMetric,
+  ExecutionEnvironmentSummary,
+  ExecutionEnvironmentTrendSeries,
   ExecutionListItem,
   ExecutionSummary,
   FactStatsOverview,
@@ -28,6 +31,7 @@ import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toast'
 import { roundLabel, stripRoundSuffix } from '../utils/schedule'
 import DashboardTrendChart from './components/DashboardTrendChart.vue'
+import DashboardEnvTrendChart from './components/DashboardEnvTrendChart.vue'
 import TaskCreateModal from './components/TaskCreateModal.vue'
 
 const router = useRouter()
@@ -44,6 +48,14 @@ const failedExecutions = ref<ExecutionListItem[]>([])
 const executionTotal = ref(0)
 const summary = ref<ExecutionSummary | null>(null)
 const summaryError = ref(false)
+type DashboardViewMode = 'overview' | 'environments'
+const viewMode = ref<DashboardViewMode>('overview')
+const envDays = ref<7 | 30>(7)
+const envSummary = ref<ExecutionEnvironmentSummary | null>(null)
+const envLoading = ref(false)
+const envError = ref(false)
+let envLoadedKey: string | null = null
+const ENV_COLORS = ['#4f46e5', '#059669', '#d97706', '#0284c7', '#e11d48', '#7c3aed']
 const environments = ref<Environment[]>([])
 const dataSources = ref<DataSource[]>([])
 const loading = ref(true)
@@ -83,6 +95,7 @@ function scheduleReload(): void {
   refreshTimer = window.setTimeout(() => {
     refreshTimer = null
     void load(true)
+    if (viewMode.value === 'environments') void loadEnvironmentSummary(true)
   }, 1500)
 }
 
@@ -313,6 +326,205 @@ const bannerDetail = computed(() => {
   }
   return parts.length ? parts.join(' · ') : '暂无可展示的运行指标'
 })
+
+// ---------------------------------------------------------------- 环境对比
+const envMetrics = computed(() => envSummary.value?.environments ?? [])
+const envWithData = computed(() => envMetrics.value.filter((item) => item.measured > 0))
+const envMeasuredTotal = computed(() =>
+  envWithData.value.reduce((sum, item) => sum + item.measured, 0),
+)
+const envBestPass = computed(() => {
+  const candidates = envWithData.value.filter((item) => item.pass_rate !== null)
+  if (!candidates.length) return null
+  return candidates.reduce((best, item) =>
+    (item.pass_rate as number) > (best.pass_rate as number) ? item : best,
+  )
+})
+const envBestStable = computed(() => {
+  // 样本太少的波动没有解释力，稳定性排名至少要求 3 个已判定执行。
+  const candidates = envWithData.value.filter(
+    (item) => item.volatility !== null && item.measured >= 3,
+  )
+  if (!candidates.length) return null
+  return candidates.reduce((best, item) =>
+    (item.volatility as number) < (best.volatility as number) ? item : best,
+  )
+})
+const envBestPassKey = computed(() => envBestPass.value?.code ?? null)
+const envBestStableKey = computed(() => envBestStable.value?.code ?? null)
+const envColorMap = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {}
+  envMetrics.value.forEach((item, index) => {
+    map[item.code] = ENV_COLORS[index % ENV_COLORS.length]
+  })
+  return map
+})
+const envTrendSeries = computed<ExecutionEnvironmentTrendSeries[]>(() =>
+  envWithData.value.slice(0, 6).map((item) => ({
+    key: item.code,
+    name: item.name,
+    color: envColorMap.value[item.code] ?? ENV_COLORS[0],
+    points: item.daily,
+  })),
+)
+const envBanner = computed(() => {
+  if (envError.value) {
+    return {
+      tone: 'border-rose-200 bg-rose-50 text-rose-900',
+      dot: 'bg-rose-500 ring-4 ring-rose-500/15',
+      title: '环境对比加载失败',
+      detail: '当前视图只降级这一块，质量总览与任务进度不受影响；点右上角刷新重试。',
+    }
+  }
+  if (!envMetrics.value.length) {
+    return {
+      tone: 'border-slate-200 bg-slate-50 text-slate-700',
+      dot: 'bg-slate-400 ring-4 ring-slate-400/15',
+      title: '暂无执行环境',
+      detail: '先在「设置 · 执行环境」中接入被测 Agent，再回到这里做横向对比。',
+    }
+  }
+  if (!envMeasuredTotal.value) {
+    return {
+      tone: 'border-slate-200 bg-slate-50 text-slate-700',
+      dot: 'bg-slate-400 ring-4 ring-slate-400/15',
+      title: `近 ${envDays.value} 天暂无已判定执行`,
+      detail: '环境已就绪但还没有判定结果；跑一轮调测后这里会给出正确率与稳定性对比。',
+    }
+  }
+  if (envWithData.value.length === 1) {
+    const only = envWithData.value[0]
+    return {
+      tone: 'border-indigo-200 bg-indigo-50/70 text-indigo-950',
+      dot: 'bg-indigo-500 ring-4 ring-indigo-500/15',
+      title: `近 ${envDays.value} 天仅 1 个环境有数据`,
+      detail: `${only.name} 已判定 ${only.measured} 次、通过率 ${formatPercent(only.pass_rate, 1)}；接入第二个环境后才能横向比较优化思路。`,
+    }
+  }
+  const parts = [`${envWithData.value.length} 个环境有数据`, `${envMeasuredTotal.value} 次已判定`]
+  if (envBestPass.value) {
+    parts.push(
+      `正确率最高 ${envBestPass.value.name} ${formatPercent(envBestPass.value.pass_rate, 1)}`,
+    )
+  }
+  if (envBestStable.value) {
+    parts.push(
+      `波动最小 ${envBestStable.value.name} ±${(envBestStable.value.volatility as number).toFixed(1)}pp`,
+    )
+  }
+  const flaky = envWithData.value.reduce((sum, item) => sum + item.flaky_cases, 0)
+  parts.push(flaky ? `抖动 ${flaky} 个用例` : '暂未发现抖动用例')
+  return {
+    tone: 'border-indigo-200 bg-indigo-50/70 text-indigo-950',
+    dot: 'bg-indigo-500 ring-4 ring-indigo-500/15',
+    title: `近 ${envDays.value} 天 · ${envWithData.value.length} 个环境可对比`,
+    detail: parts.join(' · '),
+  }
+})
+
+function envDelta(item: ExecutionEnvironmentMetric): number | null {
+  if (item.pass_rate === null || item.previous_pass_rate === null) return null
+  return item.pass_rate - item.previous_pass_rate
+}
+
+function envDeltaValue(item: ExecutionEnvironmentMetric): number {
+  return envDelta(item) ?? 0
+}
+
+function envVolatilityValue(item: ExecutionEnvironmentMetric | null): number {
+  return item?.volatility ?? 0
+}
+
+function envSpark(item: ExecutionEnvironmentMetric): {
+  points: string
+  lastX: number
+  lastY: number
+  visible: boolean
+} {
+  const values = item.daily
+    .slice(-7)
+    .map((point) => point.pass_rate)
+    .filter((value): value is number => value !== null)
+  if (values.length < 2) return { points: '', lastX: 0, lastY: 0, visible: false }
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const span = max - min || 1
+  const coords = values.map((value, index) => ({
+    x: 2 + (index * 72) / (values.length - 1),
+    y: 22 - ((value - min) / span) * 18,
+  }))
+  const last = coords[coords.length - 1]
+  return {
+    points: coords.map((coord) => `${coord.x.toFixed(1)},${coord.y.toFixed(1)}`).join(' '),
+    lastX: last.x,
+    lastY: last.y,
+    visible: true,
+  }
+}
+
+function envHealth(item: ExecutionEnvironmentMetric): { label: string; cls: string } {
+  if (!item.is_active) {
+    return { label: '未启用', cls: 'border-slate-200 bg-slate-50 text-slate-500' }
+  }
+  if (!item.last_health_status) {
+    return { label: '未探活', cls: 'border-slate-200 bg-slate-50 text-slate-500' }
+  }
+  if (item.last_health_status === 'UP' || item.last_health_status === 'OK') {
+    const latency =
+      item.last_health_latency_ms === null
+        ? ''
+        : ` ${Math.round(item.last_health_latency_ms)}ms`
+    return {
+      label: `健康${latency}`,
+      cls: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    }
+  }
+  return {
+    label: statusLabel(item.last_health_status),
+    cls: 'border-rose-200 bg-rose-50 text-rose-700',
+  }
+}
+
+const envFailureTone: Record<string, string> = {
+  FAIL: 'bg-rose-400',
+  MAX_TURNS_EXCEEDED: 'bg-amber-400',
+  REPETITION_ABORT: 'bg-orange-400',
+  ERROR: 'bg-slate-400',
+}
+
+function envFailureTotal(item: ExecutionEnvironmentMetric): number {
+  return item.failure_reasons.reduce((sum, reason) => sum + reason.count, 0)
+}
+
+function envFailureWidth(item: ExecutionEnvironmentMetric, count: number): number {
+  const total = envFailureTotal(item)
+  return total ? (count / total) * 100 : 0
+}
+
+const envFailureLegend = computed(() => {
+  const seen = new Set<string>()
+  envWithData.value.forEach((item) =>
+    item.failure_reasons.forEach((reason) => seen.add(reason.status)),
+  )
+  return [...seen].map((status) => ({
+    status,
+    label: statusLabel(status),
+    cls: envFailureTone[status] ?? 'bg-slate-300',
+  }))
+})
+
+function volatilityTone(value: number | null): string {
+  if (value === null) return 'text-ink-muted'
+  if (value <= 5) return 'text-emerald-700'
+  if (value <= 10) return 'text-ink-soft'
+  return 'text-amber-700'
+}
+
+function envRateTone(item: ExecutionEnvironmentMetric): string {
+  if (item.measured === 0 || item.pass_rate === null) return 'text-ink-muted'
+  if (item.code === envBestPassKey.value) return 'text-emerald-700'
+  return 'text-ink'
+}
 
 const sourceRows = computed(() =>
   (summary.value?.by_source ?? []).slice(0, 4).map((item) => ({
@@ -706,8 +918,42 @@ async function load(silent = false): Promise<boolean> {
   }
 }
 
+async function loadEnvironmentSummary(force = false): Promise<boolean> {
+  if (!canExecution.value) return true
+  const key = String(envDays.value)
+  if (!force && envLoadedKey === key && envSummary.value) return true
+  envLoading.value = true
+  try {
+    envSummary.value = await api.executions.environmentSummary({ days: envDays.value })
+    envError.value = false
+    envLoadedKey = key
+    return true
+  } catch {
+    // 环境对比是独立板块，失败只降级本视图，不影响质量总览。
+    envError.value = true
+    return false
+  } finally {
+    envLoading.value = false
+  }
+}
+
+function switchView(mode: DashboardViewMode): void {
+  viewMode.value = mode
+  if (mode === 'environments') void loadEnvironmentSummary()
+}
+
+function setEnvDays(days: 7 | 30): void {
+  if (envDays.value === days) return
+  envDays.value = days
+  void loadEnvironmentSummary(true)
+}
+
 async function refreshData(): Promise<void> {
-  if (await load()) toast.success('刷新成功')
+  const results = await Promise.all([
+    load(),
+    viewMode.value === 'environments' ? loadEnvironmentSummary(true) : Promise.resolve(true),
+  ])
+  if (results.every(Boolean)) toast.success('刷新成功')
 }
 
 function openTask(task: BatchTask): void {
@@ -732,6 +978,7 @@ onMounted(() => {
   autoTimer = window.setInterval(() => {
     nowMs.value = Date.now()
     void load(true)
+    if (viewMode.value === 'environments') void loadEnvironmentSummary(true)
   }, 20_000)
 })
 
@@ -754,6 +1001,35 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
+    <!-- 视图切换：质量总览 / 按执行环境对比 -->
+    <div
+      v-if="canExecution"
+      class="flex flex-wrap items-center gap-1 rounded-tile border border-line bg-slate-100/70 p-1"
+    >
+      <button
+        class="tab-btn"
+        :class="viewMode === 'overview' ? 'tab-btn-active' : ''"
+        @click="switchView('overview')"
+      >
+        质量总览
+      </button>
+      <button
+        class="tab-btn"
+        :class="viewMode === 'environments' ? 'tab-btn-active' : ''"
+        @click="switchView('environments')"
+      >
+        环境对比
+      </button>
+      <span class="ml-auto px-2 text-[11px] text-slate-600">
+        {{
+          viewMode === 'environments'
+            ? `近 ${envDays} 天 · ${envWithData.length}/${envMetrics.length} 个环境有数据`
+            : '近 24 小时 · 先结论后证据'
+        }}
+      </span>
+    </div>
+
+    <template v-if="viewMode === 'overview'">
     <!-- ① 系统状态横幅 -->
     <section
       class="flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3"
@@ -1565,6 +1841,348 @@ onBeforeUnmount(() => {
     <p class="text-[10px] text-ink-faint">
       大盘每 20 秒自动刷新一次，执行进度由 WebSocket 实时推送；共 {{ executionTotal }} 次历史执行。
     </p>
+    </template>
+
+    <template v-else>
+      <!-- 环境对比：先给横向结论 -->
+      <section
+        class="flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3"
+        :class="envBanner.tone"
+      >
+        <span class="h-2.5 w-2.5 flex-none rounded-full" :class="envBanner.dot" />
+        <div class="min-w-0">
+          <p class="text-[12.5px] font-semibold">{{ envBanner.title }}</p>
+          <p class="mt-0.5 text-[11px] opacity-85">{{ envBanner.detail }}</p>
+        </div>
+        <p class="ml-auto flex items-center gap-2 whitespace-nowrap text-[10.5px] opacity-70">
+          <span v-if="envLoading" class="inline-flex items-center gap-1">
+            <span class="h-2.5 w-2.5 animate-spin rounded-full border border-current border-t-transparent" />
+            刷新中
+          </span>
+          <span v-else>口径：已排除草稿试跑</span>
+        </p>
+      </section>
+
+      <section
+        v-if="envLoading && !envSummary"
+        class="card flex items-center justify-center gap-2 px-4 py-16 text-[11px] text-ink-muted"
+      >
+        <span class="h-3 w-3 animate-spin rounded-full border-2 border-slate-200 border-t-brand" />
+        正在汇总各执行环境…
+      </section>
+
+      <section
+        v-else-if="envError && !envSummary"
+        class="card flex flex-wrap items-center justify-center gap-2 px-4 py-10 text-[11px] text-ink-muted"
+      >
+        环境对比加载失败，质量总览不受影响。
+        <button class="btn-ghost btn-xs" @click="loadEnvironmentSummary(true)">重试</button>
+      </section>
+
+      <section v-else-if="!envMetrics.length" class="card px-4 py-12 text-center">
+        <p class="text-[11.5px] font-medium text-ink-soft">还没有可对比的执行环境</p>
+        <p class="mt-1 text-[10.5px] text-ink-faint">
+          到「设置 · 执行环境」接入被测 Agent 后，这里会按环境汇总正确率与稳定性。
+        </p>
+      </section>
+
+      <template v-else>
+        <!-- 环境排行榜：一行一个环境，正确率 / 稳定性 / 效率 / 覆盖 -->
+        <section class="card overflow-hidden">
+          <header class="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
+            <div class="min-w-0">
+              <h2 class="panel-title">环境正确率与稳定性</h2>
+              <p class="mt-0.5 text-[10.5px] text-ink-muted">
+                同一时间窗、同一判定口径 · 按已判定样本量排序 · 波动越小越稳定
+              </p>
+            </div>
+            <div class="inline-flex flex-none gap-0.5 rounded-lg bg-slate-100 p-[2px]">
+              <button
+                class="rounded-md px-2.5 py-1 text-[10px] transition"
+                :class="envDays === 7 ? 'bg-white font-semibold text-brand-deep shadow-sm' : 'text-slate-500'"
+                @click="setEnvDays(7)"
+              >
+                近 7 天
+              </button>
+              <button
+                class="rounded-md px-2.5 py-1 text-[10px] transition"
+                :class="envDays === 30 ? 'bg-white font-semibold text-brand-deep shadow-sm' : 'text-slate-500'"
+                @click="setEnvDays(30)"
+              >
+                近 30 天
+              </button>
+            </div>
+          </header>
+
+          <div class="overflow-x-auto">
+            <table class="table-shell">
+              <thead>
+                <tr>
+                  <th class="th">执行环境</th>
+                  <th class="th w-[210px] max-[1240px]:!w-auto">正确率</th>
+                  <th class="th w-[230px] max-[1240px]:!w-auto max-[900px]:hidden">稳定性</th>
+                  <th class="th w-[178px] max-[1240px]:hidden">效率</th>
+                  <th class="th w-[152px] max-[900px]:hidden">用例覆盖</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="env in envMetrics" :key="env.code">
+                  <td class="td">
+                    <div class="flex items-start gap-2.5">
+                      <span
+                        class="mt-1 h-2 w-2 flex-none rounded-full"
+                        :style="{ backgroundColor: envColorMap[env.code] }"
+                      />
+                      <div class="min-w-0">
+                        <p class="flex flex-wrap items-center gap-1.5 text-[11.5px] font-semibold leading-snug text-ink-soft">
+                          <span class="max-w-[260px] break-words">{{ env.name }}</span>
+                          <span
+                            v-if="envWithData.length > 1 && envBestPassKey === env.code"
+                            class="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[9px] font-semibold text-emerald-700"
+                          >
+                            正确率最高
+                          </span>
+                          <span
+                            v-if="envWithData.length > 1 && envBestStableKey === env.code"
+                            class="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-px text-[9px] font-semibold text-sky-700"
+                          >
+                            最稳
+                          </span>
+                          <span
+                            v-if="env.measured > 0 && env.measured < 10"
+                            class="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[9px] font-semibold text-amber-700"
+                          >
+                            样本偏少
+                          </span>
+                        </p>
+                        <p class="mt-0.5 flex flex-wrap items-center gap-1.5 font-mono text-[9px] text-ink-faint">
+                          <span>{{ env.code }}</span>
+                          <span
+                            class="rounded border px-1 py-px font-sans"
+                            :class="envHealth(env).cls"
+                          >
+                            {{ envHealth(env).label }}
+                          </span>
+                        </p>
+                        <p class="mt-0.5 text-[9px] text-ink-faint">
+                          最近执行 {{ relativeTime(env.last_executed_at) }}
+                        </p>
+                      </div>
+                    </div>
+                  </td>
+
+                  <td class="td">
+                    <div class="flex items-end justify-between gap-2">
+                      <div class="flex items-baseline gap-1.5">
+                        <span
+                          class="text-[19px] font-semibold leading-none tracking-[-0.02em] tabular-nums"
+                          :class="envRateTone(env)"
+                        >
+                          {{ formatPercent(env.pass_rate, 1) }}
+                        </span>
+                        <span
+                          v-if="envDelta(env) !== null"
+                          class="rounded-full border px-1.5 py-px text-[9px] font-semibold tabular-nums"
+                          :class="
+                            envDeltaValue(env) >= 0
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : 'border-rose-200 bg-rose-50 text-rose-700'
+                          "
+                        >
+                          {{ envDeltaValue(env) >= 0 ? '↑' : '↓' }}
+                          {{ Math.abs(envDeltaValue(env)).toFixed(1) }}pp
+                        </span>
+                      </div>
+                      <svg
+                        v-if="envSpark(env).visible"
+                        class="mb-0.5 h-[24px] w-[70px] flex-none"
+                        viewBox="0 0 76 26"
+                        aria-hidden="true"
+                      >
+                        <polyline
+                          :points="envSpark(env).points"
+                          fill="none"
+                          :stroke="envColorMap[env.code]"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                        <circle
+                          :cx="envSpark(env).lastX"
+                          :cy="envSpark(env).lastY"
+                          r="2"
+                          :fill="envColorMap[env.code]"
+                        />
+                      </svg>
+                    </div>
+                    <p class="mt-1 text-[9.5px] text-ink-faint">
+                      已判定 {{ env.measured }} 次
+                      <template v-if="env.total > env.measured"> · 未判定 {{ env.total - env.measured }}</template>
+                    </p>
+                  </td>
+
+                  <td class="td max-[900px]:hidden">
+                    <p class="text-[11px] text-ink-soft">
+                      波动
+                      <b class="ml-1 font-semibold tabular-nums" :class="volatilityTone(env.volatility)">
+                        {{ env.volatility === null ? '—' : `±${env.volatility.toFixed(1)}pp` }}
+                      </b>
+                    </p>
+                    <p class="mt-0.5 text-[9.5px] text-ink-faint">
+                      <template v-if="env.case_total">
+                        抖动 {{ env.flaky_cases }}/{{ env.case_total }} 用例
+                        <span class="mx-1 text-slate-300">·</span>
+                      </template>
+                      异常 {{ env.error_total }} 次
+                    </p>
+                  </td>
+
+                  <td class="td max-[1240px]:hidden">
+                    <p class="text-[11px] text-ink-soft">
+                      P95
+                      <b class="ml-1 font-semibold tabular-nums text-ink">{{ formatMs(env.p95_ms) }}</b>
+                      <span class="ml-1.5 text-ink-faint">
+                        · 平均 {{ env.avg_turns === null ? '—' : env.avg_turns.toFixed(1) }} 轮
+                      </span>
+                    </p>
+                    <p class="mt-0.5 text-[9.5px] text-ink-faint">
+                      均分 {{ env.avg_score === null ? '—' : formatScore(env.avg_score) }}
+                      <span class="mx-1 text-slate-300">·</span>
+                      Token {{ formatToken(env.tokens) }}
+                    </p>
+                  </td>
+
+                  <td class="td max-[900px]:hidden">
+                    <p class="text-[11px] tabular-nums text-ink-soft">
+                      {{ env.case_total }} 用例 · {{ env.measured }} 次判定
+                    </p>
+                    <p class="mt-0.5 text-[9.5px] text-ink-faint">
+                      至少通过一次 {{ formatPercent(env.case_pass_rate, 1) }}
+                    </p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="flex flex-wrap gap-x-5 gap-y-1 border-t border-line-soft bg-[#fbfcfe] px-4 py-2 text-[9px] text-ink-faint">
+            <span>正确率口径<b class="ml-1.5 font-semibold text-slate-600">已判定执行通过占比</b></span>
+            <span>抖动<b class="ml-1.5 font-semibold text-slate-600">窗口内既通过又失败的用例</b></span>
+            <span>异常<b class="ml-1.5 font-semibold text-slate-600">状态为 ERROR 的执行</b></span>
+          </div>
+        </section>
+
+        <!-- 趋势对比 + 失败构成 -->
+        <div class="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <section class="card min-w-0">
+            <header class="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
+              <div class="min-w-0">
+                <h2 class="panel-title">每日通过率对比</h2>
+                <p class="mt-0.5 text-[10.5px] text-ink-muted">
+                  同一天多条线的距离就是正确率差距 · 断点表示当天未判定
+                </p>
+              </div>
+              <span v-if="envWithData.length > 6" class="text-[9.5px] text-ink-faint">
+                仅显示样本量前 6 个环境
+              </span>
+            </header>
+            <div class="px-4 py-3.5">
+              <DashboardEnvTrendChart v-if="envTrendSeries.length" :series="envTrendSeries" />
+              <p v-else class="py-12 text-center text-[11px] text-ink-faint">
+                近 {{ envDays }} 天暂无已判定执行
+              </p>
+
+              <div class="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 border-t border-line-soft pt-2.5 text-[9.5px] text-ink-faint">
+                <span>
+                  对比窗口
+                  <b class="ml-1.5 font-semibold tabular-nums text-ink-soft">近 {{ envDays }} 天</b>
+                </span>
+                <span>
+                  总样本
+                  <b class="ml-1.5 font-semibold tabular-nums text-ink-soft">{{ envMeasuredTotal }} 次已判定</b>
+                </span>
+                <span v-if="envBestStable">
+                  波动最小
+                  <b class="ml-1.5 font-semibold text-ink-soft">
+                    {{ envBestStable.name }} ±{{ envVolatilityValue(envBestStable).toFixed(1) }}pp
+                  </b>
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <aside class="card flex min-w-0 flex-col">
+            <header class="border-b border-line px-4 py-3">
+              <h2 class="panel-title">失败构成</h2>
+              <p class="mt-0.5 text-[10.5px] text-ink-muted">
+                判负原因按执行环境拆分 · 用于判断是 Agent 行为还是环境异常
+              </p>
+            </header>
+
+            <div class="flex-1 divide-y divide-line-soft">
+              <div v-for="env in envWithData" :key="`fail-${env.code}`" class="px-4 py-3">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="flex min-w-0 items-center gap-1.5 text-[10.5px] font-medium text-ink-soft">
+                    <i
+                      class="h-1.5 w-1.5 flex-none rounded-full"
+                      :style="{ backgroundColor: envColorMap[env.code] }"
+                    />
+                    <span class="min-w-0 break-words">{{ env.name }}</span>
+                  </span>
+                  <span class="flex-none text-[10px] tabular-nums text-ink-faint">
+                    {{ envFailureTotal(env) }} 次失败
+                  </span>
+                </div>
+
+                <div
+                  v-if="env.failure_reasons.length"
+                  class="mt-2 flex h-2 gap-px overflow-hidden rounded-full bg-slate-100"
+                >
+                  <span
+                    v-for="reason in env.failure_reasons"
+                    :key="reason.status"
+                    class="block h-full"
+                    :class="envFailureTone[reason.status] ?? 'bg-slate-300'"
+                    :style="{ width: `${envFailureWidth(env, reason.count)}%` }"
+                  />
+                </div>
+                <p v-else class="mt-2 text-[9.5px] text-ink-faint">窗口内没有判负执行</p>
+
+                <div
+                  v-if="env.failure_reasons.length"
+                  class="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-ink-muted"
+                >
+                  <span v-for="reason in env.failure_reasons" :key="`${env.code}-${reason.status}`">
+                    <i
+                      class="mr-1 inline-block h-1.5 w-1.5 rounded-sm align-middle"
+                      :class="envFailureTone[reason.status] ?? 'bg-slate-300'"
+                    />{{ statusLabel(reason.status) }} {{ reason.count }}
+                  </span>
+                </div>
+              </div>
+
+              <p v-if="!envWithData.length" class="px-4 py-6 text-center text-[11px] text-ink-faint">
+                暂无失败数据
+              </p>
+            </div>
+
+            <div
+              v-if="envFailureLegend.length"
+              class="mt-auto flex flex-wrap gap-x-3 gap-y-1 border-t border-line-soft bg-[#fbfcfe] px-4 py-2 text-[9px] text-ink-faint"
+            >
+              <span v-for="item in envFailureLegend" :key="item.status" class="inline-flex items-center gap-1">
+                <i class="h-1.5 w-1.5 rounded-sm" :class="item.cls" />{{ item.label }}
+              </span>
+            </div>
+          </aside>
+        </div>
+
+        <p class="text-[10px] text-ink-faint">
+          环境对比按 started_at 归窗并排除草稿试跑；波动为每日通过率标准差，抖动为窗口内既通过又失败的用例占比。
+          每 20 秒自动刷新。
+        </p>
+      </template>
+    </template>
 
     <TaskCreateModal v-model="showCreate" @created="onTaskCreated" />
   </div>

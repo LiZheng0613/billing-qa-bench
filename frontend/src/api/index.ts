@@ -33,6 +33,7 @@ import type {
   ExecutionListItem,
   ExecutionPassRate,
   ExecutionSummary,
+  ExecutionEnvironmentSummary,
   FactAtomView,
   FactStatItem,
   FactStatsOverview,
@@ -431,6 +432,8 @@ export const api = {
       http.get<ExecutionPassRate>('/executions/pass-rate', { hours }),
     summary: (query?: { hours?: number; days?: number }) =>
       http.get<ExecutionSummary>('/executions/summary', query),
+    environmentSummary: (query?: { days?: number }) =>
+      http.get<ExecutionEnvironmentSummary>('/executions/environment-summary', query),
     get: (id: number) => http.get<ExecutionDetail>(`/executions/${id}`),
     raw: (id: number) => http.get<RawExecution>(`/executions/${id}/raw`),
   },

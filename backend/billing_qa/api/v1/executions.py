@@ -16,12 +16,15 @@ from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import NotFoundError
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import ExecutionSource
+from billing_qa.models.environment import Environment
 from billing_qa.models.execution import ExecutionRecord
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase
 from billing_qa.schemas.common import Page
 from billing_qa.schemas.dashboard import (
     ExecutionDailyPoint,
+    ExecutionEnvironmentMetric,
+    ExecutionEnvironmentSummary,
     ExecutionFailedCase,
     ExecutionFailureReason,
     ExecutionLatencySummary,
@@ -380,6 +383,308 @@ def _percentile(values: list[float], percent: float) -> float | None:
     ordered = sorted(values)
     index = max(0, min(len(ordered) - 1, math.ceil(percent / 100 * len(ordered)) - 1))
     return round(ordered[index], 1)
+
+
+@router.get(
+    "/environment-summary",
+    response_model=ExecutionEnvironmentSummary,
+    summary="按执行环境横向对比",
+)
+async def execution_environment_summary(
+    days: int = Query(default=7, ge=1, le=90, description="对比窗口天数"),
+    db: AsyncSession = Depends(get_db),
+) -> ExecutionEnvironmentSummary:
+    """同一口径下按执行环境汇总正确率、稳定性与效率，用于比较调优思路。
+
+    正确率：``pass_flag`` 口径的尝试级通过率，并给出按用例去重的覆盖率。
+    稳定性：每日通过率波动（标准差）、抖动用例占比、执行异常率。
+    效率：P95 / 平均时延、平均轮次与 Token。
+    """
+
+    now = datetime.now()
+    first_day = now.date() - timedelta(days=days - 1)
+    since = datetime.combine(first_day, time.min)
+    previous_since = since - timedelta(days=days)
+    window_conditions = (
+        ExecutionRecord.started_at >= since,
+        ExecutionRecord.source != ExecutionSource.SANDBOX,
+    )
+
+    env_rows = (
+        await db.execute(
+            select(
+                Environment.id,
+                Environment.code,
+                Environment.name,
+                Environment.is_active,
+                Environment.last_health_status,
+                Environment.last_health_latency_ms,
+                Environment.last_health_at,
+            ).order_by(Environment.id)
+        )
+    ).all()
+
+    current_rows = (
+        await db.execute(
+            select(
+                ExecutionRecord.environment_id.label("environment_id"),
+                func.count(ExecutionRecord.id).label("total"),
+                func.count(ExecutionRecord.pass_flag).label("measured"),
+                func.sum(case((ExecutionRecord.pass_flag.is_(True), 1), else_=0)).label(
+                    "passed"
+                ),
+                func.sum(case((ExecutionRecord.pass_flag.is_(False), 1), else_=0)).label(
+                    "failed"
+                ),
+                func.sum(
+                    case((ExecutionRecord.status == "ERROR", 1), else_=0)
+                ).label("error_total"),
+                func.avg(ExecutionRecord.total_score).label("avg_score"),
+                func.avg(ExecutionRecord.turns_used).label("avg_turns"),
+                func.sum(
+                    func.coalesce(ExecutionRecord.simulator_tokens, 0)
+                    + func.coalesce(ExecutionRecord.judge_tokens, 0)
+                ).label("tokens"),
+                func.max(ExecutionRecord.started_at).label("last_executed_at"),
+            )
+            .where(*window_conditions)
+            .group_by(ExecutionRecord.environment_id)
+        )
+    ).all()
+    current_map = {row.environment_id: row for row in current_rows}
+
+    previous_rows = (
+        await db.execute(
+            select(
+                ExecutionRecord.environment_id.label("environment_id"),
+                func.count(ExecutionRecord.pass_flag).label("measured"),
+                func.sum(case((ExecutionRecord.pass_flag.is_(True), 1), else_=0)).label(
+                    "passed"
+                ),
+            )
+            .where(
+                ExecutionRecord.started_at >= previous_since,
+                ExecutionRecord.started_at < since,
+                ExecutionRecord.source != ExecutionSource.SANDBOX,
+            )
+            .group_by(ExecutionRecord.environment_id)
+        )
+    ).all()
+    previous_map = {row.environment_id: row for row in previous_rows}
+
+    day_col = func.date(ExecutionRecord.started_at)
+    daily_rows = (
+        await db.execute(
+            select(
+                ExecutionRecord.environment_id.label("environment_id"),
+                day_col.label("day"),
+                func.count(ExecutionRecord.id).label("total"),
+                func.count(ExecutionRecord.pass_flag).label("measured"),
+                func.sum(case((ExecutionRecord.pass_flag.is_(True), 1), else_=0)).label(
+                    "passed"
+                ),
+            )
+            .where(*window_conditions)
+            .group_by(ExecutionRecord.environment_id, day_col)
+        )
+    ).all()
+    daily_map: dict[tuple[int | None, str], Any] = {
+        (row.environment_id, str(row.day)): row for row in daily_rows
+    }
+
+    latency_rows = (
+        await db.execute(
+            select(
+                ExecutionRecord.environment_id,
+                ExecutionRecord.latency_ms,
+                ExecutionRecord.ttft_ms,
+            ).where(*window_conditions)
+        )
+    ).all()
+    latency_map: dict[int | None, list[float]] = {}
+    ttft_map: dict[int | None, list[float]] = {}
+    for row in latency_rows:
+        if row.latency_ms is not None:
+            latency_map.setdefault(row.environment_id, []).append(float(row.latency_ms))
+        if row.ttft_ms is not None:
+            ttft_map.setdefault(row.environment_id, []).append(float(row.ttft_ms))
+
+    case_rows = (
+        await db.execute(
+            select(
+                ExecutionRecord.environment_id.label("environment_id"),
+                ExecutionRecord.case_id,
+                func.sum(case((ExecutionRecord.pass_flag.is_(True), 1), else_=0)).label(
+                    "passed"
+                ),
+                func.sum(case((ExecutionRecord.pass_flag.is_(False), 1), else_=0)).label(
+                    "failed"
+                ),
+            )
+            .where(*window_conditions, ExecutionRecord.pass_flag.is_not(None))
+            .group_by(ExecutionRecord.environment_id, ExecutionRecord.case_id)
+        )
+    ).all()
+    case_stats: dict[int | None, dict[str, int]] = {}
+    for row in case_rows:
+        stats = case_stats.setdefault(
+            row.environment_id,
+            {"total": 0, "passed": 0, "flaky": 0},
+        )
+        stats["total"] += 1
+        if int(row.passed or 0) > 0:
+            stats["passed"] += 1
+        if int(row.passed or 0) > 0 and int(row.failed or 0) > 0:
+            stats["flaky"] += 1
+
+    reason_rows = (
+        await db.execute(
+            select(
+                ExecutionRecord.environment_id.label("environment_id"),
+                ExecutionRecord.status.label("status"),
+                func.count(ExecutionRecord.id).label("count"),
+            )
+            .where(*window_conditions, ExecutionRecord.pass_flag.is_(False))
+            .group_by(ExecutionRecord.environment_id, ExecutionRecord.status)
+            .order_by(func.count(ExecutionRecord.id).desc())
+        )
+    ).all()
+    reason_map: dict[int | None, list[ExecutionFailureReason]] = {}
+    for row in reason_rows:
+        reason_map.setdefault(row.environment_id, []).append(
+            ExecutionFailureReason(status=str(row.status), count=int(row.count or 0))
+        )
+
+    metrics: list[ExecutionEnvironmentMetric] = []
+
+    def build_metric(
+        environment_id: int | None,
+        code: str,
+        name: str,
+        is_active: bool,
+        last_health_status: str | None = None,
+        last_health_latency_ms: float | None = None,
+        last_health_at: datetime | None = None,
+    ) -> ExecutionEnvironmentMetric:
+        current = current_map.get(environment_id)
+        measured = int(current.measured or 0) if current else 0
+        passed = int(current.passed or 0) if current else 0
+        total = int(current.total or 0) if current else 0
+        previous = previous_map.get(environment_id)
+        previous_measured = int(previous.measured or 0) if previous else 0
+        previous_passed = int(previous.passed or 0) if previous else 0
+
+        daily: list[ExecutionDailyPoint] = []
+        rates: list[float] = []
+        for offset in range(days):
+            day = first_day + timedelta(days=offset)
+            key = day.isoformat()
+            item = daily_map.get((environment_id, key))
+            day_measured = int(item.measured or 0) if item else 0
+            day_passed = int(item.passed or 0) if item else 0
+            rate = round(day_passed / day_measured * 100, 2) if day_measured else None
+            if rate is not None:
+                rates.append(rate)
+            daily.append(
+                ExecutionDailyPoint(
+                    date=key,
+                    total=int(item.total or 0) if item else 0,
+                    measured=day_measured,
+                    passed=day_passed,
+                    pass_rate=rate,
+                )
+            )
+
+        volatility: float | None = None
+        if len(rates) >= 2:
+            mean = sum(rates) / len(rates)
+            variance = sum((rate - mean) ** 2 for rate in rates) / len(rates)
+            volatility = round(math.sqrt(variance), 1)
+
+        stats = case_stats.get(environment_id)
+        case_total = int(stats["total"]) if stats else 0
+        case_passed = int(stats["passed"]) if stats else 0
+        flaky = int(stats["flaky"]) if stats else 0
+        latencies = latency_map.get(environment_id, [])
+        ttfts = ttft_map.get(environment_id, [])
+        error_total = int(current.error_total or 0) if current else 0
+        turns = float(current.avg_turns) if current and current.avg_turns is not None else None
+        score = float(current.avg_score) if current and current.avg_score is not None else None
+
+        return ExecutionEnvironmentMetric(
+            environment_id=environment_id,
+            code=code,
+            name=name,
+            is_active=is_active,
+            last_health_status=last_health_status,
+            last_health_latency_ms=last_health_latency_ms,
+            last_health_at=last_health_at,
+            last_executed_at=current.last_executed_at if current else None,
+            total=total,
+            measured=measured,
+            passed=passed,
+            failed=int(current.failed or 0) if current else 0,
+            pass_rate=round(passed / measured * 100, 2) if measured else None,
+            previous_pass_rate=(
+                round(previous_passed / previous_measured * 100, 2)
+                if previous_measured
+                else None
+            ),
+            case_total=case_total,
+            case_passed=case_passed,
+            case_pass_rate=(
+                round(case_passed / case_total * 100, 2) if case_total else None
+            ),
+            flaky_cases=flaky,
+            flaky_rate=round(flaky / case_total * 100, 2) if case_total else None,
+            error_total=error_total,
+            error_rate=round(error_total / total * 100, 2) if total else None,
+            avg_score=round(score, 1) if score is not None else None,
+            avg_turns=round(turns, 1) if turns is not None else None,
+            p95_ms=_percentile(latencies, 95),
+            avg_ms=round(sum(latencies) / len(latencies), 1) if latencies else None,
+            avg_ttft_ms=round(sum(ttfts) / len(ttfts), 1) if ttfts else None,
+            tokens=int(current.tokens or 0) if current else 0,
+            volatility=volatility,
+            daily=daily,
+            failure_reasons=reason_map.get(environment_id, []),
+        )
+
+    for env in env_rows:
+        current = current_map.get(env.id)
+        # 停用且窗口内没有执行的环境不占对比位；启用环境即使无数据也保留，便于发现「还没跑」。
+        if not env.is_active and (current is None or int(current.total or 0) == 0):
+            continue
+        metrics.append(
+            build_metric(
+                environment_id=int(env.id),
+                code=str(env.code),
+                name=str(env.name),
+                is_active=bool(env.is_active),
+                last_health_status=env.last_health_status,
+                last_health_latency_ms=(
+                    float(env.last_health_latency_ms)
+                    if env.last_health_latency_ms is not None
+                    else None
+                ),
+                last_health_at=env.last_health_at,
+            )
+        )
+
+    if None in current_map:
+        metrics.append(
+            build_metric(environment_id=None, code="UNBOUND", name="未绑定环境", is_active=True)
+        )
+
+    metrics.sort(
+        key=lambda item: (
+            -item.measured,
+            item.pass_rate is None,
+            -(item.pass_rate or 0),
+            item.name,
+        )
+    )
+    return ExecutionEnvironmentSummary(days=days, since=since, environments=metrics)
 
 
 @router.get("/{execution_id}", response_model=ExecutionDetail, summary="执行全链路详情")

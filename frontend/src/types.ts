@@ -1252,6 +1252,55 @@ export interface ExecutionSummary {
   top_failed_cases: ExecutionFailedCase[]
 }
 
+export interface ExecutionEnvironmentMetric {
+  environment_id: number | null
+  code: string
+  name: string
+  is_active: boolean
+  last_health_status: string | null
+  last_health_latency_ms: number | null
+  last_health_at: string | null
+  last_executed_at: string | null
+  total: number
+  measured: number
+  passed: number
+  failed: number
+  pass_rate: number | null
+  previous_pass_rate: number | null
+  /** 按用例去重后的覆盖度，避免同一用例重复执行把样本量刷高 */
+  case_total: number
+  case_passed: number
+  case_pass_rate: number | null
+  /** 同一用例在窗口内既通过又失败的次数，衡量结果可复现性 */
+  flaky_cases: number
+  flaky_rate: number | null
+  error_total: number
+  error_rate: number | null
+  avg_score: number | null
+  avg_turns: number | null
+  p95_ms: number | null
+  avg_ms: number | null
+  avg_ttft_ms: number | null
+  tokens: number
+  /** 每日通过率标准差（pp），少于 2 个有效日为 null */
+  volatility: number | null
+  daily: ExecutionDailyPoint[]
+  failure_reasons: ExecutionFailureReason[]
+}
+
+export interface ExecutionEnvironmentSummary {
+  days: number
+  since: string
+  environments: ExecutionEnvironmentMetric[]
+}
+
+export interface ExecutionEnvironmentTrendSeries {
+  key: string
+  name: string
+  color: string
+  points: ExecutionDailyPoint[]
+}
+
 export interface ExecutionDetail extends ExecutionListItem {
   environment_id: number | null
   /** 本次执行实际使用的环境名称（任务指定环境优先于用例绑定环境） */
