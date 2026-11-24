@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ValidationError
@@ -17,7 +17,11 @@ from billing_qa.models.environment import Environment
 from billing_qa.models.prompt_template import PromptTemplate, PromptTemplateVersion
 from billing_qa.services.adapter.target_api import EnvContext
 from billing_qa.services.llm.client import ModelContext
-from billing_qa.services.llm.registry import resolve_context, resolve_unique_context
+from billing_qa.services.llm.registry import (
+    resolve_context,
+    resolve_contexts,
+    resolve_unique_context,
+)
 
 DEFAULT_SIMULATOR_CODE = "SIM_DEFAULT_BILLING_USER"
 DEFAULT_JUDGE_CODE = "JUDGE_DEFAULT_ZERO_TOLERANCE"
@@ -57,10 +61,21 @@ async def resolve_template(
     """按 LATEST / PINNED 策略解析模板版本。"""
     template: PromptTemplate | None = None
     if template_id:
-        template = await db.get(PromptTemplate, template_id)
+        # 只用模板标量字段，版本正文由下方 PromptTemplateVersion 查询按需
+        # 取一条；noload 避免触发 versions selectin 把全部历史版本 content
+        # （每份数 KB）加载后丢弃——每次执行要解析 2~3 个模板。
+        template = await db.get(
+            PromptTemplate,
+            template_id,
+            options=[noload(PromptTemplate.versions)],
+        )
     if template is None:
         template = (
-            await db.execute(select(PromptTemplate).where(PromptTemplate.code == default_code))
+            await db.execute(
+                select(PromptTemplate)
+                .options(noload(PromptTemplate.versions))
+                .where(PromptTemplate.code == default_code)
+            )
         ).scalar_one_or_none()
     if template is None:
         raise ValidationError(f"未找到可用的 Prompt 模板（默认编码 {default_code}）")
@@ -155,9 +170,11 @@ async def load_execution_context(
     judge_ids: list[int] = [
         int(item) for item in (snapshot.get("judge_model_ids") or []) if str(item).isdigit()
     ]
-    judge_models: list[ModelContext] = []
-    for model_id in judge_ids:
-        judge_models.append(await _load_model(db, model_id, ModelRole.JUDGE))
+    # 批量解析（缓存 + 单条 IN 查询，替代逐个 db.get 的 N+1）；
+    # 校验口径与 registry.resolve_model 完全一致：存在、启用、角色匹配。
+    judge_models: list[ModelContext] = await resolve_contexts(
+        db, judge_ids, ModelRole.JUDGE
+    )
     if not judge_models:
         judge_models.append(await _load_model(db, None, ModelRole.JUDGE))
 

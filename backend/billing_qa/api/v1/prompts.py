@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
 from billing_qa.core.authz import require_module_access, require_permission
 from billing_qa.core.config import settings
@@ -128,9 +129,12 @@ async def list_templates(
     total = (
         await db.execute(select(func.count()).select_from(PromptTemplate).where(*conditions))
     ).scalar_one()
+    # 列表序列化不含 versions；noload 避免 selectin 把每模板全部历史版本
+    # 正文（每份数 KB）拉进列表页。
     rows = (
         await db.execute(
             select(PromptTemplate)
+            .options(noload(PromptTemplate.versions))
             .where(*conditions)
             .order_by(PromptTemplate.id.asc())
             .offset((page - 1) * page_size)
@@ -283,9 +287,21 @@ async def template_usage(
     template_id: int, db: AsyncSession = Depends(get_db)
 ) -> PromptUsage:
     template = await _get_template(db, template_id)
+    # 只取组装 PromptUsageCase 需要的列，避免整行加载 TestCase 的
+    # turns/hidden_context/answer_envelope 等大 JSON 列。
     rows = (
         await db.execute(
-            select(TestCase).where(
+            select(
+                TestCase.id,
+                TestCase.code,
+                TestCase.name,
+                TestCase.simulator_template_id,
+                TestCase.simulator_template_strategy,
+                TestCase.simulator_template_version,
+                TestCase.judge_template_id,
+                TestCase.judge_template_strategy,
+                TestCase.judge_template_version,
+            ).where(
                 TestCase.deleted_at.is_(None),
                 or_(
                     TestCase.simulator_template_id == template_id,
@@ -293,7 +309,7 @@ async def template_usage(
                 ),
             )
         )
-    ).scalars().all()
+    ).all()
     usage_cases: list[PromptUsageCase] = []
     for case in rows:
         if case.simulator_template_id == template_id:

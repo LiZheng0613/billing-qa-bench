@@ -33,6 +33,7 @@ from billing_qa.services.engine.error_policy import (
 )
 from billing_qa.services.engine.executor import CaseExecutor
 from billing_qa.services.engine.metrics import (
+    LatestExecutionSummary,
     apply_metrics_to_task,
     compute_task_metrics,
     latest_executions,
@@ -697,18 +698,23 @@ class BatchScheduler:
                 return
             environment_id = task.environment_id
             enable_self_check = bool(task.enable_self_check)
-            latest = (
-                await db.execute(
-                    select(ExecutionRecord)
-                    .where(
-                        ExecutionRecord.task_id == task_id,
-                        ExecutionRecord.case_id == case_id,
+            # 只需要最新一次的 attempt_no（attempt_no 从 1 起且非空，`or 0`
+            # 与原「无记录则为 0」语义一致）。
+            attempt_no = (
+                int(
+                    await db.scalar(
+                        select(ExecutionRecord.attempt_no)
+                        .where(
+                            ExecutionRecord.task_id == task_id,
+                            ExecutionRecord.case_id == case_id,
+                        )
+                        .order_by(ExecutionRecord.id.desc())
+                        .limit(1)
                     )
-                    .order_by(ExecutionRecord.id.desc())
-                    .limit(1)
+                    or 0
                 )
-            ).scalar_one_or_none()
-            attempt_no = int(latest.attempt_no if latest is not None else 0) + 1
+                + 1
+            )
 
         snapshot, version = await self._load_case_snapshot(case_id)
         if snapshot is None:
@@ -1088,7 +1094,7 @@ class BatchScheduler:
         case_ids = [int(item) for item in (task.case_ids or [])]
         latest = {record.case_id: record for record in await latest_executions(db, task.id)}
 
-        def needs_run(record: ExecutionRecord | None) -> bool:
+        def needs_run(record: LatestExecutionSummary | None) -> bool:
             if record is None or record.status in {"RUNNING", "PENDING"}:
                 return True
             if resume:
@@ -1117,8 +1123,13 @@ class BatchScheduler:
     @staticmethod
     async def _load_error_kind(execution_id: int) -> str | None:
         async with SessionLocal() as db:
-            record = await db.get(ExecutionRecord, execution_id)
-            return record.error_kind if record is not None else None
+            # 只读一个标量；整行 db.get 会触发 selectin 把 turns/judges
+            # 的大 JSON payload 一并拉进内存，该函数在每次执行后都会调用。
+            return await db.scalar(
+                select(ExecutionRecord.error_kind).where(
+                    ExecutionRecord.id == execution_id
+                )
+            )
 
     @staticmethod
     async def _not_aborted(task_id: int) -> bool:
@@ -1143,20 +1154,35 @@ class BatchScheduler:
     @staticmethod
     async def _load_case_snapshot(case_id: int) -> tuple[dict[str, Any] | None, int]:
         async with SessionLocal() as db:
-            case = await db.get(TestCase, case_id)
-            if case is None or case.deleted_at is not None:
+            # 常规路径只需要 deleted_at / current_version 两个标量；整行加载
+            # TestCase 会把 turns / hidden_context / answer_envelope 等大列
+            # 全部带进内存，而该函数每次尝试都会执行。
+            case_row = (
+                await db.execute(
+                    select(TestCase.deleted_at, TestCase.current_version).where(
+                        TestCase.id == case_id
+                    )
+                )
+            ).one_or_none()
+            if case_row is None or case_row.deleted_at is not None:
                 return None, 0
             revision = (
                 await db.execute(
                     select(TestCaseRevision).where(
-                        TestCaseRevision.case_id == case.id,
-                        TestCaseRevision.version == case.current_version,
+                        TestCaseRevision.case_id == case_id,
+                        TestCaseRevision.version == case_row.current_version,
                     )
                 )
             ).scalar_one_or_none()
             if revision is not None:
                 return revision.snapshot, revision.version
-            return build_snapshot(case), case.current_version
+            # 快照缺失的罕见兜底路径才需要整行用例重建快照。
+            case = await db.get(TestCase, case_id)
+            if case is None:
+                # 两次查询之间行被物理删除的极端竞态：按「用例不存在」处理，
+                # 避免 build_snapshot(None) 抛 AttributeError。
+                return None, 0
+            return build_snapshot(case), case_row.current_version
 
     async def _publish_progress(
         self, task_id: int, execution_id: int, case_id: int, case_version: int
@@ -1168,16 +1194,47 @@ class BatchScheduler:
             metrics = await compute_task_metrics(db, task)
             apply_metrics_to_task(task, metrics)
             await db.commit()
-            record = await db.get(ExecutionRecord, execution_id)
+            record = (
+                await db.execute(
+                    # 事件组装只用标量列；整行 db.get 会附带 selectin 把
+                    # turns/judges 的大 JSON 一并拉进内存。
+                    select(
+                        ExecutionRecord.id,
+                        ExecutionRecord.task_id,
+                        ExecutionRecord.case_id,
+                        ExecutionRecord.source,
+                        ExecutionRecord.status,
+                        ExecutionRecord.attempt_no,
+                        ExecutionRecord.error_kind,
+                        ExecutionRecord.pass_flag,
+                        ExecutionRecord.total_score,
+                        ExecutionRecord.case_version,
+                        ExecutionRecord.turns_used,
+                        ExecutionRecord.latency_ms,
+                        ExecutionRecord.ttft_ms,
+                        ExecutionRecord.started_at,
+                        ExecutionRecord.finished_at,
+                    ).where(ExecutionRecord.id == execution_id)
+                )
+            ).one_or_none()
             item: CaseExecutionItem | None = None
             if record is not None:
-                case = await db.get(TestCase, record.case_id)
+                case_code = case_name = None
+                case_row = (
+                    await db.execute(
+                        select(TestCase.code, TestCase.name).where(
+                            TestCase.id == record.case_id
+                        )
+                    )
+                ).one_or_none()
+                if case_row is not None:
+                    case_code, case_name = case_row
                 item = CaseExecutionItem(
                     id=record.id,
                     task_id=record.task_id,
                     case_id=record.case_id,
-                    case_code=case.code if case else None,
-                    case_name=case.name if case else None,
+                    case_code=case_code,
+                    case_name=case_name,
                     source=record.source,
                     status=record.status,
                     attempt_no=record.attempt_no,
@@ -1220,8 +1277,11 @@ class BatchScheduler:
             await event_bus.publish(task_id, event.model_dump(mode="json"))
 
     async def _publish_status(self, task: BatchTask) -> None:
+        await self._publish_status_for(task.id)
+
+    async def _publish_status_for(self, task_id: int) -> None:
         async with SessionLocal() as db:
-            fresh = await db.get(BatchTask, task.id)
+            fresh = await db.get(BatchTask, task_id)
             if fresh is None:
                 return
             metrics = await compute_task_metrics(db, fresh)
@@ -1246,10 +1306,14 @@ class BatchScheduler:
             await event_bus.publish(fresh.id, event.model_dump(mode="json"))
 
     async def _publish_status_by_id(self, task_id: int) -> None:
+        # 存在性探针：_publish_status_for 内部会按 id 重新整行读取，
+        # 这里只查主键避免同一任务整行加载两遍（case_ids/summary 大 JSON）。
         async with SessionLocal() as db:
-            task = await db.get(BatchTask, task_id)
-            if task is not None:
-                await self._publish_status(task)
+            if (
+                await db.scalar(select(BatchTask.id).where(BatchTask.id == task_id))
+            ) is None:
+                return
+        await self._publish_status_for(task_id)
 
     @staticmethod
     async def _close_running_executions(

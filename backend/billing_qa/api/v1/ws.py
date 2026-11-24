@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from sqlalchemy import select
 
 from billing_qa.core.event_bus import event_bus
 from billing_qa.core.logging import get_logger
@@ -22,7 +23,23 @@ router = APIRouter(tags=["实时推送"])
 
 async def _initial_event(task_id: int) -> dict | None:
     async with SessionLocal() as db:
-        task = await db.get(BatchTask, task_id)
+        # 每次建立 WS 连接都会执行初始快照：只取事件与指标计算所需的列，
+        # 避免整行加载 summary/case_ids 等大 JSON（ALL_ACTIVE 任务可达数十 KB）。
+        task = (
+            await db.execute(
+                select(
+                    BatchTask.id,
+                    BatchTask.status,
+                    BatchTask.control_state,
+                    BatchTask.error_message,
+                    BatchTask.total_cases,
+                    BatchTask.case_ids,
+                    BatchTask.started_at,
+                    BatchTask.created_at,
+                    BatchTask.finished_at,
+                ).where(BatchTask.id == task_id)
+            )
+        ).one_or_none()
         if task is None:
             return None
         metrics = await compute_task_metrics(db, task)

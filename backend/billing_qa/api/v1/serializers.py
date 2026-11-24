@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.core.crypto import decrypt_value, mask_value
@@ -124,12 +125,17 @@ def case_to_out(
 
 
 def execution_to_item(
-    record: ExecutionRecord,
+    record: ExecutionRecord | Row,
     *,
     task_name: str | None = None,
     case_code: str | None = None,
     case_name: str | None = None,
 ) -> ExecutionListItem:
+    """列表/明细条目序列化。
+
+    ``record`` 既接受整行 ORM 对象，也接受按 EXECUTION_ITEM_COLUMNS 裁剪
+    后的轻量 Row（字段按列名访问，二者属性读法一致）。
+    """
     return ExecutionListItem(
         id=record.id,
         task_id=record.task_id,
@@ -156,6 +162,34 @@ def execution_to_item(
         started_at=record.started_at,
         finished_at=record.finished_at,
     )
+
+
+#: 列表/分页序列化（execution_to_item）实际用到的标量列。
+#: 列表查询用它替代整行 ORM 加载，避免把 case_snapshot / judge_result /
+#: answer_grading / diagnostics / self_check 等大 JSON 列带进分页结果。
+EXECUTION_ITEM_COLUMNS: tuple[ColumnElement[Any], ...] = (
+    ExecutionRecord.id,
+    ExecutionRecord.task_id,
+    ExecutionRecord.case_id,
+    ExecutionRecord.case_version,
+    ExecutionRecord.source,
+    ExecutionRecord.status,
+    ExecutionRecord.attempt_no,
+    ExecutionRecord.error_kind,
+    ExecutionRecord.pass_flag,
+    ExecutionRecord.total_score,
+    ExecutionRecord.termination_status,
+    ExecutionRecord.turns_used,
+    ExecutionRecord.latency_ms,
+    ExecutionRecord.ttft_ms,
+    ExecutionRecord.simulator_tokens,
+    ExecutionRecord.judge_tokens,
+    ExecutionRecord.grading_mode,
+    ExecutionRecord.lucky_pass,
+    ExecutionRecord.root_cause,
+    ExecutionRecord.started_at,
+    ExecutionRecord.finished_at,
+)
 
 
 async def _self_check_with_template_name(

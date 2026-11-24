@@ -11,7 +11,11 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from billing_qa.api.v1.serializers import build_execution_detail, execution_to_item
+from billing_qa.api.v1.serializers import (
+    EXECUTION_ITEM_COLUMNS,
+    build_execution_detail,
+    execution_to_item,
+)
 from billing_qa.core.authz import require_module_access
 from billing_qa.core.exceptions import NotFoundError
 from billing_qa.db.session import get_db
@@ -77,9 +81,16 @@ async def list_executions(
     total = (
         await db.execute(select(func.count()).select_from(ExecutionRecord).where(*conditions))
     ).scalar_one()
+    # 列表序列化只用标量列（见 EXECUTION_ITEM_COLUMNS），按列裁剪避免整行
+    # 加载 case_snapshot / judge_result 等大 JSON 列。
     rows = (
         await db.execute(
-            select(ExecutionRecord, BatchTask.name, TestCase.code, TestCase.name)
+            select(
+                *EXECUTION_ITEM_COLUMNS,
+                BatchTask.name.label("task_name"),
+                TestCase.code.label("case_code"),
+                TestCase.name.label("case_name"),
+            )
             .outerjoin(BatchTask, BatchTask.id == ExecutionRecord.task_id)
             .outerjoin(TestCase, TestCase.id == ExecutionRecord.case_id)
             .where(*conditions)
@@ -90,9 +101,12 @@ async def list_executions(
     ).all()
     items = [
         execution_to_item(
-            record, task_name=task_name, case_code=case_code, case_name=case_name
+            row,
+            task_name=row.task_name,
+            case_code=row.case_code,
+            case_name=row.case_name,
         )
-        for record, task_name, case_code, case_name in rows
+        for row in rows
     ]
     return Page[ExecutionListItem](
         items=items, total=int(total), page=page, page_size=page_size
@@ -198,17 +212,27 @@ async def execution_summary(
     previous_measured = int(previous.measured or 0)
     previous_passed = int(previous.passed or 0)
 
-    latency_rows = (
+    # 最近秩法 P95 与 _percentile 的 ceil(p/100*n)-1 取位一致，AVG 忽略 NULL
+    # 的口径也与原 Python 相同——聚合下推避免把整个窗口的行拉进内存。
+    latency_row = (
         await db.execute(
-            select(ExecutionRecord.latency_ms, ExecutionRecord.ttft_ms).where(
-                *window_conditions
-            )
+            select(
+                func.percentile_disc(0.95)
+                .within_group(ExecutionRecord.latency_ms)
+                .label("p95_ms"),
+                func.avg(ExecutionRecord.latency_ms).label("avg_ms"),
+                func.avg(ExecutionRecord.ttft_ms).label("avg_ttft_ms"),
+            ).where(*window_conditions)
         )
-    ).all()
-    latencies = [
-        float(item.latency_ms) for item in latency_rows if item.latency_ms is not None
-    ]
-    ttfts = [float(item.ttft_ms) for item in latency_rows if item.ttft_ms is not None]
+    ).one()
+    p95_raw = latency_row.p95_ms
+    p95_ms = round(float(p95_raw), 1) if p95_raw is not None else None
+    avg_ms = round(float(latency_row.avg_ms), 1) if latency_row.avg_ms is not None else None
+    avg_ttft_ms = (
+        round(float(latency_row.avg_ttft_ms), 1)
+        if latency_row.avg_ttft_ms is not None
+        else None
+    )
 
     today = now.date()
     first_day = today - timedelta(days=days - 1)
@@ -360,9 +384,9 @@ async def execution_summary(
             previous_measured=previous_measured,
         ),
         latency=ExecutionLatencySummary(
-            p95_ms=_percentile(latencies, 95),
-            avg_ms=round(sum(latencies) / len(latencies), 1) if latencies else None,
-            avg_ttft_ms=round(sum(ttfts) / len(ttfts), 1) if ttfts else None,
+            p95_ms=p95_ms,
+            avg_ms=avg_ms,
+            avg_ttft_ms=avg_ttft_ms,
         ),
         tokens=ExecutionTokenSummary(
             simulator=int(row.simulator_tokens or 0),
@@ -373,16 +397,6 @@ async def execution_summary(
         failure_reasons=failure_reasons,
         top_failed_cases=top_failed_cases,
     )
-
-
-def _percentile(values: list[float], percent: float) -> float | None:
-    """最近秩法百分位，避免依赖数据库方言的分位数函数。"""
-
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = max(0, min(len(ordered) - 1, math.ceil(percent / 100 * len(ordered)) - 1))
-    return round(ordered[index], 1)
 
 
 @router.get(
@@ -492,22 +506,23 @@ async def execution_environment_summary(
         (row.environment_id, str(row.day)): row for row in daily_rows
     }
 
+    # 最近秩法 P95 与 _percentile 取位一致、AVG 忽略 NULL——按环境 GROUP BY
+    # 下推聚合，避免把窗口内全部执行的时延行拉进内存。
     latency_rows = (
         await db.execute(
             select(
-                ExecutionRecord.environment_id,
-                ExecutionRecord.latency_ms,
-                ExecutionRecord.ttft_ms,
-            ).where(*window_conditions)
+                ExecutionRecord.environment_id.label("environment_id"),
+                func.percentile_disc(0.95)
+                .within_group(ExecutionRecord.latency_ms)
+                .label("p95_ms"),
+                func.avg(ExecutionRecord.latency_ms).label("avg_ms"),
+                func.avg(ExecutionRecord.ttft_ms).label("avg_ttft_ms"),
+            )
+            .where(*window_conditions)
+            .group_by(ExecutionRecord.environment_id)
         )
     ).all()
-    latency_map: dict[int | None, list[float]] = {}
-    ttft_map: dict[int | None, list[float]] = {}
-    for row in latency_rows:
-        if row.latency_ms is not None:
-            latency_map.setdefault(row.environment_id, []).append(float(row.latency_ms))
-        if row.ttft_ms is not None:
-            ttft_map.setdefault(row.environment_id, []).append(float(row.ttft_ms))
+    latency_map: dict[int | None, Any] = {row.environment_id: row for row in latency_rows}
 
     case_rows = (
         await db.execute(
@@ -605,8 +620,7 @@ async def execution_environment_summary(
         case_total = int(stats["total"]) if stats else 0
         case_passed = int(stats["passed"]) if stats else 0
         flaky = int(stats["flaky"]) if stats else 0
-        latencies = latency_map.get(environment_id, [])
-        ttfts = ttft_map.get(environment_id, [])
+        latency_stats = latency_map.get(environment_id)
         error_total = int(current.error_total or 0) if current else 0
         turns = float(current.avg_turns) if current and current.avg_turns is not None else None
         score = float(current.avg_score) if current and current.avg_score is not None else None
@@ -641,9 +655,21 @@ async def execution_environment_summary(
             error_rate=round(error_total / total * 100, 2) if total else None,
             avg_score=round(score, 1) if score is not None else None,
             avg_turns=round(turns, 1) if turns is not None else None,
-            p95_ms=_percentile(latencies, 95),
-            avg_ms=round(sum(latencies) / len(latencies), 1) if latencies else None,
-            avg_ttft_ms=round(sum(ttfts) / len(ttfts), 1) if ttfts else None,
+            p95_ms=(
+                round(float(latency_stats.p95_ms), 1)
+                if latency_stats and latency_stats.p95_ms is not None
+                else None
+            ),
+            avg_ms=(
+                round(float(latency_stats.avg_ms), 1)
+                if latency_stats and latency_stats.avg_ms is not None
+                else None
+            ),
+            avg_ttft_ms=(
+                round(float(latency_stats.avg_ttft_ms), 1)
+                if latency_stats and latency_stats.avg_ttft_ms is not None
+                else None
+            ),
             tokens=int(current.tokens or 0) if current else 0,
             volatility=volatility,
             daily=daily,
@@ -705,13 +731,22 @@ async def get_execution(
     task_name = await db.scalar(
         select(BatchTask.name).where(BatchTask.id == record.task_id)
     ) if record.task_id else None
-    case = await db.get(TestCase, record.case_id)
+    # 只需要 code/name；避免整行加载 TestCase 的大列。
+    case_code = case_name = None
+    if record.case_id:
+        case_row = (
+            await db.execute(
+                select(TestCase.code, TestCase.name).where(TestCase.id == record.case_id)
+            )
+        ).one_or_none()
+        if case_row is not None:
+            case_code, case_name = case_row
     return await build_execution_detail(
         db,
         record,
         task_name=task_name,
-        case_code=case.code if case else None,
-        case_name=case.name if case else None,
+        case_code=case_code,
+        case_name=case_name,
     )
 
 

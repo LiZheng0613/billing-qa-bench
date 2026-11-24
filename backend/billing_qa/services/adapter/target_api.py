@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import os
 import shutil
 import ssl
 import tempfile
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -133,6 +135,9 @@ class TargetApiAdapter:
         self._token_loaded = False
         self._mtls_dir: str | None = None
         self._mtls_files: tuple[str, str, str | None, str | None] | None = None
+        # 多轮对话复用的 HTTP 客户端（懒加载）：避免每轮重新建立 TCP/TLS 连接。
+        # 生命周期由 aclose() 收口，调用方在 finally 中与 close() 一起执行。
+        self._shared_client: httpx.AsyncClient | None = None
 
     # ------------------------------------------------------------------ #
     # HTTP 基础
@@ -167,6 +172,12 @@ class TargetApiAdapter:
             shutil.rmtree(self._mtls_dir, ignore_errors=True)
             self._mtls_dir = None
 
+    async def aclose(self) -> None:
+        """关闭复用的 HTTP 连接池（与 close 分离：关闭客户端需要 async 上下文）。"""
+        client, self._shared_client = self._shared_client, None
+        if client is not None:
+            await client.aclose()
+
     def _build_ssl_context(self, mtls: tuple[str, str, str | None, str | None]):
         """构建 TLS 上下文：加载客户端证书链，并按需替换服务端信任根。
 
@@ -198,6 +209,18 @@ class TargetApiAdapter:
         if mtls:
             verify = self._build_ssl_context(mtls)
         return httpx.AsyncClient(timeout=timeout, verify=verify)
+
+    @contextlib.asynccontextmanager
+    async def _reused_client(self) -> AsyncIterator[httpx.AsyncClient]:
+        """多轮对话复用同一连接池：进入时懒加载，退出时不关闭。
+
+        单次执行的各轮对话（以及失败追问自检）共用一个适配器实例，
+        复用客户端可省去每轮的 TCP/TLS 握手；连接池最终由 ``aclose()``
+        在适配器生命周期结束时统一关闭。
+        """
+        if self._shared_client is None:
+            self._shared_client = self._client()
+        yield self._shared_client
 
     async def health_check(self) -> tuple[bool, int | None, float | None, str]:
         url = f"{self.env.base_url}{self.env.health_path or ''}"
@@ -298,7 +321,7 @@ class TargetApiAdapter:
         extra_variables: dict[str, Any] | None = None,
     ) -> TargetResponse:
         history = history or []
-        async with self._client() as client:
+        async with self._reused_client() as client:
             await self._ensure_token(client, extra_variables)
             # 变量合并优先级：运行时 > 用例级 > 环境变量池
             variables: dict[str, Any] = dict(self.env.variables)

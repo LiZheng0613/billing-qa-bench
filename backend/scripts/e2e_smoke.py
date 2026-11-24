@@ -98,6 +98,12 @@ async def _check_session_binding() -> list[str]:
         )
     except Exception as exc:  # 冒烟脚本需要把任何失败转成断言
         return [f"请求变量冒烟异常（Mock 被测系统需在 8002 运行）: {exc}"]
+    finally:
+        # chat 复用连接池后必须 aclose，否则客户端连接泄漏。
+        try:
+            await adapter.aclose()
+        finally:
+            adapter.close()
 
     problems: list[str] = []
     request_body = (second.request_payload or {}).get("body") or {}

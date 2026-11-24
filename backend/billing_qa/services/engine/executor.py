@@ -9,6 +9,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from sqlalchemy.orm import noload
+
 from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ValidationError
 from billing_qa.core.logging import get_logger
@@ -198,7 +200,12 @@ class CaseExecutor:
             await self._mark_error(execution_id, exc)
         finally:
             if adapter is not None:
-                adapter.close()
+                # aclose 可能被二次取消打断；mTLS 临时目录含私钥，必须
+                # 无条件清理，用 try/finally 保证 close() 不被跳过。
+                try:
+                    await adapter.aclose()
+                finally:
+                    adapter.close()
         return execution_id
 
     # ------------------------------------------------------------------ #
@@ -674,14 +681,17 @@ class CaseExecutor:
                     record.max_turns = None
             db.add(record)
             await db.commit()
-            await db.refresh(record)
+            # 主键在 INSERT 时已回填，无需 refresh——那会额外触发一次整行
+            # SELECT 外加 turns/judges 的 selectin 空查询往返。
             return int(record.id)
 
     async def _bind_environment(self, execution_id: int, environment_id: int | None) -> None:
         if environment_id is None:
             return
         async with SessionLocal() as db:
-            record = await db.get(ExecutionRecord, execution_id)
+            # 写路径只更新标量/JSON 列，不读 turns/judges；noload 避免
+            # selectin 把已写完的大 JSON 报文再拉一遍。
+            record = await db.get(ExecutionRecord, execution_id, options=[noload("*")])
             if record is not None:
                 record.environment_id = environment_id
                 await db.commit()
@@ -695,7 +705,9 @@ class CaseExecutor:
         self, execution_id: int, outcome: RunOutcome, ctx: ExecutionContext
     ) -> None:
         async with SessionLocal() as db:
-            record = await db.get(ExecutionRecord, execution_id)
+            # 写路径只更新标量/JSON 列，不读 turns/judges；noload 避免
+            # selectin 把已写完的大 JSON 报文再拉一遍。
+            record = await db.get(ExecutionRecord, execution_id, options=[noload("*")])
             if record is None:
                 return
             record.status = outcome.status
@@ -765,7 +777,9 @@ class CaseExecutor:
     async def _mark_error(self, execution_id: int, exc: Exception) -> None:
         message = f"{type(exc).__name__}: {exc}"
         async with SessionLocal() as db:
-            record = await db.get(ExecutionRecord, execution_id)
+            # 写路径只更新标量/JSON 列，不读 turns/judges；noload 避免
+            # selectin 把已写完的大 JSON 报文再拉一遍。
+            record = await db.get(ExecutionRecord, execution_id, options=[noload("*")])
             if record is None:
                 return
             record.status = ExecutionStatus.ERROR
@@ -777,7 +791,9 @@ class CaseExecutor:
 
     async def _mark_aborted(self, execution_id: int) -> None:
         async with SessionLocal() as db:
-            record = await db.get(ExecutionRecord, execution_id)
+            # 写路径只更新标量/JSON 列，不读 turns/judges；noload 避免
+            # selectin 把已写完的大 JSON 报文再拉一遍。
+            record = await db.get(ExecutionRecord, execution_id, options=[noload("*")])
             if record is None:
                 return
             record.status = ExecutionStatus.ABORTED

@@ -11,8 +11,14 @@ from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy import cast, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
-from billing_qa.api.v1.serializers import build_execution_detail, case_to_out
+from billing_qa.api.v1.serializers import (
+    EXECUTION_ITEM_COLUMNS,
+    build_execution_detail,
+    case_to_out,
+)
+
 # 复用批次导出的行组装 / 文件名助手（tasks.py 不反向依赖本模块，无循环导入）
 from billing_qa.api.v1.tasks import (
     _judge_notes,
@@ -82,6 +88,13 @@ from billing_qa.services.io.case_history_report import (
     build_case_history_jsonl,
     build_case_history_xlsx,
 )
+from billing_qa.services.io.case_json import (
+    build_export_payload,
+    normalize_record,
+    parse_case_file,
+    resolve_references,
+)
+from billing_qa.services.io.excel import EXCEL_COLUMNS, export_cases_xlsx, parse_excel
 from billing_qa.services.io.execution_excel import (
     bool_text,
     case_status_label,
@@ -95,13 +108,6 @@ from billing_qa.services.io.execution_excel import (
     source_label,
     status_label,
 )
-from billing_qa.services.io.case_json import (
-    build_export_payload,
-    normalize_record,
-    parse_case_file,
-    resolve_references,
-)
-from billing_qa.services.io.excel import EXCEL_COLUMNS, export_cases_xlsx, parse_excel
 from billing_qa.services.revision.refs import refresh_template_refs
 from billing_qa.services.revision.snapshot import (
     SNAPSHOT_FIELDS,
@@ -163,6 +169,12 @@ async def _get_case(db: AsyncSession, case_id: int, *, include_deleted: bool = F
     return case
 
 
+async def _ensure_case_exists(db: AsyncSession, case_id: int) -> None:
+    """存在性探针：分页/趋势等只判存在的端点避免整行加载大 JSON 列。"""
+    if await db.scalar(select(TestCase.id).where(TestCase.id == case_id)) is None:
+        raise NotFoundError("测试用例不存在或已删除")
+
+
 async def _validate_references(db: AsyncSession, data: dict[str, Any]) -> None:
     environment_id = data.get("environment_id")
     if environment_id:
@@ -171,12 +183,22 @@ async def _validate_references(db: AsyncSession, data: dict[str, Any]) -> None:
             raise ValidationError("指定的执行环境不存在")
     simulator_id = data.get("simulator_template_id")
     if simulator_id:
-        template = await db.get(PromptTemplate, simulator_id)
+        # 只校验类型；noload 避免 selectin 拉取模板全部历史版本 content
+        # （该函数也运行在批量导入循环内，模板分散时会逐个放大）。
+        template = await db.get(
+            PromptTemplate,
+            simulator_id,
+            options=[noload(PromptTemplate.versions)],
+        )
         if template is None or template.template_type != TemplateType.USER_SIMULATOR:
             raise ValidationError("模拟器模板不存在或类型不匹配")
     judge_id = data.get("judge_template_id")
     if judge_id:
-        template = await db.get(PromptTemplate, judge_id)
+        template = await db.get(
+            PromptTemplate,
+            judge_id,
+            options=[noload(PromptTemplate.versions)],
+        )
         if template is None or template.template_type != TemplateType.LLM_JUDGE:
             raise ValidationError("裁判模板不存在或类型不匹配")
     for model_id in data.get("judge_model_ids") or []:
@@ -950,18 +972,41 @@ async def list_revisions(
     include_snapshot: bool = False,
     db: AsyncSession = Depends(get_db),
 ) -> list[RevisionOut]:
-    await _get_case(db, case_id, include_deleted=True)
+    await _ensure_case_exists(db, case_id)
+    # 默认不取 snapshot（完整用例配置快照，随编辑次数线性增大的 JSON 列），
+    # 只查 RevisionOut 的标量列；显式请求快照时才整行加载。
+    if not include_snapshot:
+        rows = (
+            await db.execute(
+                select(
+                    TestCaseRevision.id,
+                    TestCaseRevision.case_id,
+                    TestCaseRevision.version,
+                    TestCaseRevision.change_type,
+                    TestCaseRevision.operator,
+                    TestCaseRevision.summary,
+                    TestCaseRevision.created_at,
+                )
+                .where(TestCaseRevision.case_id == case_id)
+                .order_by(TestCaseRevision.version.desc())
+            )
+        ).all()
+        return [RevisionOut(**row._mapping) for row in rows]
     rows = (
-        await db.execute(
-            select(TestCaseRevision)
-            .where(TestCaseRevision.case_id == case_id)
-            .order_by(TestCaseRevision.version.desc())
+        (
+            await db.execute(
+                select(TestCaseRevision)
+                .where(TestCaseRevision.case_id == case_id)
+                .order_by(TestCaseRevision.version.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     items: list[RevisionOut] = []
     for row in rows:
         item = RevisionOut.model_validate(row)
-        item.snapshot = row.snapshot if include_snapshot else None
+        item.snapshot = row.snapshot
         items.append(item)
     return items
 
@@ -975,7 +1020,7 @@ async def diff_revisions(
     to_version: int = Query(ge=1),
     db: AsyncSession = Depends(get_db),
 ) -> RevisionDiff:
-    await _get_case(db, case_id, include_deleted=True)
+    await _ensure_case_exists(db, case_id)
     rows = (
         await db.execute(
             select(TestCaseRevision).where(
@@ -1061,16 +1106,22 @@ async def case_executions(
     page_size: int = Query(default=20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ) -> Page[CaseExecutionItem]:
-    await _get_case(db, case_id, include_deleted=True)
+    await _ensure_case_exists(db, case_id)
     conditions = [ExecutionRecord.case_id == case_id]
     if status:
         conditions.append(ExecutionRecord.status == status)
     total = (
         await db.execute(select(func.count()).select_from(ExecutionRecord).where(*conditions))
     ).scalar_one()
+    # 列表序列化只用标量列 + self_check（取自检状态）；按列裁剪避免整行
+    # 加载 case_snapshot / judge_result 等大 JSON 列。
     rows = (
         await db.execute(
-            select(ExecutionRecord, BatchTask.name)
+            select(
+                *EXECUTION_ITEM_COLUMNS,
+                BatchTask.name.label("task_name"),
+                ExecutionRecord.self_check,
+            )
             .outerjoin(BatchTask, BatchTask.id == ExecutionRecord.task_id)
             .where(*conditions)
             .order_by(ExecutionRecord.started_at.desc(), ExecutionRecord.id.desc())
@@ -1079,25 +1130,25 @@ async def case_executions(
         )
     ).all()
     items: list[CaseExecutionItem] = []
-    for record, task_name in rows:
-        self_check = record.self_check if isinstance(record.self_check, dict) else None
+    for row in rows:
+        self_check = row.self_check if isinstance(row.self_check, dict) else None
         items.append(
             CaseExecutionItem(
-                id=record.id,
-                task_id=record.task_id,
-                task_name=task_name,
-                source=record.source,
-                status=record.status,
-                attempt_no=record.attempt_no,
-                error_kind=record.error_kind,
-                pass_flag=record.pass_flag,
-                total_score=record.total_score,
-                case_version=record.case_version,
-                turns_used=record.turns_used,
-                latency_ms=record.latency_ms,
-                ttft_ms=record.ttft_ms,
-                started_at=record.started_at,
-                finished_at=record.finished_at,
+                id=row.id,
+                task_id=row.task_id,
+                task_name=row.task_name,
+                source=row.source,
+                status=row.status,
+                attempt_no=row.attempt_no,
+                error_kind=row.error_kind,
+                pass_flag=row.pass_flag,
+                total_score=row.total_score,
+                case_version=row.case_version,
+                turns_used=row.turns_used,
+                latency_ms=row.latency_ms,
+                ttft_ms=row.ttft_ms,
+                started_at=row.started_at,
+                finished_at=row.finished_at,
                 self_check_status=(
                     str(self_check.get("status"))
                     if self_check and self_check.get("status")
@@ -1112,10 +1163,19 @@ async def case_executions(
 
 @router.get("/{case_id}/trend", response_model=CaseTrend, summary="用例近 20 次执行趋势")
 async def case_trend(case_id: int, db: AsyncSession = Depends(get_db)) -> CaseTrend:
-    await _get_case(db, case_id, include_deleted=True)
+    await _ensure_case_exists(db, case_id)
+    # 趋势点只用 7 个标量列，按列裁剪避免整行加载大 JSON 列。
     rows = (
         await db.execute(
-            select(ExecutionRecord)
+            select(
+                ExecutionRecord.id,
+                ExecutionRecord.started_at,
+                ExecutionRecord.total_score,
+                ExecutionRecord.latency_ms,
+                ExecutionRecord.status,
+                ExecutionRecord.pass_flag,
+                ExecutionRecord.turns_used,
+            )
             .where(
                 ExecutionRecord.case_id == case_id,
                 # 草稿试跑只是调试实验，不纳入用例质量趋势
@@ -1124,7 +1184,7 @@ async def case_trend(case_id: int, db: AsyncSession = Depends(get_db)) -> CaseTr
             .order_by(ExecutionRecord.id.desc())
             .limit(20)
         )
-    ).scalars().all()
+    ).all()
     ordered = list(reversed(rows))
     points = [
         TrendPoint(

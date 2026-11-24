@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from billing_qa.api.v1.serializers import task_to_out
+from billing_qa.api.v1.serializers import EXECUTION_ITEM_COLUMNS, task_to_out
 from billing_qa.core.authz import require_module_access, require_permission
 from billing_qa.core.config import settings
 from billing_qa.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -40,9 +40,7 @@ from billing_qa.schemas.task import (
     TaskScheduleUpdate,
 )
 from billing_qa.services.engine.metrics import (
-    apply_metrics_to_task,
     compute_task_metrics,
-    latest_executions,
 )
 from billing_qa.services.engine.schedule import (
     clone_for_run,
@@ -119,9 +117,34 @@ async def _env_name(db: AsyncSession, env_id: int | None) -> str | None:
     ).scalar_one_or_none()
 
 
-async def _latest_by_case(db: AsyncSession, task_id: int) -> dict[int, ExecutionRecord]:
-    """按用例取最新一次执行记录。"""
-    return {record.case_id: record for record in await latest_executions(db, task_id)}
+class LatestCaseStatus(NamedTuple):
+    """每用例最新一次执行的状态行。
+
+    重跑/重试判定只关心状态，按列裁剪避免整行加载 case_snapshot /
+    judge_result 等大 JSON 列。
+    """
+
+    case_id: int
+    status: str
+
+
+async def _latest_by_case(db: AsyncSession, task_id: int) -> dict[int, LatestCaseStatus]:
+    """按用例取最新一次执行（只取判定状态）。"""
+    latest_ids = (
+        select(
+            ExecutionRecord.case_id.label("case_id"),
+            func.max(ExecutionRecord.id).label("max_id"),
+        )
+        .where(ExecutionRecord.task_id == task_id)
+        .group_by(ExecutionRecord.case_id)
+        .subquery()
+    )
+    rows = await db.execute(
+        select(ExecutionRecord.case_id, ExecutionRecord.status).join(
+            latest_ids, ExecutionRecord.id == latest_ids.c.max_id
+        )
+    )
+    return {int(case_id): LatestCaseStatus(case_id, status) for case_id, status in rows.all()}
 
 
 async def _unfinished_case_ids(db: AsyncSession, task: BatchTask) -> list[int]:
@@ -189,7 +212,7 @@ RETRY_STATUS_ORDER = (
 
 def _case_retry_skip_reason(
     task_case_ids: set[int],
-    latest: dict[int, ExecutionRecord],
+    latest: dict[int, LatestCaseStatus],
     retrying: set[int],
     case_id: int,
 ) -> str | None:
@@ -868,22 +891,22 @@ async def retry_case(
         raise NotFoundError("该用例不在当前批次中")
     if int(case_id) in scheduler.retrying_case_ids(task_id):
         raise ConflictError("该用例已提交重试，请等待执行完成")
-    latest = (
-        await db.execute(
-            select(ExecutionRecord)
-            .where(
-                ExecutionRecord.task_id == task_id,
-                ExecutionRecord.case_id == case_id,
-            )
-            .order_by(ExecutionRecord.id.desc())
-            .limit(1)
+    # 只需要最新一次的状态判定；整行加载会附带 selectin 拉取
+    # turns/judges 大 JSON，且该查询可走 ix_execution_task_case 索引。
+    latest_status = await db.scalar(
+        select(ExecutionRecord.status)
+        .where(
+            ExecutionRecord.task_id == task_id,
+            ExecutionRecord.case_id == case_id,
         )
-    ).scalar_one_or_none()
-    if latest is None:
+        .order_by(ExecutionRecord.id.desc())
+        .limit(1)
+    )
+    if latest_status is None:
         raise NotFoundError("该用例在当前批次尚无执行记录")
-    if latest.status in {"RUNNING", "PENDING"}:
+    if latest_status in {"RUNNING", "PENDING"}:
         raise ConflictError("该用例正在执行中，请稍后再试")
-    if latest.status not in RETRYABLE_STATUSES:
+    if latest_status not in RETRYABLE_STATUSES:
         raise ConflictError("该用例最近一次执行不处于可重试状态")
     if not await scheduler.retry_case(task_id, case_id):
         raise ConflictError("任务正在运行或已终止，无法发起单用例重试")
@@ -989,10 +1012,10 @@ async def list_task_runs(
 @router.get("/{task_id}/metrics", response_model=TaskMetrics, summary="任务实时指标")
 async def task_metrics(task_id: int, db: AsyncSession = Depends(get_db)) -> TaskMetrics:
     task = await _get_task(db, task_id)
-    metrics = await compute_task_metrics(db, task)
-    apply_metrics_to_task(task, metrics)
-    await db.commit()
-    return metrics
+    # 纯读端点：调度器在任务生命周期各阶段（启动 / 每用例完成 / 轮次结束 /
+    # 完成 / 中止）已把指标写入任务行；GET 只做现场聚合，不再写回，
+    # 避免轮询端点每次触发「全量聚合 + commit」的写放大。
+    return await compute_task_metrics(db, task)
 
 
 @router.get(
@@ -1062,15 +1085,17 @@ async def task_executions(
     total = (
         await db.execute(select(func.count()).select_from(ExecutionRecord).where(*conditions))
     ).scalar_one()
+    # 列表序列化只用标量列（见 EXECUTION_ITEM_COLUMNS），按列裁剪避免整行
+    # 加载 case_snapshot / judge_result 等大 JSON 列。
     rows = (
         await db.execute(
-            select(ExecutionRecord)
+            select(*EXECUTION_ITEM_COLUMNS)
             .where(*conditions)
             .order_by(*order_by)
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
-    ).scalars().all()
+    ).all()
 
     if latest_per_case and rows:
         count_rows = (
@@ -1085,13 +1110,16 @@ async def task_executions(
         ).all()
         attempt_counts = {int(case_id): int(count) for case_id, count in count_rows}
 
+    # 只需要 code/name 两个标量；避免整行加载 TestCase 的大列。
     case_map = {
-        case.id: (case.code, case.name)
-        for case in (
+        int(case_id): (code, name)
+        for case_id, code, name in (
             await db.execute(
-                select(TestCase).where(TestCase.id.in_({record.case_id for record in rows}))
+                select(TestCase.id, TestCase.code, TestCase.name).where(
+                    TestCase.id.in_({record.case_id for record in rows})
+                )
             )
-        ).scalars().all()
+        ).all()
     }
     items = [
         CaseExecutionItem(
@@ -1450,21 +1478,31 @@ async def _case_history_rates(
     """「近 N 次通过率(全库)」：该用例在所有任务中的最近 N 次执行通过率。"""
     if not case_ids:
         return {}
-    rows = (
-        (
-            await db.execute(
-                select(ExecutionRecord.case_id, ExecutionRecord.pass_flag, ExecutionRecord.id)
-                .where(ExecutionRecord.case_id.in_(case_ids))
-                .order_by(ExecutionRecord.case_id, ExecutionRecord.id.desc())
+    # row_number 窗口下推「每用例近 N 次」：此前把全库历史拉进 Python 再截断，
+    # execution_record 是增长最快的表，导出大任务时会线性放大。
+    # 结果只按通过次数/条数聚合，与行序无关，行为与原实现一致。
+    ranked = (
+        select(
+            ExecutionRecord.case_id.label("case_id"),
+            ExecutionRecord.pass_flag.label("pass_flag"),
+            func.row_number()
+            .over(
+                partition_by=ExecutionRecord.case_id,
+                order_by=ExecutionRecord.id.desc(),
             )
+            .label("rn"),
         )
-        .all()
+        .where(ExecutionRecord.case_id.in_(case_ids))
+        .subquery()
     )
+    rows = (
+        await db.execute(
+            select(ranked.c.case_id, ranked.c.pass_flag).where(ranked.c.rn <= limit)
+        )
+    ).all()
     counts: dict[int, list[bool]] = {}
-    for case_id, pass_flag, _record_id in rows:
-        history = counts.setdefault(int(case_id), [])
-        if len(history) < limit:
-            history.append(bool(pass_flag))
+    for case_id, pass_flag in rows:
+        counts.setdefault(int(case_id), []).append(bool(pass_flag))
     return {
         case_id: f"{sum(history) / len(history) * 100:.0f}%（{sum(history)}/{len(history)}）"
         for case_id, history in counts.items()
@@ -1492,18 +1530,39 @@ async def _plan_context(db: AsyncSession, task: BatchTask) -> dict[str, Any] | N
     root_id = task.schedule_source_id
     if root_id is None and not _is_multi_round_root(task):
         return None
-    root = task if root_id is None else await _get_task(db, root_id)
-    rounds = (
-        (
+    root: Any
+    if root_id is None:
+        root = task
+    else:
+        # 只取标题与轮次判定所需列；ALL_ACTIVE 计划的 case_ids 可达全库
+        # 用例 id，整行加载会把大 JSON 白拉一遍（轮次数随触发历史增长）。
+        root = (
             await db.execute(
-                select(BatchTask)
-                .where(*_round_conditions(root))
-                .order_by(BatchTask.id.asc())
+                select(
+                    BatchTask.id,
+                    BatchTask.name,
+                    BatchTask.schedule_type,
+                    BatchTask.repeat_rounds,
+                    BatchTask.started_at,
+                ).where(BatchTask.id == root_id)
             )
+        ).one_or_none()
+        if root is None:
+            return None
+    # 每个轮次行只读 5 个标量，按列裁剪替代整行 ORM。
+    rounds = (
+        await db.execute(
+            select(
+                BatchTask.id,
+                BatchTask.code,
+                BatchTask.round_index,
+                BatchTask.finished_cases,
+                BatchTask.pass_count,
+            )
+            .where(*_round_conditions(root))
+            .order_by(BatchTask.id.asc())
         )
-        .scalars()
-        .all()
-    )
+    ).all()
     if len(rounds) <= 1:
         return None
     rows: list[tuple[str, Any]] = [
@@ -1674,6 +1733,27 @@ async def _resolve_plan_rounds(
     return root, rounds
 
 
+async def _count_task_results(
+    db: AsyncSession, task: BatchTask, *, latest_per_case: bool
+) -> int:
+    """按 _collect_task_results 同一口径统计批次导出行数（只计数，不加载行）。"""
+    if latest_per_case:
+        latest_ids = (
+            select(func.max(ExecutionRecord.id).label("max_id"))
+            .where(ExecutionRecord.task_id == task.id)
+            .group_by(ExecutionRecord.case_id)
+            .subquery()
+        )
+        condition = ExecutionRecord.id.in_(select(latest_ids.c.max_id))
+    else:
+        condition = ExecutionRecord.task_id == task.id
+    return int(
+        await db.scalar(
+            select(func.count()).select_from(ExecutionRecord).where(condition)
+        )
+    )
+
+
 @router.get(
     "/{task_id}/export/rounds",
     summary="导出计划多轮次执行报表（Excel / JSONL）",
@@ -1703,6 +1783,19 @@ async def export_task_rounds(
     """跨轮聚合报表：轮次对比、用例稳定性、跨轮问题清单与多轮明细。"""
     task = await _get_task(db, task_id)
     root, rounds = await _resolve_plan_rounds(db, task, round_scope=round_scope)
+
+    # 行数上限校验前移到全量加载之前：超限任务不再先把整批执行记录
+    # （含轮次轨迹大 JSON）拉进内存后才报错。
+    if include_raw and format == "xlsx":
+        total_estimate = 0
+        for item in rounds:
+            total_estimate += await _count_task_results(
+                db, item, latest_per_case=not include_attempts
+            )
+        if total_estimate > EXCEL_MAX_ROWS:
+            raise ValidationError(
+                f"原始明细 {total_estimate} 行超过 Excel 上限，请关闭「包含原始明细」或改用 JSONL 导出"
+            )
 
     round_data: list[RoundData] = []
     case_ids: set[int] = set()

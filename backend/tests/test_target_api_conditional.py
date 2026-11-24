@@ -115,6 +115,7 @@ async def test_sse_conditional_extraction_picks_last_chart() -> None:
     finally:
         server.close()
         await server.wait_closed()
+        await adapter.aclose()
         adapter.close()
 
 
@@ -132,6 +133,7 @@ async def test_sse_string_extractors_behavior_unchanged() -> None:
     finally:
         server.close()
         await server.wait_closed()
+        await adapter.aclose()
         adapter.close()
 
 
@@ -188,4 +190,5 @@ async def test_json_mode_spec_matches_nested_chart() -> None:
     finally:
         server.close()
         await server.wait_closed()
+        await adapter.aclose()
         adapter.close()

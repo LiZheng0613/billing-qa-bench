@@ -585,7 +585,11 @@ async def debug_chat(
         ok = False
         message = f"{type(exc).__name__}: {exc}"
     finally:
-        adapter.close()
+        # aclose 可能被取消打断；close 清理 mTLS 临时文件必须无条件执行。
+        try:
+            await adapter.aclose()
+        finally:
+            adapter.close()
     if result is not None and result.request_payload:
         # 成功时用真实发送的报文（含前置接口注入的变量）覆盖预渲染结果
         request_preview = result.request_payload

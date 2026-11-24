@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from datetime import datetime
+from typing import NamedTuple
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +24,25 @@ TERMINAL_STATUSES = {
 }
 
 
+class LatestExecutionSummary(NamedTuple):
+    """每用例最新一次执行的统计行。
+
+    只取指标计算需要的标量列；execution_record 上的 case_snapshot /
+    judge_result 等大 JSON 列在执行期高频路径（每条用例完成都会重算指标）
+    不应随整行 ORM 加载。
+    """
+
+    case_id: int
+    status: str
+    latency_ms: float | None
+    ttft_ms: float | None
+    turns_used: int
+    total_score: float | None
+    simulator_tokens: int
+    judge_tokens: int
+    attempt_no: int
+
+
 def _percentile(values: list[float], percentile: float) -> float:
     if not values:
         return 0.0
@@ -37,8 +58,11 @@ def _percentile(values: list[float], percentile: float) -> float:
     return round(ordered[lower] * (1 - weight) + ordered[upper] * weight, 2)
 
 
-async def latest_executions(db: AsyncSession, task_id: int) -> list[ExecutionRecord]:
-    """每个用例取最新一次执行（用于统计，避免重跑重复计数）。"""
+async def latest_executions(db: AsyncSession, task_id: int) -> list[LatestExecutionSummary]:
+    """每个用例取最新一次执行（用于统计，避免重跑重复计数）。
+
+    只加载指标所需标量列，不整行加载大 JSON 列；调用方通过具名字段访问。
+    """
     subquery = (
         select(
             ExecutionRecord.case_id.label("case_id"),
@@ -49,12 +73,24 @@ async def latest_executions(db: AsyncSession, task_id: int) -> list[ExecutionRec
         .subquery()
     )
     rows = await db.execute(
-        select(ExecutionRecord).join(subquery, ExecutionRecord.id == subquery.c.max_id)
+        select(
+            ExecutionRecord.case_id,
+            ExecutionRecord.status,
+            ExecutionRecord.latency_ms,
+            ExecutionRecord.ttft_ms,
+            ExecutionRecord.turns_used,
+            ExecutionRecord.total_score,
+            ExecutionRecord.simulator_tokens,
+            ExecutionRecord.judge_tokens,
+            ExecutionRecord.attempt_no,
+        ).join(subquery, ExecutionRecord.id == subquery.c.max_id)
     )
-    return list(rows.scalars().all())
+    return [LatestExecutionSummary(*row) for row in rows.all()]
 
 
-def build_distribution(records: list[ExecutionRecord], total_cases: int) -> StatusDistribution:
+def build_distribution(
+    records: Sequence[LatestExecutionSummary], total_cases: int
+) -> StatusDistribution:
     distribution = StatusDistribution()
     for record in records:
         if hasattr(distribution, record.status):
