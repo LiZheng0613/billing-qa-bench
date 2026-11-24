@@ -220,8 +220,8 @@ python -m uvicorn billing_qa.main:app --host 127.0.0.1 --port 8000
 ```
 
 - `--reset` 会删除 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` / `grader_eval` / `capability` / `data_source` / `sys_audit_log` 中的全部数据，并清理 `test-*` / `xzc` 等测试模型与 `DEMO-ENV-*` 环境对比演示环境，保留其余环境、模型、Prompt、内置角色与管理员，再重新写入演示用例、业务口径、候选池、取数能力、取证记录与演示审计。
-- 需要演示大盘、趋势、Run 对比、续做与定时计划时，再执行 `python scripts/seed_demo_history.py`：脚本会真实调用 Mock 服务生成 3 条已完成的批量任务（全量回归 / 单轮与契约专项 / 动态多轮专项）、1 条中断后可续做的任务、1 条每日定时任务，以及对应的执行记录、轮次轨迹、裁判明细与失败追问自检，并把时间戳回填到近 3 天。脚本幂等，重复执行只重建 `DEMO-TASK-*`。
-- 需要演示「按执行环境对比」时，再执行 `python scripts/seed_environment_runs.py --env-code QA-MOCK`：脚本用真实引擎在 SSE 环境上生成 59 条调试执行，与环境对比页默认的 117 条批量执行一起构成近 7 天数据；重跑会追加记录，演示前重置即可恢复基线。
+- 需要演示大盘、趋势、Run 对比、续做与定时计划时，再执行 `python scripts/seed_demo_history.py`：脚本会真实调用 Mock 服务生成 9 条演示任务（全量回归 / 单轮与契约专项 / 动态多轮专项 / 中断续做 / 每日定时 / 每周定时 / 一次性定时 / 错误策略与自动重试 / 在途终止），加 1 条草稿沙箱试跑，以及对应的执行记录、轮次轨迹、裁判明细与失败追问自检，并把时间戳回填到近 3 天。脚本幂等，重复执行只重建 `DEMO-TASK-*` 与草稿试跑记录。
+- 需要演示「按执行环境对比」时，再执行 `python scripts/seed_environment_runs.py --env-code QA-MOCK`：脚本用真实引擎在 SSE 环境上生成 67 条调试执行，与环境对比页默认的 137 条任务内执行一起构成近 7 天数据；重跑会追加记录，演示前重置即可恢复基线。
 
 > 表结构只有一条链路：`init_db` 内部调用 `billing_qa.db.migrations.upgrade_schema()`，即 `alembic upgrade head`（空库会按迁移脚本从零建表），不再使用 `create_all` 或 `alembic stamp`。后续结构变更仍是 `alembic revision --autogenerate` + `alembic upgrade head`。
 
@@ -253,6 +253,9 @@ python -m uvicorn mock_servers.capability_api:app --host 127.0.0.1 --port 8003
 | `[MOCK:MAXTURNS]` | 模拟器持续追问，触发轮次熔断 |
 | `[MOCK:REPEAT]` | 被测系统复读，触发复读熔断 |
 | `[MOCK:GIVEUP]` | 模拟器主动放弃 |
+| `[MOCK:LLMERROR]` | 裁判模型返回 HTTP 500，执行以 LLM 错误收口，验证错误分类与自动重试 |
+| `[MOCK:MULTISTEP]` / `分两步` | 被测系统一次回答回传 2 条取数调用，验证多步调用链 |
+| `[MOCK:SLOW]` / `模拟慢响应` | 被测系统延迟 30s 才响应，用于制造在途执行窗口与人工终止 |
 | `[MOCK:REQUIRE_SESSION]` | 请求未携带 `session_id` / `sessionId` / `conversationId` 时返回 400，验证会话绑定 |
 | `错误金额` | 被测系统返回错误账单金额，验证规则硬校验 |
 | `模拟崩溃` / `触发异常` | 被测系统返回 HTTP 500，验证异常分类与重试 |
@@ -281,14 +284,14 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 | 资产 | 内容 |
 | --- | --- |
-| 环境 | `QA-MOCK-JSON`：Agent 报文（Basic 鉴权 + 前置取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso`），**61 条演示用例默认绑定**；`QA-MOCK`：SSE 流式演示环境，`seed_environment_runs.py` 在其上生成 59 条调试执行用于环境对比 |
-| 用例 | 61 条（59 `ACTIVE` + 1 `DRAFT` + 1 `DISABLED`；27 条答案契约 + 32 条 4 维评分），全部带 `userid` / `custid` 请求变量（`userid` 取自话术中的号码，数字按字符串保存） |
-| 业务资产 | 4 个模型、4 套 Prompt（7 个版本）、14 条业务口径、8 条候选（NEW / TRIAGED / PROMOTED / REJECTED）、2 个数据源、14 条取数能力、12 条取证记录、1 条判分器自检、5 个演示账号 |
-| 历史数据 | 5 条批量任务（3 完成 + 1 中断可续做 + 1 每日定时）+ 117 条批量执行明细（`seed_demo_history.py` 生成）+ 59 条 SSE 环境调试执行（`seed_environment_runs.py` 生成），合计 176 条执行、200 条轮次轨迹、183 条裁判明细、47 条追问自检 |
+| 环境 | `QA-MOCK-JSON`：Agent 报文（Basic 鉴权 + 前置取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso`），**68 条 `ACTIVE` 用例绑定**（批量回归 67 条，慢响应用例单独演示）；`QA-MOCK`：SSE 流式演示环境，`seed_environment_runs.py` 在其上生成 67 条调试执行用于环境对比；`QA-MOCK-OFFLINE`：`is_active=false` 的停用环境，只用于演示环境校验失败（BUSINESS 错误） |
+| 用例 | 72 条（69 `ACTIVE` + 2 `DRAFT` + 1 `DISABLED`；33 条答案契约 + 39 条 4 维评分），全部带 `userid` / `custid` 请求变量（`userid` 取自话术中的号码，数字按字符串保存） |
+| 业务资产 | 4 个模型、4 套 Prompt（7 个版本）、14 条业务口径、8 条候选（NEW / TRIAGED / PROMOTED / REJECTED）、2 个数据源、14 条取数能力、13 条取证记录、1 条判分器自检、7 个演示账号（含锁定 / 停用各 1 个）、12 条演示审计 |
+| 历史数据 | 9 条任务（3 完成 + 2 中断 + 3 定时计划 + 1 错误策略）+ 137 条任务内执行明细（含 1 条自动重试）+ 67 条 SSE 调试执行 + 1 条草稿沙箱试跑，合计 205 条执行、227 条轮次轨迹、205 条裁判明细（195 条执行有裁判，其中 10 条双裁判）、237 条事实级判分、53 条追问自检记录（46 `SKIPPED` / 6 `DONE` / 1 `ERROR`） |
 
 用例逐条清单与预期结果、Mock 数据口径、演示任务构成见 [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md)。
 
-> 轮次轨迹的 `tool_calls` 由 Mock 目标系统真实回传：取数类回答每轮 1 条 `db_query`（能力码、SQL、入参、行数、时延与结果摘要），澄清 / 拒答为空数组 `[]`；两种报文形态（SSE / 非流式）都能抽取。因此「Agent 调用链」「SQL」「取数证据」有真实步骤，`lucky_pass` 为 0，`diagnostics.over_budget` 为 0。
+> 轮次轨迹的 `tool_calls` 由 Mock 目标系统真实回传：取数类回答每轮 1 条 `db_query`（能力码、SQL、入参、行数、时延与结果摘要），多步用例 `DEMO-SINGLE-MULTI-STEP` 一轮 2 条，澄清 / 拒答为空数组 `[]`；两种报文形态（SSE / 非流式）都能抽取。因此「Agent 调用链」「SQL」「取数证据」有真实步骤，`lucky_pass` 为 0，`diagnostics.over_budget` 为 0。227 条轮次里 191 条 1 步、3 条 2 步、33 条为空数组（确实没有取数），没有 `null`（未记录）。
 
 > 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据；正式演示前依次执行 `python -m billing_qa.db.init_db --demo --reset`、`python scripts/seed_demo_history.py` 与 `python scripts/seed_environment_runs.py --env-code QA-MOCK` 即可恢复基线。
 >
@@ -308,7 +311,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 1. **环境与模型**：确认 `QA-MOCK-JSON`（Agent 报文环境）与 `QA-MOCK`（SSE 演示环境）探活成功；确认 `MOCK-SIM`（模拟器）与 `MOCK-JUDGE` / `MOCK-JUDGE-2`（裁判）连通性测试通过。
 2. **Prompt 资产**：查看内置模板 `SIM_DEFAULT_BILLING_USER`、`JUDGE_DEFAULT_ZERO_TOLERANCE` 与 `CASE_AUTHOR_DEFAULT`，可在沙盒中按模拟器 / 裁判 / AI 用例编写三种角色试跑。
-3. **用例资产**：浏览 61 条电信计费演示用例；勾选行（或「全选筛选结果」）后点右上角「批量执行（N）」，可直接建任务并跳转大盘；行内「历史」查看该用例全部执行记录，打开「趋势 / 对比 / 版本」体验 Diff 与历史分析。
+3. **用例资产**：浏览 69 条 `ACTIVE` 电信计费演示用例；勾选行（或「全选筛选结果」）后点右上角「批量执行（N）」，可直接建任务并跳转大盘；行内「历史」查看该用例全部执行记录，打开「趋势 / 对比 / 版本」体验 Diff 与历史分析。
 4. **测试大盘**：也可在「新建批量任务」中勾选用例（支持全选筛选结果，覆盖上百条用例）、设置并发数与 QPS，执行后 WebSocket 实时刷新进度；选中任务即为「批量任务详情」，点击用例行进入单笔执行结果。
 5. **执行记录**：列表查看全部批量 / 调试 / 重跑记录，点击任意记录进入单笔结果页（对话轮次、裁判明细、规则校验、用例快照与原始报文）；对失败任务可断点重跑。
 
@@ -617,7 +620,7 @@ npm run test:e2e    # 「AI 帮我填」主链路回归
 
 - 依赖：后端 `127.0.0.1:8000`、Mock LLM `8001` / 被测 Mock `8002`、前端 `5173` 都在运行，且已初始化演示数据。
 - 默认用本机 Edge（`channel: 'msedge'`）驱动，不下载 Chromium；其他浏览器可改 `playwright.config.ts`。
-- 用例会真实创建临时用例并在结束时删除，保持演示库 61 条基线；失败时可看 `test-results/` 下的截图与 trace。
+- 用例会真实创建临时用例并在结束时删除，保持演示库 72 条基线；失败时可看 `test-results/` 下的截图与 trace。
 
 ---
 
@@ -664,7 +667,7 @@ npm run test:e2e    # 「AI 帮我填」主链路回归
 | 文档 | 内容 |
 | --- | --- |
 | [`docs/AGENT_INTEGRATION_GUIDE.md`](docs/AGENT_INTEGRATION_GUIDE.md) | 真实 Agent 报文对接：Basic 鉴权、前置取 `conversationId`、会话回填、时间戳，含替换 Mock 的完整步骤与验证命令 |
-| [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md) | 演示数据集：环境绑定、Mock 数据口径、61 条用例清单与预期结果、取数能力与演示历史任务构成 |
+| [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md) | 演示数据集：环境绑定、Mock 数据口径、72 条用例清单与预期结果、取数能力与演示历史任务构成 |
 | [`docs/CASE_JSON_FORMAT.md`](docs/CASE_JSON_FORMAT.md) | 用例 JSON 导入导出格式、字段清单与 dry-run 说明 |
 | [`docs/ANSWER_CONTRACT_OPERATIONS.md`](docs/ANSWER_CONTRACT_OPERATIONS.md) | 答案契约判分的通俗操作手册 |
 | [`docs/deployment.md`](docs/deployment.md) | 生产部署（systemd / Nginx / 容器化）、安全加固与 MySQL 迁移 |
