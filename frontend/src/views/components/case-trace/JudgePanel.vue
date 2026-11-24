@@ -64,12 +64,16 @@ const execPassed = computed<boolean | null>(() => {
 })
 
 const verdictLabel = computed(() => {
+  // 没有轮次也没有任何分数：执行异常 / 终止时 pass_flag 会被写成 false，
+  // 但后端从未产出裁判结论，不能据此说「未通过」。
+  if (!turns.value.length && props.score === null) return '未判定'
   // 执行级结论只认 pass_flag（缺失时才回落到「综合分 ≥ 通过线」）；
   // 多轮全轮「未判定」只影响逐轮，不能覆盖整通执行已经落库的通过 / 未通过。
   if (execPassed.value === null) return '未判定'
   return execPassed.value ? '通过' : '未通过'
 })
 const verdictTone = computed<Verdict>(() => {
+  if (!turns.value.length && props.score === null) return 'unknown'
   if (execPassed.value === null) return 'unknown'
   return execPassed.value ? 'pass' : 'fail'
 })
@@ -181,9 +185,14 @@ const lowest = computed<TurnVM | null>(() => {
 const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() => {
   const total = turns.value.length
   if (!total) {
+    // 没有轮次也没有分数：异常 / 终止执行落库时 pass_flag 会被后端写成 false，
+    // 但从未产出裁判结论，不能沿用旧 RUBRIC 的「只保留执行级分数与结论」话术。
+    if (props.score === null) {
+      return [{ text: '本次执行没有产生对话轮次，也没有执行级评分与结论。' }]
+    }
     // 旧 RUBRIC 执行（当前库 1226 条）只有执行级分数与结论，说清缺什么，不拿「没有轮次」一句带过
     if (props.model.gradingMode === 'RUBRIC') {
-      const scoreText = props.score === null ? '—' : props.score.toFixed(1)
+      const scoreText = props.score.toFixed(1)
       return [
         {
           text: `本次执行由旧评分模式（RUBRIC）落库：只保留执行级综合分 ${scoreText} 与通过结论，没有轮次明细、裁判理由与四维得分。`,

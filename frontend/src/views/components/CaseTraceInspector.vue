@@ -670,7 +670,11 @@ async function copyTraceUid(): Promise<void> {
                 </span>
               </p>
               <p v-if="!model.turns.length" class="truncate text-[10px] text-slate-500">
-                执行记录只保留执行级结论，没有逐轮明细
+                {{
+                  judgeScore !== null
+                    ? '执行记录只保留执行级结论，没有逐轮明细'
+                    : '本次执行没有产出判定结论，也没有逐轮明细'
+                }}
               </p>
               <p v-else-if="noneJudged" class="truncate text-[10px] text-slate-500">
                 {{ model.turns.length }} 轮均未判定 · 无轮次级分数与门槛
@@ -913,9 +917,11 @@ async function copyTraceUid(): Promise<void> {
             compact
             title="没有对话轮次"
             :description="
-              detail.grading_mode === 'RUBRIC'
-                ? '该执行由旧评分模式（RUBRIC）落库，只保留执行级分数与结论，没有逐轮明细。'
-                : '该执行未产生有效对话。'
+              judgeScore === null
+                ? '本次执行没有产生对话轮次，也没有执行级评分与结论。'
+                : detail.grading_mode === 'RUBRIC'
+                  ? '该执行由旧评分模式（RUBRIC）落库，只保留执行级分数与结论，没有逐轮明细。'
+                  : '执行记录只有执行级分数与结论，没有逐轮明细。'
             "
           />
           <div v-else-if="!filteredTurns.length" class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-500">
