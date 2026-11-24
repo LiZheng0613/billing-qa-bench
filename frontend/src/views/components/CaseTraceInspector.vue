@@ -328,9 +328,23 @@ const latencySpread = computed(() => {
   return { avg, p95: values[index] }
 })
 
-const totalTokens = computed(
-  () => (props.detail?.simulator_tokens ?? 0) + (props.detail?.judge_tokens ?? 0),
-)
+/**
+ * 页头 tokens 只统计模拟器与裁判两列（Agent 自身用量另有来源，真实库未落）。
+ * 两列全 0 时按「未留存」处理：judge_tokens 列默认 0，0 分不清「没跑裁判」与「没记录」，
+ * 写成 0 会把未记录说成零消耗。
+ */
+const tokenKpi = computed(() => {
+  const simulator = props.detail?.simulator_tokens
+  const judge = props.detail?.judge_tokens
+  const total = (simulator ?? 0) + (judge ?? 0)
+  if (total <= 0) {
+    return { value: null as number | null, hint: '执行记录未留存模拟器 / 裁判用量，不按 0 计' }
+  }
+  return {
+    value: total,
+    hint: `模拟器 ${formatNumber(simulator)} · 裁判 ${formatNumber(judge)} · 不含 Agent 自身用量`,
+  }
+})
 
 const sessionConsistent = computed(() => model.value.session.sessionIds.length <= 1)
 
@@ -892,9 +906,9 @@ async function copyTraceUid(): Promise<void> {
               <TraceIcon name="hash" :size="13" />
             </span>
             <div class="min-w-0">
-              <p class="text-[10px] uppercase tracking-wider text-slate-500">总 Tokens</p>
-              <p class="text-lg font-semibold tabular-nums text-slate-900">{{ formatNumber(totalTokens) }}</p>
-              <p class="truncate text-[10px] text-slate-500">模拟器 {{ formatNumber(detail.simulator_tokens) }} · 裁判 {{ formatNumber(detail.judge_tokens) }}</p>
+              <p class="text-[10px] uppercase tracking-wider text-slate-500">模拟器 + 裁判 Tokens</p>
+              <p class="text-lg font-semibold tabular-nums text-slate-900">{{ formatNumber(tokenKpi.value) }}</p>
+              <p class="truncate text-[10px] text-slate-500">{{ tokenKpi.hint }}</p>
             </div>
           </div>
 
@@ -1054,8 +1068,11 @@ async function copyTraceUid(): Promise<void> {
               <span v-else class="text-slate-500">
                 {{ turnsUsed ? `共 ${turnsUsed} 轮 · 逐轮明细未留存` : '没有逐轮明细' }}
               </span>
-              <span v-if="model.session.totalTokens" class="text-slate-500">
-                {{ model.session.totalTokens }} tokens
+              <span v-if="model.session.agentTokens !== null" class="text-slate-500">
+                Agent {{ model.session.agentTokens }} tokens
+              </span>
+              <span v-else-if="model.session.simulatorTokens !== null" class="text-slate-500">
+                模拟器 {{ model.session.simulatorTokens }} tokens
               </span>
             </div>
             <div v-if="variablePreview.length" class="mt-1 flex flex-wrap items-center gap-1">

@@ -134,9 +134,18 @@ export interface TurnVM {
   at: string
   ttft: number | null
   latency: number | null
-  promptTokens: number
-  completionTokens: number
-  tokens: number
+  /**
+   * 被测 Agent 的 usage（响应体 data.usage / metadata.usage）。
+   * 真实库 267 轮全部没有落 usage，这里就是 null —— 不能拿模拟器 tokens 冒充 Agent 用量。
+   */
+  agentPromptTokens: number | null
+  agentCompletionTokens: number | null
+  /** 输入 + 输出都有值才给合计，否则 null（避免只把半边计成「合计」） */
+  agentTokens: number | null
+  /** 模拟器（生成用户话术）的 tokens；全 0 视为未记录，不是 Agent 用量 */
+  simulatorPromptTokens: number | null
+  simulatorCompletionTokens: number | null
+  simulatorTokens: number | null
   /** 单轮执行才有轮次级总分；多轮为 null（界面显示 —） */
   score: number | null
   verdict: Verdict
@@ -188,7 +197,10 @@ export interface SessionStats {
   tagCount: number
   sessionTagCount: number
   avgLatency: number | null
-  totalTokens: number
+  /** 被测 Agent 的 usage 合计；所有轮都没有落 usage 时为 null（真实库即如此） */
+  agentTokens: number | null
+  /** 模拟器 tokens 合计；全部为 0 / 未记录时为 null */
+  simulatorTokens: number | null
   lowest: TurnVM | null
   sessionIds: string[]
   consistentSession: boolean
@@ -296,6 +308,12 @@ function str(value: unknown): string {
 
 function num(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/** 只累加有值的项；一项都没有时返回 null，不把「没记录」写成 0。 */
+function sumOrNull(values: Array<number | null>): number | null {
+  const known = values.filter((value): value is number => value !== null)
+  return known.length ? known.reduce((a, b) => a + b, 0) : null
 }
 
 function obj(value: unknown): Record<string, unknown> | null {
@@ -564,8 +582,12 @@ export function selfCheckPerformed(record: SelfCheckResult | null | undefined): 
   return Boolean(record) && record!.status !== 'SKIPPED'
 }
 
-/** 被测 Agent 本轮 usage：优先响应体 data.usage / usage，流式退 merged metadata；缺失返回 0。 */
-function usageOf(turn: TurnTrace): { prompt: number; completion: number } {
+/**
+ * 被测 Agent 本轮 usage：优先响应体 data.usage / usage，流式退 merged metadata。
+ * 真实库 267 轮都没有落 usage，因此这里返回 null 而不是 0 ——
+ * 0 会被渲染成「用量为 0」，而事实是「后端没记录」，两者不能混。
+ */
+function usageOf(turn: TurnTrace): { prompt: number | null; completion: number | null } {
   const response = obj(turn.response_raw)
   const body = obj(response?.body)
   const data = obj(body?.data)
@@ -573,7 +595,15 @@ function usageOf(turn: TurnTrace): { prompt: number; completion: number } {
   const usage = obj(data?.usage) ?? obj(body?.usage) ?? obj(meta?.usage)
   const prompt = num(usage?.prompt_tokens) ?? num(usage?.input_tokens)
   const completion = num(usage?.completion_tokens) ?? num(usage?.output_tokens)
-  return { prompt: prompt ?? 0, completion: completion ?? 0 }
+  return { prompt, completion }
+}
+
+/** 模拟器 tokens 全 0 视为未记录：真实库 267 轮里 213 轮两列都是 0，写「0 tokens」会误导。 */
+function simulatorUsageOf(turn: TurnTrace): { prompt: number | null; completion: number | null } {
+  const prompt = num(turn.simulator_prompt_tokens)
+  const completion = num(turn.simulator_completion_tokens)
+  if ((prompt ?? 0) === 0 && (completion ?? 0) === 0) return { prompt: null, completion: null }
+  return { prompt, completion }
 }
 
 /** finish_reason：从落库的原始响应报文读取（JSON body 或 SSE metadata），没有就留空降级。 */
@@ -651,6 +681,7 @@ export function buildTraceModel(detail: ExecutionDetail | null): TraceModel {
     }
     const response = obj(turn.response_raw)
     const usage = usageOf(turn)
+    const simulator = simulatorUsageOf(turn)
     const sql = turnSql(turn)
     const isLast = turn.turn_index === lastIndex
     // 归因没有轮次字段：单轮可视为本轮；多轮统一放会话级，避免伪造归属
@@ -691,12 +722,16 @@ export function buildTraceModel(detail: ExecutionDetail | null): TraceModel {
       at: turn.created_at,
       ttft: turn.ttft_ms,
       latency: turn.latency_ms,
-      // 被测 Agent 的逐轮 usage 优先（响应体 data.usage）；缺退模拟器 tokens（动态多轮），再退 0
-      promptTokens: usage.prompt || turn.simulator_prompt_tokens || 0,
-      completionTokens: usage.completion || turn.simulator_completion_tokens || 0,
-      tokens:
-        (usage.prompt || turn.simulator_prompt_tokens || 0) +
-        (usage.completion || turn.simulator_completion_tokens || 0),
+      agentPromptTokens: usage.prompt,
+      agentCompletionTokens: usage.completion,
+      agentTokens:
+        usage.prompt !== null && usage.completion !== null ? usage.prompt + usage.completion : null,
+      simulatorPromptTokens: simulator.prompt,
+      simulatorCompletionTokens: simulator.completion,
+      simulatorTokens:
+        simulator.prompt !== null && simulator.completion !== null
+          ? simulator.prompt + simulator.completion
+          : null,
       score: scoreValue,
       verdict,
       pass: verdict === 'pass',
@@ -761,7 +796,8 @@ export function buildTraceModel(detail: ExecutionDetail | null): TraceModel {
       new Set(turnVMs.flatMap((turn) => turn.sessionTags)).size,
     sessionTagCount: turnVMs.reduce((sum, turn) => sum + turn.sessionTags.length, 0),
     avgLatency: latencies.length ? latencies.reduce((a, b) => a + b, 0) / latencies.length : null,
-    totalTokens: turnVMs.reduce((sum, turn) => sum + turn.tokens, 0),
+    agentTokens: sumOrNull(turnVMs.map((turn) => turn.agentTokens)),
+    simulatorTokens: sumOrNull(turnVMs.map((turn) => turn.simulatorTokens)),
     lowest,
     sessionIds,
     consistentSession: sessionIds.length <= 1,

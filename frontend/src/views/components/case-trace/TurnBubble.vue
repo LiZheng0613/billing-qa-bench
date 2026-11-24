@@ -59,7 +59,9 @@ const timeLabel = computed(() => `${props.turn.at ? props.turn.at.slice(11, 19) 
         <span class="dot">·</span>
         {{ fmtMs(turn.latency) }}
         <span class="dot">·</span>
-        {{ turn.tokens }} tokens
+        <template v-if="turn.agentTokens !== null">{{ turn.agentTokens }} tokens</template>
+        <template v-else-if="turn.simulatorTokens !== null">模拟器 {{ turn.simulatorTokens }} tokens</template>
+        <template v-else>Agent 用量未记录</template>
       </span>
       <span class="fold" :class="{ on: collapsed }">
         {{ collapsed ? '展开' : '收起' }}
