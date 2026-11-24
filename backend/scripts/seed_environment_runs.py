@@ -4,8 +4,12 @@
     python scripts/seed_environment_runs.py --env-code QA-MOCK
 
 与 ``seed_demo_history.py`` 的分工：
-- ``seed_demo_history.py`` 在 ``QA-MOCK-JSON`` 上生成 5 条演示任务的 117 条批量执行；
+- ``seed_demo_history.py`` 在 ``QA-MOCK-JSON`` 上生成 9 条演示任务的批量执行；
 - 本脚本在 ``QA-MOCK``（SSE）上生成单笔调试执行，让环境对比页有两个真实环境可看。
+
+只排除两类用例：绑定已停用环境的 BUSINESS 错误用例（不能拿 SSE 环境覆盖它的绑定），
+以及慢响应用例（单跑约 30s，仅留给「在途终止」演示，不进入批量与环境回归）；
+其余 ACTIVE 用例都在该环境上真实执行一次。
 
 执行记录、轮次轨迹、裁判明细全部由 ``CaseExecutor`` 生产代码写入，脚本本身不构造
 任何判分字段、不改写时间；重跑会追加新记录，演示库重建后执行一次即可。
@@ -21,7 +25,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from sqlalchemy import select  # noqa: E402 - 先调整 sys.path 与输出编码
+from sqlalchemy import or_, select  # noqa: E402 - 先调整 sys.path 与输出编码
 
 from billing_qa.db.session import SessionLocal  # noqa: E402
 from billing_qa.models.enums import ExecutionSource  # noqa: E402
@@ -29,12 +33,25 @@ from billing_qa.models.environment import Environment  # noqa: E402
 from billing_qa.models.test_case import TestCase, TestCaseRevision  # noqa: E402
 from billing_qa.services.engine.executor import CaseExecutor  # noqa: E402
 
+# 慢响应用例只在「在途终止」演示中执行，避免 30s 单次调用拖长环境回归。
+SLOW_CASE_CODE = "DEMO-SINGLE-SLOW-ABORT"
+
 
 async def _load_cases(db) -> list[tuple[int, int, dict, str]]:
+    inactive_envs = select(Environment.id).where(Environment.is_active.is_(False))
     cases = (
         (
             await db.execute(
-                select(TestCase).where(TestCase.status == "ACTIVE").order_by(TestCase.id)
+                select(TestCase)
+                .where(
+                    TestCase.status == "ACTIVE",
+                    TestCase.code != SLOW_CASE_CODE,
+                    or_(
+                        TestCase.environment_id.is_(None),
+                        TestCase.environment_id.notin_(inactive_envs),
+                    ),
+                )
+                .order_by(TestCase.id)
             )
         )
         .scalars()

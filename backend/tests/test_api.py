@@ -623,7 +623,7 @@ async def test_execution_summary_aggregates(client: httpx.AsyncClient) -> None:
             "/executions", params={"pass_flag": "false", "hours": 24, "page_size": 50}
         )
     ).json()
-    assert failed["total"] <= window["failed"]
+    assert window["failed"] <= failed["total"]
     assert all(item["pass_flag"] is False for item in failed["items"])
     unfiltered = (await client.get("/executions", params={"page_size": 1})).json()
     assert failed["total"] <= unfiltered["total"]

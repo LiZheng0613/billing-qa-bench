@@ -12,7 +12,7 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 
 app = FastAPI(title="Mock OpenAI Compatible LLM", version="1.0.0")
 
@@ -172,6 +172,19 @@ def _judge_content(prompt: str, model: str) -> dict[str, Any]:
             },
             "error_tags": ["超出最大轮次", "未主动反问"],
             "reason": "对话达到最大轮次仍未解决用户诉求，目标达成项判 0 分。",
+        }
+    if termination == "GIVE_UP":
+        return {
+            "pass": False,
+            "total_score": 44,
+            "dimension_scores": {
+                "data_accuracy": 18,
+                "logic_consistency": 14,
+                "goal_completion": 4,
+                "tone_clarity": 8,
+            },
+            "error_tags": ["用户放弃追问", "目标未达成"],
+            "reason": "用户在第 1 轮即放弃追问，未获得所需账单信息，目标达成项接近 0 分。",
         }
     if model.endswith("judge-2"):
         return {
@@ -805,6 +818,10 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     messages = payload.get("messages") or []
     model = str(payload.get("model") or "mock-model")
     prompt = "\n".join(str(item.get("content") or "") for item in messages)
+
+    if "[MOCK:LLMERROR]" in prompt:
+        # 故障注入：模拟模型服务 5xx，验证执行错误分类与任务级自动重试。
+        raise HTTPException(status_code=500, detail="mock llm error injected")
 
     if "用户模拟器" in prompt or "你正在扮演一名真实的业务用户" in prompt:
         content: Any = _simulator_content(prompt)

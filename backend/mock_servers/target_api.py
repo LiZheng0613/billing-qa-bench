@@ -1143,6 +1143,63 @@ def _multi_bill_result(phones: list[str], period: str | None) -> dict[str, Any]:
     }
 
 
+def _multi_step_result(sub: dict[str, Any], period: str) -> dict[str, Any]:
+    """一次回答里真实走两步取数（账单 + 套餐用量），用于验证调用链多步展示。"""
+    total = float(sub["bill_total"])
+    items = sub["bill_items"]
+    cap = int(sub["data_total_gb"])
+    used = int(sub["data_used_gb"])
+    overage = max(0, used - cap)
+    answer = (
+        f"手机号 {sub['phone']} 在 {period} 的账单总额为 ¥{_money(total)}，共 {len(items)} 项费用；"
+        f"套餐流量共 {cap}GB、已用 {used}GB、超套 {overage}GB，"
+        f"超套费 ¥{_money(float(sub['data_overage_fee']))}。"
+    )
+    args = {"phone_no": sub["phone"], "period": period}
+    item_rows = _row_count({"items": items})
+    return {
+        "answer": answer,
+        "intent": "MULTI_STEP",
+        "generated_sql": _sql_for("BILL"),
+        "api_params": args,
+        "raw_db_data": {
+            "query_type": "MULTI_STEP",
+            "phone_no": sub["phone"],
+            "period": period,
+            "bill_total": total,
+            "item_count": len(items),
+            "data_total_gb": cap,
+            "data_used_gb": used,
+            "data_overage_fee": float(sub["data_overage_fee"]),
+            "items": items,
+        },
+        "tool_calls": [
+            {
+                "kind": "db_query",
+                "name": "执行账单取数",
+                "capability": "bill_query",
+                "status": "SUCCESS",
+                "query": _sql_for("BILL"),
+                "args": args,
+                "rows": item_rows,
+                "latency_ms": _TOOL_LATENCY_MS,
+                "result": {"row_count": item_rows, "query_type": "BILL"},
+            },
+            {
+                "kind": "db_query",
+                "name": "执行套餐用量取数",
+                "capability": "usage_query",
+                "status": "SUCCESS",
+                "query": _sql_for("USAGE"),
+                "args": args,
+                "rows": 1,
+                "latency_ms": _TOOL_LATENCY_MS + 74,
+                "result": {"row_count": 1, "query_type": "USAGE"},
+            },
+        ],
+    }
+
+
 def _assumption_bill_result(sub: dict[str, Any]) -> dict[str, Any]:
     items = sub["bill_items"]
     answer = (
@@ -1169,6 +1226,11 @@ def _assumption_bill_result(sub: dict[str, Any]) -> dict[str, Any]:
 def _resolve_result(
     query: str, history: Any, session_id: str, subscriber: dict[str, Any] | None
 ) -> dict[str, Any]:
+    # 多步取数：同一次回答里先查账单再查套餐用量，模拟真实 Agent 的两步工具调用。
+    if ("[MOCK:MULTISTEP]" in query or "分两步" in query) and subscriber is not None:
+        period_info = _extract_period(query)
+        period = period_info[0] if period_info else subscriber["bill_period"]
+        return _multi_step_result(subscriber, period)
     # 失败追问自检：评测平台在裁决失败后注入裁判理由发起的自检追问，
     # 返回确定性自检结论，便于端到端验证同会话追问链路。
     if ("自检" in query or "Self-Check" in query) and (
@@ -1300,6 +1362,9 @@ async def chat(request: Request):
 
     if "模拟崩溃" in query or "触发异常" in query:
         raise HTTPException(status_code=500, detail="mock internal error injected")
+    if "[MOCK:SLOW]" in query or "模拟慢响应" in query:
+        # 故意拉长响应时间，制造可被任务终止打断的在途执行窗口。
+        await asyncio.sleep(30)
 
     subscriber = _resolve_subscriber(query, history, session_id)
     order = _resolve_order(query, history, session_id)
@@ -1314,7 +1379,8 @@ async def chat(request: Request):
         result = _resolve_result(query, history, session_id, None)
     result = dict(result)
     result["session_id"] = session_id
-    result["tool_calls"] = _tool_calls_for(result)
+    if not result.get("tool_calls"):
+        result["tool_calls"] = _tool_calls_for(result)
     # 回显请求中的自定义参数（不含 query/history），便于离线断言变量注入是否生效
     result["received_params"] = {
         key: value for key, value in body.items() if key not in {"query", "history"}
@@ -1409,6 +1475,9 @@ async def agent_chat(request: Request) -> JSONResponse:
 
     if "模拟崩溃" in query or "触发异常" in query:
         raise HTTPException(status_code=500, detail="mock internal error injected")
+    if "[MOCK:SLOW]" in query or "模拟慢响应" in query:
+        # 故意拉长响应时间，制造可被任务终止打断的在途执行窗口。
+        await asyncio.sleep(30)
 
     subscriber = _resolve_subscriber(query, history, session_id)
     order = _resolve_order(query, history, session_id)
@@ -1425,7 +1494,8 @@ async def agent_chat(request: Request) -> JSONResponse:
     _AGENT_TURNS[conversation_id] = turn_no
     result = dict(result)
     result["sessionid"] = session_id
-    result["tool_calls"] = _tool_calls_for(result)
+    if not result.get("tool_calls"):
+        result["tool_calls"] = _tool_calls_for(result)
     result["conversationId"] = conversation_id
     result["turn"] = turn_no
     result["first_round"] = first_round

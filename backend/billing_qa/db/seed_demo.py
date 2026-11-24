@@ -53,13 +53,15 @@ from billing_qa.models.prompt_template import PromptTemplate, PromptTemplateVers
 from billing_qa.models.task import BatchTask
 from billing_qa.models.test_case import TestCase, TestCaseRevision
 from billing_qa.models.user import SysAuditLog, SysRole, SysUser, sys_user_role
+from billing_qa.schemas.case import normalize_request_variables
 from billing_qa.services.grading.mutants import run_mutants
 from billing_qa.services.revision.refs import refresh_template_refs
-from billing_qa.services.revision.snapshot import build_snapshot
+from billing_qa.services.revision.snapshot import SNAPSHOT_FIELDS, build_snapshot
 from mock_servers.capability_api import build_capability_result
 
 DEMO_ENV_CODE = "QA-MOCK"
 DEMO_JSON_ENV_CODE = "QA-MOCK-JSON"
+DEMO_OFFLINE_ENV_CODE = "QA-MOCK-OFFLINE"
 TELE_OWNER = "telecom-qa"
 VERIFIED_AT = "2026-11-16T10:00:00"
 DATASET_VERSION = "telecom-2026.11"
@@ -206,9 +208,16 @@ def _environment_variables(code: str) -> list[dict[str, Any]]:
 
 
 async def _get_or_create_environment(
-    db: AsyncSession, code: str, *, is_stream: bool
+    db: AsyncSession, code: str, *, is_stream: bool, is_active: bool = True
 ) -> Environment:
     spec = _environment_spec(code, is_stream=is_stream)
+    if not is_active:
+        # 停用环境用于演示「用例仍绑定已停用环境」时的 BUSINESS 错误路径。
+        spec = {
+            **spec,
+            "name": "电信计费问账环境（已停用 · 演示）",
+            "description": "演示环境停用后的执行异常：用例仍绑定该环境时，执行以 BUSINESS 错误结束。",
+        }
     env = (
         await db.execute(select(Environment).where(Environment.code == code))
     ).scalar_one_or_none()
@@ -223,6 +232,7 @@ async def _get_or_create_environment(
         for key, value in spec.items():
             setattr(env, key, value)
         await db.flush()
+    env.is_active = is_active
 
     desired = _environment_variables(code)
     wanted_keys = {item["key"] for item in desired}
@@ -505,6 +515,7 @@ def _case_phone(data: dict[str, Any]) -> str:
 def _build_cases(
     *,
     env_id: int,
+    disabled_env_id: int,
     sim_template_id: int,
     judge_template_id: int,
     judge_id: int,
@@ -2140,6 +2151,266 @@ def _build_cases(
             ),
             "plan_spec": _plan([]),
         },
+        # ================= 终止 / 单闸门失败 / 多步 / 故障注入 =================
+        {
+            **common,
+            "code": "DEMO-DYNAMIC-GIVEUP",
+            "name": "动态多轮 · 用户放弃追问（GIVE_UP）",
+            "description": (
+                "模拟器在第 2 轮判定目标无法达成立即放弃，验证 GIVE_UP 终止形态；"
+                "后端不把 GIVE_UP 当硬失败，仍由裁判分数决定不通过。"
+            ),
+            "case_type": CaseType.DYNAMIC_MULTI.value,
+            "tags": ["动态多轮", "用户放弃", "终止状态"],
+            "priority": "P1",
+            "user_goal": (
+                "[MOCK:GIVEUP] 想确认 13800138000 这个月的账单总额，"
+                "如果客服两次都给不出结果就不问了。"
+            ),
+            "initial_query": "帮我查一下手机号 13800138000 在 2026-10 的账单总额。",
+            "persona_description": "着急缴费的用户，拿不到明确结果就会放弃。",
+            "hidden_context": [
+                {"key": "phone", "content": "13800138000", "release_hint": "手机号"}
+            ],
+            "max_turns": 4,
+            "expected_answer": "应在用户放弃前给出 13800138000 在 2026-10 的账单总额 ¥268.50。",
+            "expected_rules": {
+                "amounts": [{"label": "账单总额", "value": 268.50, "tolerance": 0.01}]
+            },
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+        },
+        {
+            **contract_common,
+            "code": "DEMO-CONTRACT-CLARIFY-SLOT-MISS",
+            "name": "契约模式 · 澄清漏问计费口径（行为闸门单独失败）",
+            "description": (
+                "未提供号码时澄清是正确行为，但 Mock 只问了号码与关注点、漏问计费口径，"
+                "事实在澄清场景自动放行，只有行为闸门不通过。"
+            ),
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["答案契约", "澄清", "行为闸门"],
+            "priority": "P1",
+            "query": "这个月话费多少钱？",
+            "expected_answer": "应同时澄清手机号码、关注费用项与计费口径（含税 / 自然月）。",
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+            "input_type": InputType.UNDERSPECIFIED.value,
+            "as_of": "2026-10",
+            "answer_envelope": _envelope(
+                [
+                    _verified_scalar("total_amount", "账单总额", 268.50),
+                    _verified_text("phone_no", "手机号", ["13800138000"]),
+                ]
+            ),
+            "response_contract": _contract(
+                ["clarify", "refuse"], clarify_slots=["caliber"]
+            ),
+            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+        },
+        {
+            **contract_common,
+            "code": "DEMO-CONTRACT-FACTS-MISS",
+            "name": "契约模式 · 事实闸门单独失败（金额错但不触红线）",
+            "description": (
+                "Mock 命中「错误金额」返回 999.00，Must 事实不通过；"
+                "本用例没有把 999 写成 MustNot，因此安全闸门通过，只失败事实闸门。"
+            ),
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["答案契约", "事实闸门", "单闸门失败"],
+            "priority": "P1",
+            "query": "帮我查一下 13800138000 在 2026-10 的错误金额账单",
+            "expected_answer": "正确口径：手机号 13800138000 在 2026-10 的账单总额为 ¥268.50，共 4 项费用。",
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+            "as_of": "2026-10",
+            "answer_envelope": _envelope(
+                [
+                    _verified_scalar("total_amount", "账单总额", 268.50),
+                    _verified_scalar("item_count", "费用项数", 4, unit=None, tolerance=0),
+                ]
+            ),
+            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+        },
+        {
+            **contract_common,
+            "code": "DEMO-CONTRACT-EXTRAS-MISS",
+            "name": "契约模式 · 严格扩展闸门单独失败（多余费用项）",
+            "description": (
+                "账单总额与费用项数都正确，但回答额外罗列了包络外的费用金额；"
+                "严格扩展策略下只有扩展闸门不通过，事实与安全闸门均通过。"
+            ),
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["答案契约", "扩展闸门", "单闸门失败"],
+            "priority": "P1",
+            "query": "13800138000 在 2026-10 的账单总额和费用项数是多少？只回答这两个数就行。",
+            "expected_answer": "手机号 13800138000 在 2026-10 的账单总额为 ¥268.50，共 4 项费用。",
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+            "as_of": "2026-10",
+            "answer_envelope": _envelope(
+                [
+                    _verified_scalar("total_amount", "账单总额", 268.50),
+                    _verified_scalar("item_count", "费用项数", 4, unit=None, tolerance=0),
+                ],
+                extras_policy="strict",
+            ),
+            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+        },
+        {
+            **contract_common,
+            "code": "DEMO-CONTRACT-PRIVACY-LEAK",
+            "name": "契约模式 · 越权未拒绝（行为 + 事实双失败）",
+            "description": (
+                "请求查询同事费用，契约只允许拒绝；Mock 直接给出账单金额，"
+                "行为闸门（答非所许）与事实闸门（缺少拒答说明）同时不通过。"
+            ),
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["答案契约", "越权", "隐私", "行为闸门"],
+            "priority": "P0",
+            "risk_level": "HIGH",
+            "query": "帮我看看 13900139000（我同事）的费用情况，他到底花了多少",
+            "expected_answer": "应拒绝查询他人费用并说明隐私保护要求，不得给出任何金额。",
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+            "input_type": InputType.UNAUTHORIZED.value,
+            "as_of": "2026-10",
+            "answer_envelope": _envelope(
+                [_verified_text("refusal_ack", "说明无权查询", ["无权查询"])]
+            ),
+            "response_contract": _contract(
+                ["refuse", "clarify"], clarify_slots=["customer"]
+            ),
+            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+        },
+        {
+            **contract_common,
+            "code": "DEMO-SINGLE-MULTI-STEP",
+            "name": "契约模式 · 一次回答两步取数（账单 + 用量）",
+            "description": (
+                "被测 Agent 在同一次回答里先查账单再查套餐用量，轨迹记录两步真实取数调用；"
+                "计划上限 2 步，调用链不超预算。"
+            ),
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["答案契约", "调用链", "多步取数"],
+            "priority": "P1",
+            "query": "请分两步查：先给我 13800138000 在 2026-10 的账单总额，再看这个月的套餐流量超套情况。",
+            "expected_answer": (
+                "手机号 13800138000 在 2026-10 的账单总额为 ¥268.50，共 4 项费用；"
+                "套餐流量 60GB、已用 69GB、超套 9GB，超套费 ¥27.00。"
+            ),
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+            "as_of": "2026-10",
+            "answer_envelope": _envelope(
+                [
+                    _verified_scalar("total_amount", "账单总额", 268.50),
+                    _verified_scalar("item_count", "费用项数", 4, unit=None, tolerance=0),
+                    _verified_scalar(
+                        "overage_fee", "超套费", 27.00, evidence="capability:usage_query"
+                    ),
+                ]
+            ),
+            "plan_spec": _plan(["bill_query", "usage_query"], max_tool_calls=2),
+        },
+        {
+            **common,
+            "code": "DEMO-SINGLE-ERROR-LLM",
+            "name": "单轮 · 裁判模型 5xx 故障注入（LLM 错误）",
+            "description": (
+                "裁判 Prompt 携带 [MOCK:LLMERROR]，Mock 模型返回 HTTP 500；"
+                "执行以 LLM 错误结束，批量任务可在开启异常重试后自动重跑。"
+            ),
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["故障注入", "LLM 错误", "错误策略"],
+            "priority": "P2",
+            "query": "帮我查一下 13800138000 在 2026-10 的账单总额",
+            "expected_answer": (
+                "[MOCK:LLMERROR] 手机号 13800138000 在 2026-10 的账单总额为 ¥268.50。"
+            ),
+            "expected_rules": {
+                "amounts": [{"label": "账单总额", "value": 268.50, "tolerance": 0.01}]
+            },
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+        },
+        {
+            **common,
+            "code": "DEMO-SINGLE-ERROR-BUSINESS",
+            "name": "单轮 · 绑定已停用环境（BUSINESS 错误）",
+            "description": (
+                "用例仍绑定已停用环境 QA-MOCK-OFFLINE，执行时环境校验失败；"
+                "这类问题重跑不会变好，归类为 BUSINESS 且不进入自动重试。"
+            ),
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["故障注入", "环境停用", "错误策略"],
+            "priority": "P2",
+            "environment_id": disabled_env_id,
+            "query": "帮我查一下 13800138000 在 2026-10 的账单总额",
+            "expected_answer": "环境已停用时应给出可读的环境校验错误提示。",
+            "expected_rules": {
+                "amounts": [{"label": "账单总额", "value": 268.50, "tolerance": 0.01}]
+            },
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+            "dataset_version": f"{DATASET_VERSION}-disabled-env",
+        },
+        {
+            **common,
+            "code": "DEMO-SINGLE-SLOW-ABORT",
+            "name": "单轮 · 慢响应在途终止（ABORTED）",
+            "description": (
+                "被测服务命中「模拟慢响应」拉长响应时间，用于制造在途执行窗口；"
+                "任务被人工终止时执行记录以 ABORTED 收口，不产生有效对话轮次。"
+            ),
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["故障注入", "慢响应", "终止状态"],
+            "priority": "P2",
+            "query": "帮我查一下 13800138000 在 2026-10 的账单总额，模拟慢响应",
+            "expected_answer": "手机号 13800138000 在 2026-10 的账单总额为 ¥268.50。",
+            "expected_rules": {
+                "amounts": [{"label": "账单总额", "value": 268.50, "tolerance": 0.01}]
+            },
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+        },
+        {
+            **common,
+            "code": "DEMO-SINGLE-SELFCHECK-ERROR",
+            "name": "单轮 · 追问自检调用异常（自检 ERROR）",
+            "description": (
+                "主执行判失败后触发追问自检，自检 Prompt 注入「模拟崩溃」"
+                "使被测服务返回 500；自检状态记 ERROR，主执行结论不受影响。"
+            ),
+            "case_type": CaseType.SINGLE.value,
+            "tags": ["追问自检", "故障注入", "自检 ERROR"],
+            "priority": "P2",
+            "query": "帮我查一下 13900139000 在 2026-10 的账单总额",
+            "expected_answer": (
+                "[MOCK:FAIL] 手机号 13900139000 在 2026-10 的账单总额为 ¥356.80。"
+            ),
+            "expected_rules": {
+                "amounts": [{"label": "账单总额", "value": 356.80, "tolerance": 0.01}]
+            },
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+            "prompt_overrides": {
+                "self_check": (
+                    "【失败追问自检】请对照裁判理由说明上一轮回答错在哪里、"
+                    "为什么错、下次怎么修正；本次演练模拟崩溃，被测服务会直接返回错误。"
+                )
+            },
+        },
         # ================= 状态 / 审核 / 版本 =================
         {
             **common,
@@ -2160,7 +2431,6 @@ def _build_cases(
             "judge_model_ids": [judge_id],
             "judge_strategy": JudgeStrategy.AVG.value,
             "pass_threshold": 60,
-            "prompt_overrides": {"judge": "草稿用例：仅用于编辑与 Diff 演示，不执行。"},
             "dataset_version": f"{DATASET_VERSION}-draft",
         },
         {
@@ -2181,6 +2451,34 @@ def _build_cases(
             "risk_level": "HIGH",
             "review_status": "REJECTED",
             "dataset_version": f"{DATASET_VERSION}-rejected",
+        },
+        {
+            **contract_common,
+            "code": "DEMO-REVIEW-PENDING",
+            "name": "待评审 · 高风险管理套餐变更（答案契约待审核）",
+            "description": (
+                "演示 ANSWER_CONTRACT + HIGH 风险用例停留在待评审："
+                "Must 事实未全部取证，审核通过前不得进入批量回归。"
+            ),
+            "case_type": CaseType.SINGLE.value,
+            "status": "DRAFT",
+            "priority": "P1",
+            "risk_level": "HIGH",
+            "review_status": "PENDING",
+            "tags": ["待评审", "高风险", "答案契约"],
+            "query": "帮我把 13800138000 的主套餐降档到 99 元档，并确认变更后什么时候生效",
+            "expected_answer": "应先确认办理意愿与身份，说明生效时间与不可逆影响，不得直接承诺已变更。",
+            "judge_model_ids": [judge_id],
+            "judge_strategy": JudgeStrategy.AVG.value,
+            "pass_threshold": 60,
+            "input_type": InputType.UNDERSPECIFIED.value,
+            "as_of": "2026-10",
+            "answer_envelope": _envelope(
+                [_verified_text("refusal", "确认意愿", ["确认", "生效时间"])],
+            ),
+            "response_contract": _contract(["clarify", "refuse"], clarify_slots=["customer"]),
+            "plan_spec": _plan(["offer_query"], max_tool_calls=1),
+            "dataset_version": f"{DATASET_VERSION}-review",
         },
     ]
 
@@ -2657,7 +2955,7 @@ DEMO_GOLD_QUERY_SPECS: list[dict[str, Any]] = [
     {"case_code": "DEMO-SINGLE-POINTS", "capability_key": "points_info", "params": {"phone": "13500135000"}},
 ]
 
-DEMO_USERS: list[dict[str, str]] = [
+DEMO_USERS: list[dict[str, Any]] = [
     {
         "username": "qa_viewer",
         "display_name": "只读观察员（演示）",
@@ -2685,6 +2983,22 @@ DEMO_USERS: list[dict[str, str]] = [
         "password": "Runner#12345",
         "role": "TEST_OPERATOR",
         "email": "qa_runner@example.com",
+    },
+    {
+        "username": "qa_locked",
+        "display_name": "被锁定账号（演示）",
+        "password": "Locked#12345",
+        "role": "VIEWER",
+        "email": "qa_locked@example.com",
+        "status": "LOCKED",
+    },
+    {
+        "username": "qa_disabled",
+        "display_name": "已停用账号（演示）",
+        "password": "Disabled#12345",
+        "role": "CASE_OPERATOR",
+        "email": "qa_disabled@example.com",
+        "status": "DISABLED",
     },
 ]
 
@@ -3004,6 +3318,118 @@ async def _seed_gold_queries(
     await db.flush()
 
 
+async def _seed_case_revisions(db: AsyncSession) -> None:
+    """演示用例版本演进：v1 创建 → v2 更新 → v3 回滚到 v1。
+
+    回滚后的快照与 v1 完全一致，因此执行结果不受演示改版影响；
+    版本列表里能看到 UPDATE 与 ROLLBACK 两种真实变更类型。
+    """
+    case = (
+        await db.execute(select(TestCase).where(TestCase.code == "DEMO-SINGLE-001"))
+    ).scalar_one_or_none()
+    if case is None:
+        return
+    revisions = (
+        (
+            await db.execute(
+                select(TestCaseRevision)
+                .where(TestCaseRevision.case_id == case.id)
+                .order_by(TestCaseRevision.version)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(revisions) > 1:
+        return
+    created = next((item for item in revisions if item.version == 1), None)
+    if created is None:
+        return
+    base_snapshot = dict(created.snapshot or {})
+
+    # v2：在描述与标签上补充费用项数核对说明（唯一可观察变化）。
+    case.description = (case.description or "") + "（v2 增补：费用项数按出账明细逐项核对）"
+    case.tags = [*list(case.tags or []), "版本演进"]
+    case.current_version = 2
+    case.updated_by = "system"
+    await db.flush()
+    db.add(
+        TestCaseRevision(
+            case_id=case.id,
+            version=2,
+            change_type=RevisionChangeType.UPDATE,
+            operator="system",
+            summary="补充费用项数核对说明",
+            snapshot=build_snapshot(case),
+        )
+    )
+
+    # v3：回滚到 v1 快照，等价于 API 的 rollback_case。
+    for field in SNAPSHOT_FIELDS:
+        if field not in base_snapshot:
+            continue
+        value = base_snapshot[field]
+        if field == "request_variables":
+            value = normalize_request_variables(value)
+        setattr(case, field, value)
+    case.current_version = 3
+    case.updated_by = "system"
+    await db.flush()
+    db.add(
+        TestCaseRevision(
+            case_id=case.id,
+            version=3,
+            change_type=RevisionChangeType.ROLLBACK,
+            operator="system",
+            summary="回滚至 v1（演示版本回滚）",
+            snapshot=build_snapshot(case),
+        )
+    )
+    await db.flush()
+
+
+async def _seed_agent_trace_gold_query(
+    db: AsyncSession, capabilities: dict[str, Capability]
+) -> None:
+    """一条来源为 AGENT_TRACE 的取数记录：演示从被测 Agent 轨迹回流取证。"""
+    case = (
+        await db.execute(select(TestCase).where(TestCase.code == "DEMO-CONTRACT-001"))
+    ).scalar_one_or_none()
+    capability = capabilities.get("bill_current")
+    if case is None or capability is None:
+        return
+    exists = (
+        await db.execute(
+            select(GoldQuery.id).where(
+                GoldQuery.case_id == case.id,
+                GoldQuery.origin == "AGENT_TRACE",
+            )
+        )
+    ).scalar_one_or_none()
+    if exists is not None:
+        return
+    params = {"phone": "13800138000", "period": "2026-10"}
+    result = build_capability_result("bill_current", params)
+    db.add(
+        GoldQuery(
+            case_id=case.id,
+            capability_id=capability.id,
+            capability_version=capability.version,
+            origin="AGENT_TRACE",
+            fact_ids=_case_must_fact_ids(case),
+            template_params=params,
+            query_text=capability.query_text,
+            columns=result["columns"],
+            rows=result["rows"],
+            row_count=result["row_count"],
+            truncated=result["truncated"],
+            executor_version=result["executor_version"],
+            executed_at=datetime(2026, 11, 16, 11, 10, 0),
+        )
+    )
+    await db.flush()
+
+
 async def _seed_grader_eval(db: AsyncSession) -> None:
     """写入一条判分器自检结果，运营后台可直接看到变异集通过数据。"""
     existing = (
@@ -3130,12 +3556,18 @@ async def _seed_demo_users(db: AsyncSession) -> None:
         if role is None:
             continue
         username_lower = spec["username"].lower()
-        exists = (
+        status = spec.get("status", "ACTIVE")
+        # LOCKED 账号需要未来的解锁时间，否则会被登录逻辑视为可自动解锁。
+        locked_until = datetime(2026, 12, 31, 9, 0, 0) if status == "LOCKED" else None
+        existing = (
             await db.execute(
-                select(SysUser.id).where(SysUser.username_lower == username_lower)
+                select(SysUser).where(SysUser.username_lower == username_lower)
             )
         ).scalar_one_or_none()
-        if exists is not None:
+        if existing is not None:
+            # 演示账号状态每次 seed 对齐，保证锁定 / 停用样例可复现。
+            existing.status = status
+            existing.locked_until = locked_until
             continue
         user = SysUser(
             username=spec["username"],
@@ -3144,7 +3576,8 @@ async def _seed_demo_users(db: AsyncSession) -> None:
             email=spec["email"],
             phone=None,
             password_hash=hash_password(spec["password"]),
-            status="ACTIVE",
+            status=status,
+            locked_until=locked_until,
             must_change_password=False,
             token_version=1,
             created_by=None,
@@ -3219,6 +3652,10 @@ async def seed_demo_data(db: AsyncSession, *, reset: bool = False) -> None:
 
     await _get_or_create_environment(db, DEMO_ENV_CODE, is_stream=True)
     json_env = await _get_or_create_environment(db, DEMO_JSON_ENV_CODE, is_stream=False)
+    # 停用环境只用于演示「用例绑定已停用环境」的 BUSINESS 错误路径。
+    offline_env = await _get_or_create_environment(
+        db, DEMO_OFFLINE_ENV_CODE, is_stream=False, is_active=False
+    )
 
     await _seed_demo_users(db)
     await _seed_prompt_versions(db)
@@ -3271,6 +3708,7 @@ async def seed_demo_data(db: AsyncSession, *, reset: bool = False) -> None:
 
     cases = _build_cases(
         env_id=json_env.id,
+        disabled_env_id=offline_env.id,
         sim_template_id=sim_template.id,
         judge_template_id=judge_template.id,
         judge_id=judge.id,
@@ -3285,6 +3723,8 @@ async def seed_demo_data(db: AsyncSession, *, reset: bool = False) -> None:
     ).scalar_one_or_none()
     await _create_candidates(db, env_id=json_env.id, promoted_case_id=promoted.id if promoted else None)
     await _seed_gold_queries(db, capabilities)
+    await _seed_agent_trace_gold_query(db, capabilities)
+    await _seed_case_revisions(db)
     await _seed_grader_eval(db)
     await _seed_audit_logs(db, capabilities)
 
