@@ -150,8 +150,8 @@ batch_test/
 │   │       └── io/            # 导入导出：用例 JSON、执行结果 Excel、用例 Excel（历史兼容）
 │   ├── migrations/            # Alembic 迁移脚本
 │   ├── mock_servers/          # 内置 Mock：LLM(8001)、被测客服系统(8002) 与取数执行器(8003)
-│   ├── scripts/               # api_smoke.py / e2e_smoke.py / seed_demo_history.py / migrate_mysql_to_postgres.py
-│   ├── tests/                 # 404 项 pytest
+│   ├── scripts/               # api_smoke.py / e2e_smoke.py / seed_demo_history.py / seed_environment_demo.py / migrate_mysql_to_postgres.py
+│   ├── tests/                 # 508 项 pytest
 │   ├── alembic.ini
 │   ├── pyproject.toml
 │   └── .env.example
@@ -219,8 +219,9 @@ python -m billing_qa.db.init_db --demo --reset
 python -m uvicorn billing_qa.main:app --host 127.0.0.1 --port 8000
 ```
 
-- `--reset` 会删除 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` / `grader_eval` / `capability` / `data_source` / `sys_audit_log` 中的全部数据，并清理 `test-*` / `xzc` 等测试模型，保留环境、模型、Prompt、内置角色与管理员，再重新写入演示用例、业务口径、候选池、取数能力、取证记录与演示审计。
+- `--reset` 会删除 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` / `grader_eval` / `capability` / `data_source` / `sys_audit_log` 中的全部数据，并清理 `test-*` / `xzc` 等测试模型与 `DEMO-ENV-*` 环境对比演示环境，保留其余环境、模型、Prompt、内置角色与管理员，再重新写入演示用例、业务口径、候选池、取数能力、取证记录与演示审计。
 - 需要演示大盘、趋势、Run 对比、续做与定时计划时，再执行 `python scripts/seed_demo_history.py`：脚本会真实调用 Mock 服务生成 3 条已完成的批量任务（全量回归 / 单轮与契约专项 / 动态多轮专项）、1 条中断后可续做的任务、1 条每日定时任务，以及对应的执行记录、轮次轨迹、裁判明细与失败追问自检，并把时间戳回填到近 3 天。脚本幂等，重复执行只重建 `DEMO-TASK-*`。
+- 需要演示「按执行环境对比」时，再执行 `python scripts/seed_environment_demo.py`：脚本幂等重建 `DEMO-ENV-BASE` / `DEMO-ENV-PROMPT-V2` / `DEMO-ENV-TOOL-V3` 三个调优环境及近 30 天共 1214 条执行记录（通过率约 58% / 74% / 86%）；`--purge` 只清理这批演示环境与执行记录。
 
 > 表结构只有一条链路：`init_db` 内部调用 `billing_qa.db.migrations.upgrade_schema()`，即 `alembic upgrade head`（空库会按迁移脚本从零建表），不再使用 `create_all` 或 `alembic stamp`。后续结构变更仍是 `alembic revision --autogenerate` + `alembic upgrade head`。
 
@@ -241,7 +242,7 @@ python -m uvicorn mock_servers.target_api:app --host 127.0.0.1 --port 8002
 python -m uvicorn mock_servers.capability_api:app --host 127.0.0.1 --port 8003
 ```
 
-- 演示数据源 `MOCK-CYPHER-TOOL` 指向 `http://127.0.0.1:8003`，内置 14 条取数能力（账单、费用明细、套餐用量、offer 目录/已订购、余额、欠费、漫游、增值业务、宽带、发票、积分、套餐合约、客户画像）。运营后台「数据源 / 取数能力 / 取证记录」可直接探活、执行取证并生成 GoldQuery；执行参数示例：`{"phone":"13800138000","period":"2026-10"}`。
+- 演示数据源 `MOCK-CYPHER-TOOL` 指向 `http://127.0.0.1:8003`，内置 14 条取数能力（账单、费用明细、套餐用量、offer 目录/已订购、余额、欠费、漫游、增值业务、宽带、发票、积分、套餐合约、客户画像）。运营后台「数据源 / 取数能力 / 取证记录」可直接探活、执行取证并生成 GoldQuery；执行参数示例：`{"phone":"13800138000","period":"2026-10"}`。执行器只读：含 `SET` / `DELETE` 等写关键字返回 `403 QUERY_FORBIDDEN`，未知能力或缺少 `capability:<key>` 标记返回 `422 INVALID_REQUEST`，`params.__error` 传入 `TIMEOUT` / `INTERNAL` 可注入 `504` / `502` 演示异常链路。
 
 - Mock 被测系统内置电信计费问账数据：账单 / 套餐月费与合约 / 套餐用量 / 账户余额 / offer 订购五类数据型问题为主，外加国际漫游、增值业务、欠费停机、融合宽带/IPTV 等场景，完整口径见 [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md)。
 - Mock 支持注入指令，用于稳定复现失败 / 熔断 / 异常等质量场景（写在用例 `query` / `expected_answer` / 隐藏上下文中即可触发）：
@@ -280,14 +281,14 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 | 资产 | 内容 |
 | --- | --- |
-| 环境 | `QA-MOCK-JSON`：Agent 报文（Basic 鉴权 + 前置取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso`），**61 条演示用例默认绑定**；`QA-MOCK`：SSE 流式演示环境 |
+| 环境 | `QA-MOCK-JSON`：Agent 报文（Basic 鉴权 + 前置取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso`），**61 条演示用例默认绑定**；`QA-MOCK`：SSE 流式演示环境；`DEMO-ENV-BASE` / `DEMO-ENV-PROMPT-V2` / `DEMO-ENV-TOOL-V3`：三套调优方案的环境对比数据（近 30 天，通过率约 58% / 74% / 86%，`seed_environment_demo.py` 生成） |
 | 用例 | 61 条（59 `ACTIVE` + 1 `DRAFT` + 1 `DISABLED`；27 条答案契约 + 32 条 4 维评分），全部带 `userid` / `custid` 请求变量（`userid` 取自话术中的号码，数字按字符串保存） |
 | 业务资产 | 6 个模型、4 套 Prompt（7 个版本）、14 条业务口径、8 条候选（NEW / TRIAGED / PROMOTED / REJECTED）、2 个数据源、14 条取数能力、12 条取证记录、1 条判分器自检、5 个演示账号 |
-| 历史数据 | 5 条批量任务（3 完成 + 1 中断可续做 + 1 每日定时）+ 117 条执行明细、轮次轨迹、裁判明细与失败追问自检（`seed_demo_history.py` 生成） |
+| 历史数据 | 5 条批量任务（3 完成 + 1 中断可续做 + 1 每日定时）+ 117 条执行明细、轮次轨迹、裁判明细与失败追问自检（`seed_demo_history.py` 生成）；另有 1214 条环境对比执行记录（`seed_environment_demo.py` 生成） |
 
 用例逐条清单与预期结果、Mock 数据口径、演示任务构成见 [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md)。
 
-> 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据；正式演示前依次执行 `python -m billing_qa.db.init_db --demo --reset` 与 `python scripts/seed_demo_history.py` 即可恢复基线。
+> 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据；正式演示前依次执行 `python -m billing_qa.db.init_db --demo --reset`、`python scripts/seed_demo_history.py` 与 `python scripts/seed_environment_demo.py` 即可恢复基线。
 
 ---
 
@@ -563,7 +564,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 ```powershell
 cd backend
-python -m pytest -q          # 404 passed（Mock / PostgreSQL 依赖不可用时自动 skip）
+python -m pytest -q          # 508 passed（Mock / PostgreSQL 依赖不可用时自动 skip）
 python -m ruff check billing_qa scripts tests
 ```
 
@@ -642,7 +643,7 @@ npm run test:e2e    # 「AI 帮我填」主链路回归
 | 用例保存后版本未变 | 仅字段实际变更才会生成新版本；如需强制留痕可在变更说明中记录 |
 | 导入失败 | 页面入口仅支持 `.json`；先用页面「导入 JSON」走 dry-run 预览，逐条错误会列在弹窗中（格式见 [`docs/CASE_JSON_FORMAT.md`](docs/CASE_JSON_FORMAT.md)） |
 | 删除环境 / 模型返回 409 | 资产仍被用例或任务引用（模型另受「启用中的模拟器 / 编写模型不可删」保护）；先解除引用或停用后再删除，详见 §6.1 |
-| 演示库出现 `PYTEST-*` / `BATCH20*` 用例或任务 | 运行测试脚本留下的临时数据；执行 `python -m billing_qa.db.init_db --demo --reset` 与 `python scripts/seed_demo_history.py` 恢复演示基线 |
+| 演示库出现 `PYTEST-*` / `BATCH20*` 用例或任务 | 运行测试脚本留下的临时数据；执行 `python -m billing_qa.db.init_db --demo --reset`、`python scripts/seed_demo_history.py` 与 `python scripts/seed_environment_demo.py` 恢复演示基线 |
 
 ---
 

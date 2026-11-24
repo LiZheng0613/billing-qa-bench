@@ -28,6 +28,24 @@ app = FastAPI(title="Mock Telecom Cypher Tool", version="0.1.0")
 
 TOOL_VERSION = "mock-cypher-v0.1"
 CAPABILITY_MARKER = re.compile(r"capability[:\s]+([a-zA-Z0-9_]+)")
+CAPABILITY_KEYS = frozenset(
+    {
+        "bill_current",
+        "bill_items",
+        "usage_current",
+        "offer_available",
+        "offer_ordered",
+        "balance_account",
+        "arrears_status",
+        "roaming_usage",
+        "vas_items",
+        "broadband_bundle",
+        "invoice_info",
+        "points_info",
+        "package_contract",
+        "customer_profile",
+    }
+)
 WRITE_KEYWORDS = re.compile(r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP)\b", re.IGNORECASE)
 
 _LOGS: list[dict[str, Any]] = []
@@ -369,24 +387,7 @@ async def meta() -> dict[str, Any]:
         "read_only": True,
         "max_rows": 200,
         "timeout_ms": 10000,
-        "capabilities": sorted(
-            {
-                "bill_current",
-                "bill_items",
-                "usage_current",
-                "offer_available",
-                "offer_ordered",
-                "balance_account",
-                "arrears_status",
-                "roaming_usage",
-                "vas_items",
-                "broadband_bundle",
-                "invoice_info",
-                "points_info",
-                "package_contract",
-                "customer_profile",
-            }
-        ),
+        "capabilities": sorted(CAPABILITY_KEYS),
     }
 
 
@@ -492,7 +493,7 @@ async def execute(request: Request) -> JSONResponse:
         )
 
     capability_key = capability_key_from_query(query)
-    if not capability_key:
+    if not capability_key or capability_key not in CAPABILITY_KEYS:
         elapsed = (time.perf_counter() - started) * 1000
         _log(
             session_id=session_id,
@@ -503,12 +504,14 @@ async def execute(request: Request) -> JSONResponse:
             elapsed_ms=elapsed,
             error="INVALID_REQUEST",
         )
+        message = (
+            "无法识别查询模板（缺少 capability:<key> 标记）"
+            if not capability_key
+            else f"未知取数能力: {capability_key}"
+        )
         return JSONResponse(
             status_code=422,
-            content={
-                "code": "INVALID_REQUEST",
-                "message": "无法识别查询模板（缺少 capability:<key> 标记）",
-            },
+            content={"code": "INVALID_REQUEST", "message": message},
         )
 
     result = build_capability_result(capability_key, {**params, "phone": phone})

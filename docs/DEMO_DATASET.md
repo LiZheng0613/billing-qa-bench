@@ -10,8 +10,9 @@
 
 ```powershell
 cd backend
-python -m billing_qa.db.init_db --demo --reset   # 清空用例/执行/取数资产后重建（幂等）
-python scripts/seed_demo_history.py              # 重建 5 条演示任务（3 完成 + 1 中断 + 1 定时）
+python -m billing_qa.db.init_db --demo --reset      # 清空用例/执行/取数资产后重建（幂等）
+python scripts/seed_demo_history.py                 # 重建 5 条演示任务（3 完成 + 1 中断 + 1 定时）
+python scripts/seed_environment_demo.py             # 重建 3 个环境对比演示环境与近 30 天执行记录
 ```
 
 - `seed_demo.py` 幂等：每次执行都会把环境配置、用例绑定、请求变量、数据源、取数能力、取证记录与演示账号对齐当前代码口径；
@@ -116,7 +117,7 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 
 | 资产 | 规模 |
 | --- | --- |
-| 环境 | 2 个（`QA-MOCK-JSON` 默认用于 61 条用例，`QA-MOCK` 流式保留） |
+| 环境 | 5 个（`QA-MOCK-JSON` 默认用于 61 条用例，`QA-MOCK` 流式保留；另有 3 个环境对比演示环境 `DEMO-ENV-BASE` / `DEMO-ENV-PROMPT-V2` / `DEMO-ENV-TOOL-V3`） |
 | 模型 | 6 个（`MOCK-SIM` 模拟器 + 双裁判 `MOCK-JUDGE` / `MOCK-JUDGE-2` + `MOCK-AUTHOR` 编写 + 2 个停用的 OpenCode 模型示例） |
 | Prompt 模板 | 4 套（模拟器 / 裁判 / 编写 / 自检），其中模拟器、裁判、自检各有 v2 版本，可演示版本 Diff、引用影响面与 LATEST 解析 |
 | 请求变量 | 全部用例带 `userid` / `custid`；数字统一按字符串保存 |
@@ -127,7 +128,7 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 | 取证记录 | 12 条 GoldQuery（覆盖主要合同/单轮场景，含事实 ID、入参、列与结果行） |
 | 判分器自检 | 1 条内置变异集结果（5/5 识别、0 误杀） |
 | 演示账号 | 5 个（管理员 + 只读 / 编写 / 评审 / 执行各 1 个） |
-| 审计日志 | 7 条演示记录（登录、建用户、探活、能力认证、用例更新、Prompt 发布），无测试脚本残留 |
+| 审计日志 | 7 条演示种子（登录、建用户、探活、能力认证、用例更新、Prompt 发布）；后续登录会正常追加 |
 | 历史任务 | 5 条（3 条已完成 + 1 条中断可续做 + 1 条每日定时） |
 
 `seed_demo_history.py` 真实调用 Mock 服务生成执行记录、轮次轨迹与裁判明细，并回填近 3 天历史时间：
@@ -141,6 +142,16 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 | `DEMO-TASK-005` 每日账单回归（定时演示） | 5 条核心账单用例 | 每日 09:00 触发，初始不执行 |
 
 合计 117 条执行明细与 142 条事实级判分结果（`fact_result`）。
+
+`seed_environment_demo.py` 另行生成「按执行环境对比」数据，供 `/stats` 的环境对比页演示：
+
+| 环境 | 调优思路 | 近 30 天执行量 | 通过率 |
+| --- | --- | --- | --- |
+| `DEMO-ENV-BASE` | 基线 Prompt v1，上下文未压缩 | 407 | 58.5% |
+| `DEMO-ENV-PROMPT-V2` | 精简 Prompt + 结构化输出 | 394 | 74.1% |
+| `DEMO-ENV-TOOL-V3` | 工具调用增强 + 失败自检 | 413 | 86.4% |
+
+这批记录全部是真实 `execution_record`，可被 `/executions/summary` 与 `/executions/environment-summary` 聚合，不影响上面 5 条 `DEMO-TASK-*` 任务。`--purge` 只清理这 3 个环境及其执行记录。
 
 ## 6. 取数资产与 Mock 能力
 
@@ -180,6 +191,8 @@ python -m uvicorn mock_servers.capability_api:app --host 127.0.0.1 --port 8003
 | `customer_profile` | 客户画像与账户信息 | DEPRECATED（停用） |
 
 运营后台「执行取证」示例：选择 `bill_current`、用例 `DEMO-CONTRACT-001`，参数填 `{"phone":"13800138000","period":"2026-10"}`，即可生成一条新的 GoldQuery。`init_db --demo` 已预置 12 条取证记录，覆盖合同与重点单轮场景，不需要先启动 8003 也能查看。
+
+Mock 执行器同时提供可复现的失败样本：未知能力或缺少 `capability:<key>` 标记返回 `422 INVALID_REQUEST`，`SET` / `DELETE` 等写关键字返回 `403 QUERY_FORBIDDEN`，`params.__error` 传 `TIMEOUT` / `INTERNAL` 返回 `504` / `502`，未知号码返回 200 + 0 行。契约由 `backend/tests/test_capability_mock.py` 覆盖。
 
 ## 7. 演示账号
 

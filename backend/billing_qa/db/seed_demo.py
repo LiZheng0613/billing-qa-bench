@@ -2714,6 +2714,10 @@ async def purge_cases(db: AsyncSession) -> None:
     await db.execute(SysAuditLog.__table__.delete())
     await db.execute(TestCaseRevision.__table__.delete())
     await db.execute(TestCase.__table__.delete())
+    # 环境对比演示数据由 scripts/seed_environment_demo.py 单独重建
+    await db.execute(
+        Environment.__table__.delete().where(Environment.code.like("DEMO-ENV-%"))
+    )
     await db.commit()
 
 

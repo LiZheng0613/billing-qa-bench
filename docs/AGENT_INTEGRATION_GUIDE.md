@@ -304,7 +304,7 @@ Mock 已内置等价接口（启动 `uvicorn mock_servers.target_api:app --port 
 | `POST /api/v1/agent/chat` | 校验 Basic 头；`message.sessionid` 为空视为首轮并生成 `sessionid`；回显 `received` |
 
 > 内置演示环境 **`QA-MOCK-JSON`** 已按本文配置好（Agent 报文、Basic 鉴权、前置 `conversationId`、时间戳），
-> 57 条演示用例默认绑定该环境，可直接执行或调试验证。
+> 61 条演示用例默认绑定该环境，可直接执行或调试验证。
 
 手工验证命令（PowerShell）：
 
