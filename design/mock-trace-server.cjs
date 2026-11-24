@@ -1988,10 +1988,10 @@ const TASK = {
   status: 'COMPLETED', // TaskStatus 枚举（enums.py:53），无 FINISHED 值
   control_state: 'FINISHED', // 完成态（scheduler.py:374/535/745）
   environment_id: 12,
-  case_ids: [900211, 900212, 900213, 900214, 900215],
-  total_cases: 5,
-  finished_cases: 5,
-  pass_count: 4,
+  case_ids: [900211, 900212],
+  total_cases: 2,
+  finished_cases: 2,
+  pass_count: 1,
   fail_count: 1,
   error_count: 0,
   max_turns_count: 5,
@@ -2041,6 +2041,96 @@ const TASK2 = {
   error_count: 0,
   max_turns_count: 5,
   enable_self_check: false,
+}
+
+// ---------------------------------------------------------------- 任务详情（面包屑回跳）
+/** 演示任务下的执行：900101 只挂 900001/900002，其余都在 900102。 */
+const TASK_EXECUTIONS = {
+  [TASK_ID]: [900001, 900002],
+  [DEMO_TASK_ID]: [900003, 900004, 900005, 900006, 900007, 900008, 900009],
+}
+
+/** CaseExecutionItem 键形（frontend/src/types.ts:934），只从执行记录派生。 */
+function caseExecutionItem(record) {
+  return {
+    id: record.id,
+    task_id: record.task_id,
+    task_name: record.task_name,
+    case_id: record.case_id,
+    case_code: record.case_code,
+    case_name: record.case_name,
+    source: record.source,
+    status: record.status,
+    attempt_no: record.attempt_no,
+    attempt_count: record.attempt_count,
+    error_kind: record.error_kind,
+    pass_flag: record.pass_flag,
+    total_score: record.total_score,
+    case_version: record.case_version,
+    turns_used: record.turns_used,
+    latency_ms: record.latency_ms,
+    ttft_ms: record.ttft_ms,
+    started_at: record.started_at,
+    finished_at: record.finished_at,
+    self_check_status: record.self_check?.status ?? null,
+  }
+}
+
+/** TaskMetrics 键形（frontend/src/types.ts:1106）；progress / pass_rate 都是百分数。 */
+function taskMetricsOf(task, records) {
+  const distribution = {
+    PASS: 0,
+    FAIL: 0,
+    ERROR: 0,
+    MAX_TURNS_EXCEEDED: 0,
+    REPETITION_ABORT: 0,
+    ABORTED: 0,
+    RUNNING: 0,
+    PENDING: 0,
+  }
+  records.forEach((record) => {
+    if (distribution[record.status] !== undefined) distribution[record.status] += 1
+  })
+  const avg = (values) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0)
+  const scores = records.map((record) => record.total_score).filter((value) => typeof value === 'number')
+  const latencies = records
+    .map((record) => record.latency_ms)
+    .filter((value) => typeof value === 'number')
+    .sort((left, right) => left - right)
+  const p95 = latencies.length ? latencies[Math.min(latencies.length - 1, Math.ceil(latencies.length * 0.95) - 1)] : 0
+  const totalCases = task.total_cases || records.length
+  const elapsedSeconds = records.reduce((sum, record) => sum + (record.latency_ms ?? 0), 0) / 1000
+  const passCount = records.filter((record) => record.pass_flag === true).length
+  return {
+    task_id: task.id,
+    status: task.status,
+    control_state: task.control_state,
+    total_cases: totalCases,
+    finished_cases: task.finished_cases ?? records.length,
+    progress: totalCases ? ((task.finished_cases ?? records.length) / totalCases) * 100 : 0,
+    status_distribution: distribution,
+    pass_rate: totalCases ? (passCount / totalCases) * 100 : 0,
+    avg_score: avg(scores),
+    avg_ttft_ms: avg(records.map((record) => record.ttft_ms).filter((value) => typeof value === 'number')),
+    avg_latency_ms: avg(latencies),
+    p95_latency_ms: p95,
+    avg_turns: avg(records.map((record) => record.turns_used).filter((value) => typeof value === 'number')),
+    simulator_tokens: records.reduce((sum, record) => sum + (record.simulator_tokens ?? 0), 0),
+    judge_tokens: records.reduce((sum, record) => sum + (record.judge_tokens ?? 0), 0),
+    total_tokens: records.reduce(
+      (sum, record) => sum + (record.simulator_tokens ?? 0) + (record.judge_tokens ?? 0),
+      0,
+    ),
+    env_retry_count: 0,
+    retry_count: 0,
+    eta_seconds: null,
+    elapsed_seconds: elapsedSeconds,
+    throughput_per_minute: elapsedSeconds ? (records.length / elapsedSeconds) * 60 : 0,
+  }
+}
+
+function taskRecordsOf(taskId) {
+  return (TASK_EXECUTIONS[taskId] ?? []).map((id) => EXECUTIONS[id]).filter(Boolean)
 }
 
 const ME = {
@@ -2125,6 +2215,27 @@ const server = http.createServer(async (req, res) => {
       case_snapshot: record.case_snapshot,
       turns: record.raw_request_response.map((item) => ({ ...item, judge_prompt: null })),
       judges: judge ? [{ model: judge.model_name, prompt: judge.judge_prompt }] : [],
+    })
+  }
+  const taskSubMatch = path.match(/^\/api\/v1\/tasks\/(\d+)\/(metrics|executions|retry-candidates)$/)
+  if (req.method === 'GET' && taskSubMatch) {
+    const taskId = Number(taskSubMatch[1])
+    const task = { [TASK_ID]: TASK, [DEMO_TASK_ID]: TASK2 }[taskId]
+    if (!task) return sendJson(res, 404, { code: 'NOT_FOUND', message: '任务不存在' })
+    const records = taskRecordsOf(taskId)
+    if (taskSubMatch[2] === 'metrics') return sendJson(res, 200, taskMetricsOf(task, records))
+    if (taskSubMatch[2] === 'executions') {
+      // 演示数据每个用例只有一次执行，筛选 / 排序参数不影响结果，只回显分页
+      const page = Number(url.searchParams.get('page') ?? 1)
+      const pageSize = Number(url.searchParams.get('page_size') ?? 30)
+      const items = records.map(caseExecutionItem)
+      return sendJson(res, 200, { items, total: items.length, page, page_size: pageSize })
+    }
+    const failed = records.filter((record) => record.pass_flag === false)
+    return sendJson(res, 200, {
+      groups: failed.length ? [{ status: 'FAIL', case_ids: failed.map((record) => record.case_id) }] : [],
+      total: failed.length,
+      retrying_cases: [],
     })
   }
   const taskMatch = path.match(/^\/api\/v1\/tasks\/(\d+)$/)
