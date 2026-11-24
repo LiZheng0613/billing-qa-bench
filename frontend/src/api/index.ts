@@ -643,8 +643,10 @@ export const api = {
 
   // ---------------------------------------------------------------- 运营：统计
   stats: {
-    overview: () => http.get<FactStatsOverview>('/stats/overview'),
-    facts: (query?: { case_id?: number; since?: string; until?: string }) =>
+    /** 时间窗参数：不传时后端默认只统计近 30 天（stats_default_window_days）。 */
+    overview: (query?: { since?: string; until?: string; all_time?: boolean }) =>
+      http.get<FactStatsOverview>('/stats/overview', query),
+    facts: (query?: { case_id?: number; since?: string; until?: string; all_time?: boolean }) =>
       http.get<FactStatItem[]>('/stats/facts', query),
     datasets: () => http.get<DatasetStatItem[]>('/stats/datasets'),
   },

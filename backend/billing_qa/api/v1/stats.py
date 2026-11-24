@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.core.authz import require_module_access
+from billing_qa.core.config import settings
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import ExecutionSource
 from billing_qa.models.execution import ExecutionRecord
@@ -22,6 +23,13 @@ router = APIRouter(
     tags=["统计"],
     dependencies=[Depends(require_module_access("stats:read", ("stats:read",)))],
 )
+
+
+def _window_start(since: datetime | None, all_time: bool) -> datetime | None:
+    """默认时间窗：未显式指定起点且未要求全史时，统计近 N 天（可配置）。"""
+    if since is not None or all_time:
+        return since
+    return datetime.now() - timedelta(days=settings.stats_default_window_days)
 
 
 def _rate(passed: int, total: int) -> float:
@@ -49,6 +57,9 @@ async def fact_stats(
     case_id: int | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
+    all_time: bool = Query(
+        default=False, description="忽略默认时间窗，统计全部历史"
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> list[FactStatItem]:
     conditions = [
@@ -57,6 +68,7 @@ async def fact_stats(
     ]
     if case_id:
         conditions.append(ExecutionRecord.case_id == case_id)
+    since = _window_start(since, all_time)
     if since:
         conditions.append(FactResult.created_at >= since)
     if until:
@@ -78,7 +90,24 @@ async def fact_stats(
 
 
 @router.get("/overview", response_model=FactStatsOverview, summary="契约执行与事实总览")
-async def stats_overview(db: AsyncSession = Depends(get_db)) -> FactStatsOverview:
+async def stats_overview(
+    since: datetime | None = None,
+    until: datetime | None = None,
+    all_time: bool = Query(
+        default=False, description="忽略默认时间窗，统计全部历史"
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> FactStatsOverview:
+    window = _window_start(since, all_time)
+    exec_conditions = [
+        ExecutionRecord.grading_mode == "ANSWER_CONTRACT",
+        ExecutionRecord.source != ExecutionSource.SANDBOX,
+    ]
+    if window:
+        # ExecutionRecord 的业务时间列是 started_at（带索引 ix_execution_started）
+        exec_conditions.append(ExecutionRecord.started_at >= window)
+    if until:
+        exec_conditions.append(ExecutionRecord.started_at <= until)
     exec_row = (
         await db.execute(
             select(
@@ -90,20 +119,25 @@ async def stats_overview(db: AsyncSession = Depends(get_db)) -> FactStatsOvervie
                     "lucky"
                 ),
                 func.avg(ExecutionRecord.total_score).label("avg_score"),
-            ).where(
-                ExecutionRecord.grading_mode == "ANSWER_CONTRACT",
-                ExecutionRecord.source != ExecutionSource.SANDBOX,
-            )
+            ).where(*exec_conditions)
         )
     ).one()
+    fact_conditions = [
+        # 沙盒试跑不进入事实统计口径（与 fact_stats / 执行总览保持一致）。
+        ExecutionRecord.source != ExecutionSource.SANDBOX
+    ]
+    if window:
+        fact_conditions.append(FactResult.created_at >= window)
+    if until:
+        fact_conditions.append(FactResult.created_at <= until)
     fact_row = (
         await db.execute(
             select(
                 func.count(FactResult.id).label("total"),
                 func.sum(case((FactResult.passed.is_(True), 1), else_=0)).label("passed"),
-            ).join(ExecutionRecord, ExecutionRecord.id == FactResult.execution_id)
-            # 沙盒试跑不进入事实统计口径（与 fact_stats / 执行总览保持一致）。
-            .where(ExecutionRecord.source != ExecutionSource.SANDBOX)
+            )
+            .join(ExecutionRecord, ExecutionRecord.id == FactResult.execution_id)
+            .where(*fact_conditions)
         )
     ).one()
 
@@ -117,7 +151,7 @@ async def stats_overview(db: AsyncSession = Depends(get_db)) -> FactStatsOvervie
                 func.max(FactResult.created_at).label("last_run_at"),
             )
             .join(ExecutionRecord, ExecutionRecord.id == FactResult.execution_id)
-            .where(ExecutionRecord.source != ExecutionSource.SANDBOX)
+            .where(*fact_conditions)
             .group_by(FactResult.fact_id, FactResult.label)
         )
     ).all()

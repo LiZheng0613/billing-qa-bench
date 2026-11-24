@@ -55,7 +55,9 @@ class Settings(BaseSettings):
     postgres_password: str = "postgres"
     postgres_db: str = "batch_test"
     postgres_maintenance_db: str = "postgres"
-    postgres_pool_size: int = 10
+    # 连接池默认 20（峰值 20+40=60，仍低于 PG 默认 max_connections=100）：
+    # 除页面请求外还有自动化平台经 API 调用、调度器 worker 的短会话借还。
+    postgres_pool_size: int = 20
     postgres_pool_recycle: int = 1800
     database_url: str | None = None
 
@@ -78,6 +80,10 @@ class Settings(BaseSettings):
     max_turns_hard_limit: int = 20
     repetition_similarity_threshold: float = 0.9
     task_retention_days: int = 30
+    # 统计接口（/stats/facts、/stats/overview）默认时间窗（天）：不传时间参数时
+    # 只统计近 N 天，避免全库无界聚合随执行量线性变慢；显式传 since/until
+    # 或 all_time=true 可覆盖（前端提供「全部」选项）。
+    stats_default_window_days: int = 30
     schedule_poll_interval_seconds: float = 15.0
     # 任务运行锁 TTL：多实例下实例崩溃后锁自然过期，允许其他实例接管续做
     task_run_lock_ttl_seconds: float = 60.0

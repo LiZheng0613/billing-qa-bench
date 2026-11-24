@@ -139,16 +139,38 @@ const overview = ref<FactStatsOverview | null>(null)
 const factStats = ref<FactStatItem[]>([])
 const datasets = ref<DatasetStatItem[]>([])
 
+/** 统计时间窗：默认近 30 天（与后端 stats_default_window_days 一致），
+ * 「全部」走 all_time 覆盖后端默认窗口。 */
+const STATS_WINDOWS = [
+  { value: '7', label: '近 7 天' },
+  { value: '30', label: '近 30 天' },
+  { value: '90', label: '近 90 天' },
+  { value: 'all', label: '全部' },
+] as const
+type StatsWindowValue = (typeof STATS_WINDOWS)[number]['value']
+const statsWindow = ref<StatsWindowValue>('30')
+
+function statsQuery(): { since?: string; all_time?: boolean } {
+  if (statsWindow.value === 'all') return { all_time: true }
+  const days = Number(statsWindow.value)
+  return { since: new Date(Date.now() - days * 86_400_000).toISOString() }
+}
+
 async function loadStats(): Promise<void> {
+  const query = statsQuery()
   const [overviewData, factsData, datasetData] = await Promise.all([
-    api.stats.overview(),
-    api.stats.facts(),
+    api.stats.overview(query),
+    api.stats.facts(query),
     api.stats.datasets(),
   ])
   overview.value = overviewData
   factStats.value = factsData
   datasets.value = datasetData
 }
+
+watch(statsWindow, () => {
+  void loadStats()
+})
 
 // ---------------------------------------------------------------- 事实验收
 const factCases = ref<TestCase[]>([])
@@ -899,6 +921,21 @@ const topFacts = computed(() => factStats.value.filter((item) => item.passed < i
 
     <!-- ------------------------------------------------------- 事实统计 -->
     <div v-if="tab === 'stats'" class="space-y-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-xs text-slate-500">统计时间窗</span>
+        <button
+          v-for="item in STATS_WINDOWS"
+          :key="item.value"
+          class="btn-ghost btn-xs"
+          :class="statsWindow === item.value ? '!bg-slate-900 !text-white' : ''"
+          @click="statsWindow = item.value"
+        >
+          {{ item.label }}
+        </button>
+        <span class="text-[11px] text-slate-400">
+          默认近 30 天，避免全量历史聚合拖慢页面；「全部」可查看完整历史
+        </span>
+      </div>
       <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div class="card p-4">
           <p class="text-xs text-slate-500">契约执行数</p>
