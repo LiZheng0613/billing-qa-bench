@@ -888,7 +888,11 @@ async function copyTraceUid(): Promise<void> {
                 }}
               </p>
               <p v-else-if="noneJudged" class="truncate text-[10px] text-slate-500">
-                {{ model.turns.length }} 轮均未判定 · 无轮次级分数与门槛
+                {{
+                  model.turns.length === 1
+                    ? '本轮未判定 · 无轮次级分数与门槛'
+                    : `${model.turns.length} 轮均未判定 · 无轮次级分数与门槛`
+                }}
               </p>
               <p v-else class="truncate text-[10px] text-slate-500">
                 {{ model.session.passCount }} 轮通过<template v-if="model.session.warnCount">

@@ -688,7 +688,16 @@ export function buildTraceModel(detail: ExecutionDetail | null): TraceModel {
     let verdict: Verdict
     if (single && detail) {
       const passed = detail.pass_flag === true
-      verdict = passed ? 'pass' : scoreValue !== null && scoreValue >= passLine.value ? 'warn' : 'fail'
+      if (passed) {
+        verdict = 'pass'
+      } else if (scoreValue !== null) {
+        verdict = scoreValue >= passLine.value ? 'warn' : 'fail'
+      } else {
+        // 单轮但既没有轮次分、也没有执行级总分（如裁判 5xx 收口为 ERROR、只有一条
+        // 已落库的轮次轨迹）：只有落库的门槛/契约确实失败才判「未通过」，
+        // 否则本轮无判定依据，按「未判定」展示，不拿执行级 pass_flag=false 反推本轮结论。
+        verdict = gateOk ? 'unknown' : 'fail'
+      }
     } else if (scoreValue !== null) {
       verdict = gateOk && scoreValue >= passLine.value ? 'pass' : scoreValue >= passLine.value ? 'warn' : 'fail'
     } else if (!rules.length && !contract) {
