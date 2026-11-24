@@ -1016,8 +1016,11 @@ function legacyJudge({ id, score, dimensionScores, tags = [], reason, threshold,
 
 /** LEGACY 执行级聚合（judge.py:326-340 键形；policy_notes 由硬门槛追加） */
 function legacyAggregate({ score, dimensionScores, tags = [], reason, threshold, judgeTokens, policyNotes = [] }) {
+  // pass 是 LLM 裁判自己的裁决（judge.py:308-318 + AVG 阈值），规则硬校验的否决
+  // 由 executor.py:507-513 合到 ExecutionRecord.pass_flag，不回写 judge_result.pass；
+  // 900003 就是「82 分、LLM 判过、规则未过」→ pass_flag=false 但这里仍是 true。
   return {
-    pass: score >= threshold && policyNotes.length === 0,
+    pass: score >= threshold,
     total_score: score,
     dimension_scores: dimensionScores,
     dimension_labels: DIMENSION_LABELS,
