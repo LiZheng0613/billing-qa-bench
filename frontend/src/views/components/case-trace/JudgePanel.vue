@@ -245,7 +245,7 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
         },
       ]
     }
-    // 旧 RUBRIC 执行（当前库 1226 条）只有执行级分数与结论，说清缺什么，不拿「没有轮次」一句带过
+    // 旧 RUBRIC 执行只有执行级分数与结论，说清缺什么，不拿「没有轮次」一句带过
     if (props.model.gradingMode === 'RUBRIC') {
       const scoreText = props.score.toFixed(1)
       const base = used
@@ -309,10 +309,19 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
       }
       if (weak.length) parts.push({ text: `，${weak.join('、')} 低于 80%` })
       parts.push({ text: '。' })
-    } else if (weak.length) {
-      parts.push({ text: `；${weak.join('、')} 低于 80%。` })
     } else {
-      parts.push({ text: '。' })
+      if (weak.length) parts.push({ text: `；${weak.join('、')} 低于 80%` })
+      if (contractMode) {
+        // 契约模式的 pass 只由闸门决定：分数与结论并列时必须说清，免得读成「分数决定通过」
+        parts.push({
+          text:
+            turn.verdict === 'pass'
+              ? '；契约闸门全部通过，质量分只作参考。'
+              : '；契约闸门未全过或终止状态否决，质量分不参与 pass。',
+        })
+      } else {
+        parts.push({ text: '。' })
+      }
     }
     return parts
   }
