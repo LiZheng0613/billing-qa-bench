@@ -47,6 +47,11 @@ const emit = defineEmits<{
   (e: 'focus-tag', tag: string, index: number): void
 }>()
 
+/** tokens 缺失写「—」，不把「未记录」写成 0 */
+function tokenText(value: number | null): string {
+  return value === null ? '—' : String(value)
+}
+
 const SECTIONS: Array<{ key: DrawerSection; label: string; icon: string }> = [
   { key: 'turn', label: '本轮', icon: 'layers' },
   { key: 'judge', label: '判定', icon: 'scale' },
@@ -69,6 +74,11 @@ const passLineSource = computed(() => PASS_LINE_SOURCE_LABEL[props.model.passLin
 const finishReason = computed(() => finishReasonOf(props.turn?.turn))
 const multiTurn = computed(() => props.turns.length > 1)
 const hasSql = computed(() => Boolean(props.turn?.sql))
+/**
+ * SQL 在两处：`turn_trace.generated_sql` 列与响应体 `body.data.generated_sql`。
+ * 真实库 267 行该列全空，实际都来自响应体；标注要写清楚本次到底取自哪里，不能一律写 response_raw。
+ */
+const sqlFromColumn = computed(() => Boolean(props.turn?.turn.generated_sql))
 
 const evidenceTabs = computed<Array<{ key: EvidTab; label: string; group: number }>>(() => {
   const tabs: Array<{ key: EvidTab; label: string; group: number }> = [
@@ -158,6 +168,10 @@ const executionPassed = computed(() => props.model.executionPassed)
 
 const judgePrompt = computed(() => props.model.judges.find((judge) => judge.judge_prompt)?.judge_prompt ?? '')
 const judgeRaw = computed(() => (props.model.judges[0]?.raw_response as unknown) ?? null)
+/** 多裁判时原始返回只是第 1 位裁判的报文，不能让人以为是裁决合并结果 */
+const judgeRawScope = computed(() =>
+  props.model.judges.length > 1 ? `第 1 / ${props.model.judges.length} 位裁判` : '',
+)
 const judgeModel = computed(() => {
   const names = props.model.judges.map((judge) => judge.model_name).filter(Boolean)
   return names.length ? [...new Set(names)].join(' / ') : '未记录'
@@ -165,6 +179,15 @@ const judgeModel = computed(() => {
 const judgeTokens = computed(() =>
   props.model.judges.reduce((sum, judge) => sum + (judge.prompt_tokens ?? 0) + (judge.completion_tokens ?? 0), 0),
 )
+/**
+ * 裁判 tokens 的来源：RUBRIC 执行没有 judge_result 行（真实库 1214 条全无），
+ * 但 execution_record.judge_tokens 有值；这时只能给执行级合计，不能说「未记录」。
+ */
+const judgeTokensInfo = computed<{ value: number; scope: 'judge' | 'execution' | 'none' }>(() => {
+  if (judgeTokens.value > 0) return { value: judgeTokens.value, scope: 'judge' }
+  const total = props.detail?.judge_tokens ?? 0
+  return total > 0 ? { value: total, scope: 'execution' } : { value: 0, scope: 'none' }
+})
 /** 本轮结论优先；多轮没有轮次级 reason 时明确标注为会话级结论 */
 const judgeConclusion = computed(() => {
   const turn = props.turn
@@ -248,6 +271,32 @@ const sessionAvg = computed(() => {
   return scores.reduce((a, b) => a + b, 0) / scores.length
 })
 
+/**
+ * 会话级卡片的分数：优先执行级权威分（LEGACY 综合分 / 契约质量分）。
+ * 原实现取 `model.judges[0].total_score`，那是单个裁判的分（真实 17425 两位裁判 94 / 88，执行级 AVG 91），
+ * 标成「执行级综合分」会张冠李戴；执行级分缺失时才退回轮次均分并注明口径。
+ */
+const sessionScoreInfo = computed<{ value: number | null; label: string }>(() => {
+  const total = props.model.totalScore
+  if (total !== null) {
+    return {
+      value: total,
+      label: props.model.gradingMode === 'ANSWER_CONTRACT' ? '质量分参考' : '执行级综合分',
+    }
+  }
+  const avg = sessionAvg.value
+  if (avg !== null) {
+    return {
+      value: avg,
+      label: props.model.gradingMode === 'ANSWER_CONTRACT' ? '质量分参考（轮次均分）' : '轮次均分（执行级未记录）',
+    }
+  }
+  return {
+    value: null,
+    label: props.model.gradingMode === 'ANSWER_CONTRACT' ? '质量分参考' : '执行级综合分',
+  }
+})
+
 /** 会话级口径：unknown 既不算通过也不算失败，避免多轮无判定时臆造「通过」。 */
 const decidedTurns = computed(() => props.turns.filter((item) => item.verdict !== 'unknown'))
 
@@ -256,6 +305,7 @@ const execPassed = computed<boolean | null>(() => {
   if (typeof props.detail?.pass_flag === 'boolean') return props.detail.pass_flag
   return null
 })
+const execPassLabel = computed(() => (execPassed.value === null ? '未记录' : String(execPassed.value)))
 /** 会话级口径：有 pass_flag 时跟执行级结论；没有时才按轮次聚合，unknown 不算通过也不失败。 */
 const sessionVerdictLabel = computed(() => {
   if (execPassed.value !== null) {
@@ -273,18 +323,35 @@ const sessionScoreTotal = computed(() => {
   const scored = decidedTurns.value.filter((item) => item.score !== null)
   if (!scored.length) return ''
   const sum = scored.reduce((acc, item) => acc + (item.score ?? 0), 0)
-  return `${fmtScore(sum)} / ${scored.length * 100}`
+  const partial = scored.length < props.turns.length ? `（${scored.length}/${props.turns.length} 轮有分）` : ''
+  return `${fmtScore(sum)} / ${scored.length * 100}${partial}`
 })
-/** 四维只对有轮次级四维的轮次取均值；后端不提供轮次四维时降级为「—」。 */
-const sessionDimText = computed(() => {
+/**
+ * 四维只对有轮次级四维的轮次取均值。同一维度不是每轮都有：
+ * 缺该维度的轮次不参与该维度均值（不能按 0 计入，否则凭空拉低分数）；
+ * 完全没有轮次级四维时退回执行级四维，并把标签改成「执行级」。
+ */
+const sessionDimInfo = computed<{ text: string; label: string }>(() => {
   const withDims = props.turns.filter((item) => item.dimensions.length > 0)
-  if (!withDims.length) return ''
-  return withDims[0].dimensions
-    .map((_, index) => {
-      const sum = withDims.reduce((acc, item) => acc + (item.dimensions[index]?.value ?? 0), 0)
-      return fmtScore(sum / withDims.length)
-    })
-    .join(' / ')
+  if (withDims.length) {
+    const text = withDims[0].dimensions
+      .map((dim) => {
+        const values = withDims
+          .map((item) => item.dimensions.find((entry) => entry.key === dim.key)?.value)
+          .filter((value): value is number => typeof value === 'number')
+        return values.length ? fmtScore(values.reduce((a, b) => a + b, 0) / values.length) : '—'
+      })
+      .join(' / ')
+    const partial = withDims.length < props.turns.length ? `（${withDims.length}/${props.turns.length} 轮有分）` : ''
+    return { text: `${text}${partial}`, label: '四维均分' }
+  }
+  if (props.model.dimensions.length) {
+    return {
+      text: props.model.dimensions.map((dim) => fmtScore(dim.value)).join(' / '),
+      label: '四维得分（执行级）',
+    }
+  }
+  return { text: '', label: '四维均分' }
 })
 /** 会话级归因没有轮次归属：抽屉里只展示去重后的标签，不挂 T 号、不做跳转。 */
 const sessionTagsAll = computed(() => [...new Set(props.turns.flatMap((item) => item.sessionTags))])
@@ -318,15 +385,26 @@ const toast = useToastStore()
 async function copyJudgeFlow(): Promise<void> {
   const turn = props.turn
   if (!turn) return
+  const contract = props.model.gradingMode === 'ANSWER_CONTRACT'
+  const scoreName = contract ? '质量分' : '综合分'
+  const attribution = `错误归因 ${tags.value.length + sessionTags.value.length} 条`
+  /** 多轮只有整通一次裁决：复制文本也必须写清是执行级结论，不能挂到本轮 */
+  const verdictLine = multiTurn.value
+    ? `执行级 pass = ${execPassLabel.value} · 执行级${scoreName} ${fmtScore(props.model.totalScore)} · ${attribution}（整通一次裁决，不归属本轮）`
+    : contract
+      ? `质量分 ${fmtScore(turn.score)} · ${attribution}（pass 不由裁判给出，按契约闸门计算）`
+      : `pass = ${turn.pass} · ${scoreName} ${fmtScore(turn.score)} · ${attribution}`
   const parts = [
     `流程裁决 · T${turn.index}`,
     `用户问题：${turn.query || '—'}`,
-    `裁判模型：${judgeModel.value}${judgeTemperature.value !== null ? ` · temperature ${judgeTemperature.value}` : ''}`,
-    `返回：pass = ${turn.pass} · ${props.model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '综合分'} ${fmtScore(turn.score)} · 错误归因 ${tags.value.length + sessionTags.value.length} 条`,
+    `裁判模型：${judgeModel.value}${judgeTemperature.value !== null ? ` · temperature ${judgeTemperature.value}` : ''}${judgeTokensInfo.value.value ? ` · 裁判 tokens ${judgeTokensInfo.value.value}${judgeTokensInfo.value.scope === 'execution' ? '（执行级合计）' : ''}` : ' · 裁判 tokens 未记录'}`,
+    `返回：${verdictLine}`,
     `结论：${judgeConclusion.value}`,
   ]
   if (judgePrompt.value) parts.push('', '--- 裁决 Prompt ---', judgePrompt.value)
-  if (judgeRaw.value) parts.push('', '--- 裁判返回 ---', pretty(judgeRaw.value))
+  if (judgeRaw.value) {
+    parts.push('', judgeRawScope.value ? `--- 裁判返回（${judgeRawScope.value}）---` : '--- 裁判返回 ---', pretty(judgeRaw.value))
+  }
   const ok = await copyText(parts.join('\n'))
   if (ok) toast.success('已复制')
   else toast.error('复制失败')
@@ -392,8 +470,10 @@ const selfTriggerValue = computed(() => {
           <span>时延 {{ fmtMs(turn.latency) }}</span>
           <span class="dot">·</span>
           <span>{{ turn.steps.length }} 步</span>
-          <span class="dot">·</span>
-          <span>tokens {{ turn.tokens }}</span>
+          <template v-if="turn.agentTokens !== null">
+            <span class="dot">·</span>
+            <span>tokens {{ turn.agentTokens }}</span>
+          </template>
           <span class="dot">·</span>
           <span>{{ scoreInfo.label }} <b :class="{ low: turn.score === null || turn.score < passLine }">{{ fmtScore(turn.score) }}</b></span>
         </div>
@@ -807,7 +887,7 @@ const selfTriggerValue = computed(() => {
                   <TraceIcon name="code" :size="11" />
                   <span>裁判原始返回</span>
                   <span class="sp" />
-                  <b>{{ judgeRaw ? '已记录' : '未记录' }}</b>
+                  <b>{{ judgeRaw ? (judgeRawScope ? `${judgeRawScope} · 已记录` : '已记录') : '未记录' }}</b>
                   <span class="go">›</span>
                 </button>
                 <div v-if="rowOpen('jres')" class="djbody">
@@ -818,8 +898,11 @@ const selfTriggerValue = computed(() => {
             <div v-else class="dempty">执行记录既没有裁决 Prompt，也没有裁判原始返回。</div>
             <div class="dkv" style="margin-top: 8px">
               <div class="kv"><span class="k">裁判模型</span><span class="v">{{ judgeModel }}</span></div>
-              <div class="kv"><span class="k">裁判 tokens</span><span class="v">{{ judgeTokens || '未记录' }}</span></div>
+              <div class="kv"><span class="k">裁判 tokens</span><span class="v">{{ judgeTokensInfo.value || '未记录' }}<em v-if="judgeTokensInfo.scope === 'execution'">执行级合计（judge_result 明细未落库）</em></span></div>
               <div class="kv"><span class="k">trace</span><span class="v">{{ traceUid || '未记录' }}</span></div>
+            </div>
+            <div v-if="judgeRawScope" class="dsub">
+              本执行由 {{ model.judges.length }} 位裁判交叉裁决；上面展开的是{{ judgeRawScope }}的原始返回，不代表合并后的执行级结论。
             </div>
           </section>
         </template>
@@ -835,10 +918,22 @@ const selfTriggerValue = computed(() => {
               <div class="dstat"><div class="dl">最慢一步</div><div class="dv">{{ slowest ? fmtMs(slowest.ms) : '—' }}</div></div>
             </div>
             <div class="dgrid">
-              <div class="dstat"><div class="dl">输入 tokens</div><div class="dv">{{ turn.promptTokens }}</div></div>
-              <div class="dstat"><div class="dl">输出 tokens</div><div class="dv">{{ turn.completionTokens }}</div></div>
-              <div class="dstat"><div class="dl">合计 tokens</div><div class="dv">{{ turn.tokens }}</div></div>
+              <div class="dstat"><div class="dl">输入 tokens</div><div class="dv">{{ tokenText(turn.agentPromptTokens) }}</div></div>
+              <div class="dstat"><div class="dl">输出 tokens</div><div class="dv">{{ tokenText(turn.agentCompletionTokens) }}</div></div>
+              <div class="dstat"><div class="dl">合计 tokens</div><div class="dv">{{ tokenText(turn.agentTokens) }}</div></div>
               <div class="dstat"><div class="dl">工具种类</div><div class="dv">{{ toolCount }} 个</div></div>
+            </div>
+            <div class="dnote">
+              <TraceIcon name="info" :size="11" />
+              <span>
+                <template v-if="turn.agentTokens === null">
+                  Agent 用量未记录（响应体里没有 usage 字段），不按 0 计。
+                </template>
+                <template v-else>取自本轮响应体的 usage。</template>
+                <template v-if="turn.simulatorTokens !== null">
+                  模拟器（生成用户话术）另用 {{ turn.simulatorTokens }} tokens，不计入 Agent 用量。
+                </template>
+              </span>
             </div>
           </section>
 
@@ -926,7 +1021,11 @@ const selfTriggerValue = computed(() => {
               </div>
               <div class="kv">
                 <span class="k">响应形态</span>
-                <span class="v">{{ turn.responseMode === 'sse' ? `流式 · ${turn.responseFrames ?? '—'} 帧` : '非流式 JSON' }}</span>
+                <span class="v">
+                  <template v-if="turn.responseMode === 'sse'">流式 · {{ turn.responseFrames ?? '—' }} 帧</template>
+                  <template v-else-if="turn.responseMode === 'json'">非流式 JSON</template>
+                  <template v-else>执行记录未保存响应形态</template>
+                </span>
               </div>
             </div>
             <CopyBox
@@ -945,8 +1044,11 @@ const selfTriggerValue = computed(() => {
               <span v-if="turn.responseMode === 'sse'">
                 流式响应：共 {{ turn.responseFrames ?? '—' }} 帧，这里展示的是聚合后的内容。
               </span>
-              <span v-else>
+              <span v-else-if="turn.responseMode === 'json'">
                 响应体来自执行记录；<code>answer</code> 字段保留原始标记，界面按行渲染，不修改原文。
+              </span>
+              <span v-else>
+                本轮执行记录里没有响应报文，因此没有响应头 / 响应体可展示。
               </span>
             </div>
           </div>
@@ -1074,14 +1176,16 @@ const selfTriggerValue = computed(() => {
             <CopyBox
               title="生成的 SQL"
               :value="turn.sql"
-              note="response_raw"
+              :note="sqlFromColumn ? 'turn_trace.generated_sql' : 'response_raw'"
               kind="text"
               :empty="'本轮未生成 SQL'"
               :max-height="'40vh'"
             />
             <div class="dnote">
               <TraceIcon name="info" :size="11" />
-              <span>SQL 来自本轮响应体，只用于核对取数口径，不作为回复正文。</span>
+              <span>
+                SQL 来自{{ sqlFromColumn ? '本轮落库的 generated_sql' : '本轮响应体（generated_sql 列为空）' }}，只用于核对取数口径，不作为回复正文。
+              </span>
             </div>
           </div>
 
@@ -1090,6 +1194,7 @@ const selfTriggerValue = computed(() => {
               <span>流程裁决</span>
               <span class="badge">输入 → 裁判 → 返回 → 校验</span>
               <span class="sp" />
+              <span v-if="multiTurn" class="badge">执行级 · 整通一次裁决</span>
               <span class="badge">
                 {{ judgeModel }}<template v-if="judgeTemperature !== null"> · temp {{ judgeTemperature }}</template>
               </span>
@@ -1111,16 +1216,29 @@ const selfTriggerValue = computed(() => {
                 </div>
                 <div class="ln">
                   <span class="k">调用</span>
-                  <span class="v">{{ judgeModel }}<em>裁判 tokens {{ judgeTokens || '未记录' }}</em></span>
+                  <span class="v">{{ judgeModel }}<em>裁判 tokens {{ judgeTokensInfo.value || '未记录' }}{{ judgeTokensInfo.scope === 'execution' ? '（执行级合计）' : '' }}{{ multiTurn ? ' · 整通一次裁决' : '' }}</em></span>
                 </div>
                 <div class="ln">
                   <span class="k">返回</span>
                   <span class="v">
                     <template v-if="model.gradingMode === 'ANSWER_CONTRACT'">
-                      质量分 {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}；pass 不由裁判给出，按契约闸门计算</em>
+                      <template v-if="multiTurn">
+                        执行级质量分 {{ fmtScore(model.totalScore) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}；质量分与闸门都是执行级结果，不拆到本轮</em>
+                      </template>
+                      <template v-else>
+                        质量分 {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}；pass 不由裁判给出，按契约闸门计算</em>
+                      </template>
                     </template>
                     <template v-else>
-                      pass = {{ turn.pass }} · 综合分 {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}</em>
+                      <template v-if="multiTurn">
+                        执行级 pass = {{ execPassLabel }} · 执行级综合分 {{ fmtScore(model.totalScore) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}</em>
+                      </template>
+                      <template v-else-if="turn.verdict === 'unknown'">
+                        pass 未判定 · 综合分 {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}</em>
+                      </template>
+                      <template v-else>
+                        pass = {{ turn.pass }} · 综合分 {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}</em>
+                      </template>
                     </template>
                   </span>
                 </div>
@@ -1132,8 +1250,13 @@ const selfTriggerValue = computed(() => {
                       <em>契约模式的 pass 只看四项闸门与终止状态，质量分高低不改变 pass</em>
                     </template>
                     <template v-else>
-                      按分数 pass {{ turn.score === null ? '未提供轮次分' : turn.score >= passLine }} / 按硬门槛 pass {{ turn.gateOk }}
-                      <em v-if="turn.score === null">本轮没有轮次级综合分，pass 只按已落库的硬门槛判定</em>
+                      按分数 pass {{ turn.score === null ? '未提供轮次分' : turn.score >= passLine }} /
+                      <template v-if="!turn.rules.length && !turn.contract">本轮无硬门槛</template>
+                      <template v-else>按硬门槛 pass {{ turn.gateOk }}</template>
+                      <em v-if="!turn.rules.length && !turn.contract && turn.score === null">
+                        本轮没有轮次级综合分，也没有已落库的硬门槛，因此不给出本轮 pass
+                      </em>
+                      <em v-else-if="turn.score === null">本轮没有轮次级综合分，pass 只按已落库的硬门槛判定</em>
                       <em v-else>pass = 硬门槛全过 且综合分 ≥ {{ passLine }}，两者不一致时以硬门槛为准</em>
                     </template>
                   </span>
@@ -1161,7 +1284,7 @@ const selfTriggerValue = computed(() => {
                     <TraceIcon name="code" :size="11" />
                     <span>裁判原始返回</span>
                     <span class="sp" />
-                    <b>{{ judgeRaw ? '已记录' : '未记录' }}</b>
+                    <b>{{ judgeRaw ? (judgeRawScope ? `${judgeRawScope} · 已记录` : '已记录') : '未记录' }}</b>
                     <span class="go">›</span>
                   </button>
                   <div v-if="rowOpen('ejres')" class="djbody">
@@ -1170,7 +1293,10 @@ const selfTriggerValue = computed(() => {
                 </div>
               </div>
               <div v-else class="dempty">执行记录没有裁决 Prompt 与裁判原始返回。</div>
-              <div class="dsub">trace {{ traceUid || '未记录' }}；「判定」段的裁决记录只做就地预览，这里保存完整原始报文。</div>
+              <div class="dsub">
+                trace {{ traceUid || '未记录' }}；「判定」段的裁决记录只做就地预览，这里保存完整原始报文。
+                <template v-if="judgeRawScope">本执行由 {{ model.judges.length }} 位裁判交叉裁决，这里展开的是{{ judgeRawScope }}的原始返回，执行级结论按 {{ model.judges.length }} 位合并（{{ model.totalScore === null ? '未记录综合分' : `综合分 ${fmtScore(model.totalScore)}` }}）。</template>
+              </div>
             </section>
           </div>
 
@@ -1264,8 +1390,8 @@ const selfTriggerValue = computed(() => {
             <h5>会话级判定上下文 <span class="sp" /><span class="cnt">不参与本轮 pass</span></h5>
             <div class="dgrid">
               <div class="dstat">
-                <div class="dl">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分参考' : '执行级综合分' }}</div>
-                <div class="dv">{{ fmtScore(model.judges.length ? model.judges[0].total_score : sessionAvg) }}<small v-if="(model.judges.length ? model.judges[0].total_score : sessionAvg) !== null"> / 100</small></div>
+                <div class="dl">{{ sessionScoreInfo.label }}</div>
+                <div class="dv">{{ fmtScore(sessionScoreInfo.value) }}<small v-if="sessionScoreInfo.value !== null"> / 100</small></div>
               </div>
               <div class="dstat" :class="{ warn: model.session.passCount < turns.length }">
                 <div class="dl">通过</div>
@@ -1282,8 +1408,8 @@ const selfTriggerValue = computed(() => {
             </div>
             <div class="dkv" style="margin-top: 8px">
               <div class="kv"><span class="k">执行级结论</span><span class="v">{{ sessionVerdictLabel }}</span></div>
-              <div class="kv"><span class="k">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分合计' : '总分' }}</span><span class="v">{{ sessionScoreTotal || '—' }}</span></div>
-              <div class="kv"><span class="k">四维均分</span><span class="v">{{ sessionDimText || '—' }}</span></div>
+              <div class="kv"><span class="k">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '轮次质量分合计' : '轮次分合计' }}</span><span class="v">{{ sessionScoreTotal || '—' }}</span></div>
+              <div class="kv"><span class="k">{{ sessionDimInfo.label }}</span><span class="v">{{ sessionDimInfo.text || '—' }}</span></div>
               <div class="kv"><span class="k">会话 ID</span><span class="v">{{ model.session.sessionIds.length ? model.session.sessionIds.join(' / ') : '未记录' }}</span></div>
               <div class="kv"><span class="k">会话一致性</span><span class="v">{{ model.session.consistentSession ? '同一会话' : '多会话（逐轮新会话）' }}</span></div>
               <div class="kv"><span class="k">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '阈值（不参与契约判定）' : 'pass 阈值' }}</span><span class="v">{{ passLine }} · {{ passLineSource }}</span></div>
