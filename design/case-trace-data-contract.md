@@ -936,3 +936,11 @@ mock 新增通过用例执行 **#6581**（BILL-FEE-0422 · 2 轮全通过 · sel
 - **页面表现**：`stepsRecorded === false` 时，气泡与抽屉头部写「调用链未记录」，执行段「调用步数 / 工具种类」写 `—` 并补说明「本轮执行记录未保存 tool_calls（为 null），调用步数与工具种类按「未记录」展示，不按 0 计」，调用链标题写「执行记录未保存 tool_calls」，证据页签徽标写「未记录 tool_calls」、步数 / 工具种类 / 异常步骤均 `—`；`ChainList` 新增 `recorded` prop，空态区分「未落库（null）」与「空数组」两种口径，`v-if` 帮助文案只在真有记录时出现。
 - **页级空态**：`CaseTraceInspector` 原始报文页新增 `chainEmptyText`：整通所有轮的 `tool_calls` 都未落库写「都为 null」，都是空数组写「都是空数组」，混合写「部分未落库、其余为空数组」，不再统一说「都为空」。
 - **验证**：真实 `5173` `162`（SSE）气泡与抽屉头部为「调用链未记录」，执行段「调用步数 —」「工具种类 —」并带说明条，证据「Agent 调用链」为「未记录 tool_calls」+「步数 —」；原始报文页空态为「所有轮次的 tool_calls 都未落库（为 null）……」；mock `5175` `900001`（有真实步骤）仍显示「N 步」，`900004` 中 `tool_calls: null` 的轮次按「调用链未记录」展示。`npm run typecheck` 通过。
+
+### 12.33 后端全量 pytest 在演示库上通过，并用备份还原消除临时数据（2026-11-24）
+
+- **结果**：`cd backend; python -m pytest -q` → 508 项全绿（72 × 7 + 4），无失败、无 error；仅剩两个 `PytestCollectionWarning`（`billing_qa/models/test_case.py` 的 `TestCase` / `TestCaseRevision` 模型类被 pytest 误当测试类收集），属既有的命名噪音，不影响结果。
+- **副作用**：测试直接在演示库 `batch_test` 上跑，留下临时数据 —— 执行 `176 → 184`（+8）、轮次 `200 → 213`（+13）、裁判 `183 → 195`（+12）、用例 `61 → 83`（+22，全部 `PYTEST-*` 且 `DISABLED`）、任务 `5 → 7`（+2）；`fact_result` 仍为 213。这些记录会混进大盘与环境对比的统计口径。
+- **处理**：跑前先 `pg_dump -F c` 备份，跑后 `drop schema public cascade; create schema public;` + `pg_restore --no-owner --no-privileges` 还原。还原后核对：执行 176 / 轮次 200 / 裁判 183 / 事实 213 / 用例 61 / 任务 5 / 环境 2 / 用户 5，`self_check` 47（其中 `SKIPPED` 45）、`answer_grading` 81、`diagnostics` 81，`PYTEST*` 0 条，环境 `QA-MOCK` `UP 31.48 ms`、`QA-MOCK-JSON` `UP 1.98 ms` 原样保留（备份里已含探活结果，不必重探）。
+- **为什么还原而不是重跑种子**：`init_db --demo --reset` + 两个 seed 脚本会把时间戳整体刷新、环境探活清空，需要再手动探活一次；备份还原能保持与 §12.31 记录完全一致的样本 ID 与时间线。
+- **回归**：还原后 5173 大盘与 `176` / `37` / `19` / `76` / `54` 五个执行详情均无 `NaN` / `undefined` / `[object Object]`，无 console error，无「0 步」；`npm run typecheck`、`npm run build` 通过；`ruff check` 对本轮改动的 `seed_demo.py` / `seed_environment_runs.py` / `seed_environment_demo.py` 全绿（仓库其余 17 条 `ruff check` 与 105 个 `ruff format` 差异在 HEAD 就存在，属未触碰文件，未顺手格式化以免放大 diff）。

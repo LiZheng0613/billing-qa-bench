@@ -19,7 +19,8 @@ python scripts/seed_environment_runs.py --env-code QA-MOCK   # 真实引擎补 5
 - `--reset` 清空 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` / `grader_eval` / `capability` / `data_source` / `sys_audit_log`，保留 `QA-MOCK` / `QA-MOCK-JSON` 两个环境、模型、Prompt、内置角色与管理员；
 - `seed_demo_history.py` 通过真实引擎在 `QA-MOCK-JSON` 上生成 117 条批量执行；`seed_environment_runs.py` 再在 `QA-MOCK`（SSE）上生成 59 条调试执行，两者都只依赖 Mock 8001 / 8002，脚本本身不构造判分字段、不改写时间；
 - 当前 `GradingMode` 只有 `LEGACY` / `ANSWER_CONTRACT`，重建数据中没有 RUBRIC 记录；旧 `seed_environment_demo.py` 会写入 RUBRIC，仅保留作历史参考，不参与本次重建；
-- 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据，正式演示前重置即可恢复本页所述基线。
+- 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据（实测跑完 508 项测试后多出 8 条执行、13 条轮次、12 条裁判、22 条用例、2 条任务），正式演示前重置即可恢复本页所述基线；
+- 若只是临时验证、不想重跑种子，可跑前 `pg_dump -F c` 备份、跑后 `drop schema public cascade; create schema public;` + `pg_restore` 还原：库规模、时间戳与环境探活结果原样保留（本页数据即按此方式还原后核对）。
 
 ## 2. 环境绑定
 

@@ -289,6 +289,16 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 用例逐条清单与预期结果、Mock 数据口径、演示任务构成见 [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md)。
 
 > 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据；正式演示前依次执行 `python -m billing_qa.db.init_db --demo --reset`、`python scripts/seed_demo_history.py` 与 `python scripts/seed_environment_runs.py --env-code QA-MOCK` 即可恢复基线。
+>
+> 跑测试前更省事的做法是先备份再还原，库规模、时间戳与环境探活结果都能原样保留，不必重跑种子：
+>
+> ```powershell
+> $env:PGPASSWORD='postgres'
+> pg_dump -h 127.0.0.1 -U postgres -d batch_test -F c -f demo_before_test.dump
+> # …跑 pytest / 冒烟…
+> psql -h 127.0.0.1 -U postgres -d batch_test -c "drop schema public cascade; create schema public;"
+> pg_restore -h 127.0.0.1 -U postgres -d batch_test --no-owner --no-privileges demo_before_test.dump
+> ```
 
 ---
 
