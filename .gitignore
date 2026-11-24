@@ -24,6 +24,9 @@ uploads/
 *.log
 .tmp/
 
+# 样例报表（本地生成，可按需重跑 generate_sample_reports.py）
+sample_exports/
+
 # Playwright
 test-results/
 playwright-report/
