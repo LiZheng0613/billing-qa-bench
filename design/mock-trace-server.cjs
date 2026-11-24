@@ -892,7 +892,7 @@ const EXECUTION_900002 = {
  * 任务 900102 未开启追问自检，因此这批记录 self_check 恒为 null（executor.py:159-190、723）。
  */
 const DEMO_TASK_ID = 900102
-const DEMO_TASK_NAME = '【Trace 演示】判定页分支覆盖（自检关闭）'
+const DEMO_TASK_NAME = '【Trace 演示】判定页分支覆盖 · 契约与历史'
 const DEMO_SESSION = 'sess-20261123-b705d1'
 const DEMO_CONTRACT_SESSION = 'sess-3751cc5df0f0'
 const DEMO_ENV = { environment_id: 12, environment_name: '联调环境 · 账单中台' }

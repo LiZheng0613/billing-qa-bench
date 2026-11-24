@@ -103,12 +103,26 @@ const rulePassed = computed(() =>
 )
 const ruleTotal = computed(() => turns.value.reduce((sum, turn) => sum + turn.rules.length, 0))
 
-const hasTurnContract = computed(() => turns.value.some((turn) => turn.contract !== null))
-const contractPassed = computed(() =>
-  turns.value.reduce((sum, turn) => sum + (turn.contract?.passed ?? 0), 0),
+/**
+ * 执行级答案契约：后端只给整通执行的 facts，没有轮次级 contract 计数。
+ * 模型把这类事实挂在最后一轮（factsScope = execution），统计与渲染都必须认这个口径，
+ * 否则「未通过」的执行会显示成「契约 —、0 条错误」，看不到真正卡住的门槛。
+ */
+const execFactsTurn = computed(
+  () => turns.value.find((turn) => turn.factsScope === 'execution' && !turn.contract) ?? null,
 )
-const contractTotal = computed(() =>
-  turns.value.reduce((sum, turn) => sum + (turn.contract?.total ?? 0), 0),
+const execFacts = computed(() => execFactsTurn.value?.facts ?? [])
+const hasTurnContract = computed(
+  () => turns.value.some((turn) => turn.contract !== null) || execFacts.value.length > 0,
+)
+const contractPassed = computed(
+  () =>
+    turns.value.reduce((sum, turn) => sum + (turn.contract?.passed ?? 0), 0) +
+    execFacts.value.filter((fact) => fact.pass).length,
+)
+const contractTotal = computed(
+  () =>
+    turns.value.reduce((sum, turn) => sum + (turn.contract?.total ?? 0), 0) + execFacts.value.length,
 )
 const contractFail = computed(() => contractTotal.value - contractPassed.value)
 
@@ -235,6 +249,18 @@ const gates = computed<GateItem[]>(() => {
         why: failedFact?.reason || '存在未命中的事实',
         tone: 'contract',
       })
+    }
+    if (turn.factsScope === 'execution' && !turn.contract) {
+      const failedFact = turn.facts.find((fact) => !fact.pass && fact.isGate)
+      if (failedFact) {
+        rows.push({
+          turn: turn.index,
+          kind: 'contract',
+          title: `执行级 facts ${turn.facts.filter((fact) => fact.pass).length}/${turn.facts.length} · ${failedFact.label}`,
+          why: failedFact.reason || '存在未命中的事实',
+          tone: 'contract',
+        })
+      }
     }
   }
   return rows.sort((a, b) => a.turn - b.turn || (a.kind === 'rule' ? -1 : 1))
@@ -601,6 +627,14 @@ function copyConclusion(turn: TurnVM): void {
                 <span v-if="turn.contract" class="cell" :class="turn.contract.passed >= turn.contract.total ? 'g' : 'a'">
                   {{ turn.contract.passed }}/{{ turn.contract.total }}
                 </span>
+                <span
+                  v-else-if="turn.factsScope === 'execution' && turn.facts.length"
+                  class="cell"
+                  :class="turn.facts.every((fact) => fact.pass) ? 'g' : 'a'"
+                  title="答案契约按整通执行判定，这里是执行级 facts 命中数"
+                >
+                  {{ turn.facts.filter((fact) => fact.pass).length }}/{{ turn.facts.length }}
+                </span>
                 <span v-else class="cell" title="答案契约按整通执行判定，未拆到轮次">—</span>
               </td>
               <td v-for="dim in DIMENSIONS" :key="dim.key">
@@ -730,9 +764,10 @@ function copyConclusion(turn: TurnVM): void {
                         <span class="nm">{{ rule.name }}</span>
                         <span v-if="!rule.pass" class="why">{{ rule.why || '未命中' }}</span>
                       </div>
-                      <template v-if="turn.contract">
+                      <template v-if="turn.contract || turn.factsScope === 'execution'">
                         <div class="jdc-sep">
-                          答案契约 · facts {{ turn.contract.passed }}/{{ turn.contract.total }}
+                          <template v-if="turn.contract">答案契约 · facts {{ turn.contract.passed }}/{{ turn.contract.total }}</template>
+                          <template v-else>执行级答案契约 · facts {{ turn.facts.filter((fact) => fact.pass).length }}/{{ turn.facts.length }}</template>
                         </div>
                         <div
                           v-for="fact in turn.facts"
@@ -748,7 +783,7 @@ function copyConclusion(turn: TurnVM): void {
                           事实明细按整通执行判定，可在「证据 · 流程裁决」查看。
                         </p>
                       </template>
-                      <p v-if="!turn.rules.length && !turn.contract" class="jdc-none">
+                      <p v-if="!turn.rules.length && !turn.contract && turn.factsScope !== 'execution'" class="jdc-none">
                         本轮没有规则或契约门槛，无法据此判定。
                       </p>
                     </div>
