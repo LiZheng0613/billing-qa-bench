@@ -748,5 +748,14 @@ mock 新增通过用例执行 **#6581**（BILL-FEE-0422 · 2 轮全通过 · sel
 - **追问自检页签**：`visibleTabs` 原只在 `self_check` 存在时显示页签，于是 900003 / 900004 / 900006 / 900009 这类失败执行没有入口，而抽屉「派生与上下文」还写着「未记录」，两处口径不一致。现失败执行保留页签，无记录时渲染既有空态「本次执行没有 self_check 记录（任务未开启或本次未触发）；页面不补造自检内容」；通过用例仍完全不出现自检页签与字样（900002 / 900005 / 900007 / 900008 保持 4 个页签）。
 - **验证**：900001 轮次结论「未通过」玫红叉号图标；900003 / 900004 / 900006 / 900009 五页签 + 空态、`?tab=selfcheck` 不再回落；900002 / 900005 / 900008 四页签且全页「自检」0 次；900008 页头与原始报文页口径一致；900009 四维显示「占满分」；原型 8899 控制台无报错、无横向溢出。
 
+### 12.18 失败但裁决通过的自检、无分数异常执行与单轮结论（2026-11-24）
+
+- **FAIL + `self_check.status=SKIPPED` 不再说「没有记录」**：生产上 LEGACY 的 `judge_result.pass` 为 true、规则硬校验未过时，`ExecutionRecord.pass_flag` 被合成为 false，但 `self_check_trigger_reason` 只看 LLM 裁决（`self_check.py:90-108`）→ 落 `SKIPPED` + `skip_reason="LLM 裁决通过，未触发追问自检"`；契约模式也会在契约通过但 `MAX_TURNS_EXCEEDED` / `REPETITION_ABORT` 时出现同样形态。原 `model.selfCheck` 只在 `DONE` / `ERROR` 时非空，页面统一说「没有 self_check 记录 / self_check 为空」，与落库记录矛盾。现新增 `model.selfCheckSkipReason`：失败执行渲染「未触发追问自检 · SKIPPED」+ 后端 `skip_reason`；通过用例仍完全不展示自检（任务开启时的 `SKIPPED` 属于正常静默形态）。
+- **无轮次且无分数的异常执行不判「未通过」**：`_mark_error` / `_mark_aborted` 会写 `pass_flag=false`，但从未产出裁判结论。真实 `14899`（LEGACY）与 `15525`（RUBRIC）都是 `turns=[]`、`total_score=null`，原页头写「执行记录只保留执行级结论」、判分页写「旧评分模式只保留执行级综合分 — 与通过结论」，等于把系统写的 false 当成裁判结论。现统一为「本次执行没有产生对话轮次，也没有执行级评分与结论」，判分页裁决显示「未判定」；有分数但零轮的 RUBRIC（900008）保留「只保留执行级分数与结论」话术。
+- **单轮「部分命中」的结论句与矩阵一致**：900003 / 900006 的轮次 `verdict=warn`（总分达线、硬门槛未全过），矩阵行与页头都写「部分命中」，但 `JudgePanel` 的单轮结论仍按非通过一律写「本轮未通过」。现按 `verdict` 输出「本轮通过 / 本轮部分命中 / 本轮未通过 / 本轮未判定」；`warn` 补「达线但硬门槛未全过」，`unknown` 不再拼「总分 —」。原型 `case-turn-flow-final.html` 的 `concl` 同步（`selWarn` 分支）。
+- **mock 的 `judge_result.pass` 只保留 LLM 裁决**：`legacyAggregate` 原用 `score >= threshold && policyNotes.length === 0`，把规则否决写进了 `judge_result.pass`，与 `executor.py:507-513` 只在 `pass_flag` 上合成不一致。现改为 `pass: score >= threshold`；900003 的原始报文因此是 `pass_flag=false` + `judge_result.pass=true`，正是「82 分、LLM 判过、规则未过」的真实形态，也解释了它若开启自检为何会落 `SKIPPED`。
+- **演示数据未覆盖 FAIL + SKIPPED**：真实库 340 条 `pass_flag=false` 中未找到 `self_check.status='SKIPPED'` 的样本，本次是临时构造验证后还原；演示 900001–900009 保持既有形态（900001 DONE、900002 SKIPPED 通过态、其余 `null`）。该形态生产可达（LEGACY 规则否决、契约 `MAX_TURNS_EXCEEDED` / `REPETITION_ABORT`），页面已能正确渲染；若后续需要长期演示，再加独立执行号，不复用现有编号。
+- **验证**：临时把 900003 的 `self_check` 置为 `SKIPPED`（验证后已还原）→ 追问自检页签显示「执行记录：LLM 裁决通过，未触发追问自检（self_check = SKIPPED）」，抽屉「派生与上下文」显示「未触发 · SKIPPED」；恢复后 900003 仍为 `null`。真实 `14899` / `15525` 判分页均显示「未判定」且无「只保留执行级分数」误述；900003 判分页结论改为「本轮部分命中：总分 82.0 / 100；达线但硬门槛未全过…」，900006 同步；900005 / 900002 / 900007 全页「自检」仍为 0 次。`npm run typecheck` 通过；9 执行 × 5 页签复测无 `undefined` / `NaN` / `[object Object]`、无横向溢出、无控制台报错；`?drawer=99` 越界自动关闭并清理 URL，`?drawer=0/-2` 不打开抽屉。
+
 
 
