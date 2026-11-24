@@ -214,8 +214,10 @@ const judgeScore = computed<number | null>(() => {
   const raw = detail.judge_result as Record<string, unknown> | null
   if (!raw || typeof raw !== 'object') return detailScore
   if (detail.grading_mode === 'ANSWER_CONTRACT') {
+    // 契约主分只认质量分（judge_result.quality.total_score）；detail.total_score 是评分卡总分，
+    // 只用于任务列表排序与页头「契约排序分」，不能顶替质量分进入判分页主分。
     const quality = raw.quality as Record<string, unknown> | undefined
-    return typeof quality?.total_score === 'number' ? quality.total_score : detailScore
+    return typeof quality?.total_score === 'number' ? quality.total_score : null
   }
   return typeof raw.total_score === 'number' ? raw.total_score : detailScore
 })
@@ -254,6 +256,17 @@ const scoreKpi = computed(() => {
   return { label: '综合评分', hint: '执行记录未留存裁判评分' }
 })
 
+/**
+ * 页头大数字：与判分页主分分开取。
+ * 契约模式质量分缺失时，页头按「契约排序分」展示 detail.total_score（评分卡总分），
+ * 判分页仍拿 null，写「未留存质量分」，避免把排序分渲染成质量分。
+ */
+const headerScore = computed<number | null>(() => {
+  if (scoreKpi.value.label !== '契约排序分') return judgeScore.value
+  const value = props.detail?.total_score
+  return typeof value === 'number' ? value : null
+})
+
 // 执行记录只落库 turns_used、没有 turn_trace 时，turns=[] 不能读成「没跑过轮次」
 const turnsUsed = computed(() => {
   const value = props.detail?.turns_used
@@ -279,6 +292,14 @@ const turnEmptyCopy = computed(() => {
       description: used
         ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${score} 与最终结论，没有逐轮明细。`
         : `该执行由旧评分模式（RUBRIC）落库，只保留执行级综合分 ${score} 与结论，没有逐轮明细。`,
+    }
+  }
+  if (props.detail?.grading_mode === 'ANSWER_CONTRACT') {
+    return {
+      title,
+      description: used
+        ? `本次执行共 ${used} 轮，但执行记录只有契约质量分与执行级结论，没有逐轮明细。`
+        : '执行记录只有契约质量分与执行级结论，没有逐轮明细。',
     }
   }
   return {
@@ -761,8 +782,8 @@ async function copyTraceUid(): Promise<void> {
                 {{ scoreKpi.label }}
               </p>
               <p class="text-lg font-semibold tabular-nums text-indigo-600">
-                {{ formatScore(judgeScore) }}
-                <span v-if="judgeScore !== null" class="text-xs font-normal text-slate-500">/ 100</span>
+                {{ formatScore(headerScore) }}
+                <span v-if="headerScore !== null" class="text-xs font-normal text-slate-500">/ 100</span>
               </p>
               <p class="truncate text-[10px] text-slate-500" :title="scoreKpi.hint">
                 {{ scoreKpi.hint }}
