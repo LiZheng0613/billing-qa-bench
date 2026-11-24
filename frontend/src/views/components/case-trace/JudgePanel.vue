@@ -604,15 +604,25 @@ function verdictTitle(turn: TurnVM): string {
 }
 
 function conclusionText(turn: TurnVM): string {
+  // 复制出去的文字同样要按判分模式说清口径：契约模式没有轮次级质量分时不能写「得分」
+  const contractMode = props.model.gradingMode === 'ANSWER_CONTRACT'
+  const rulePart = `规则 ${turn.rules.filter((rule) => rule.pass).length}/${turn.rules.length}`
   const gate = turn.contract
-    ? `规则 ${turn.rules.filter((rule) => rule.pass).length}/${turn.rules.length} · 契约 ${turn.contract.passed}/${turn.contract.total}`
-    : `规则 ${turn.rules.filter((rule) => rule.pass).length}/${turn.rules.length}`
+    ? `${rulePart} · 契约 ${turn.contract.passed}/${turn.contract.total}`
+    : contractMode
+      ? `${rulePart} · 契约 未记录`
+      : rulePart
   const reason = turn.judgeReason
     || (props.model.turns.length > 1 && turn.sessionJudgeReason ? `（会话级，不归属本轮）${turn.sessionJudgeReason}` : '')
     || '后端未提供本轮裁判理由。'
-  const scoreText =
-    turn.score === null ? '执行记录未留存轮次级分数' : `${turn.score} / 100`
-  return `T${turn.index} 结论：${VERDICT_META[turn.verdict].label}\n得分：${scoreText}\n硬门槛：${gate}\n${reason}`
+  const scoreText = contractMode
+    ? turn.score === null
+      ? '未留存轮次级质量分（pass 只看闸门）'
+      : `${turn.score} / 100（仅参考，不参与 pass）`
+    : turn.score === null
+      ? '执行记录未留存轮次级分数'
+      : `${turn.score} / 100`
+  return `T${turn.index} 结论：${VERDICT_META[turn.verdict].label}\n${contractMode ? '质量分' : '得分'}：${scoreText}\n${contractMode ? '闸门' : '硬门槛'}：${gate}\n${reason}`
 }
 
 function copyConclusion(turn: TurnVM): void {
