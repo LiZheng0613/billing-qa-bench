@@ -641,7 +641,7 @@ function summaryClass(): string {
               </div>
               <div class="tl-q"><span class="tl-label">用户</span>{{ item.turn.query }}</div>
               <div class="tl-a" :class="{ 'tl-a-bad': Boolean(item.warning) }">
-                <span class="tl-label">客服</span>{{ item.turn.final_answer || '—' }}
+                <span class="tl-label">Agent</span>{{ item.turn.final_answer || '—' }}
               </div>
               <p v-if="item.warning" class="tl-hint">{{ item.warning }}</p>
             </div>

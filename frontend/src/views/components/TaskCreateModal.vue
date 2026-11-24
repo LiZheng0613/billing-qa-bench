@@ -349,7 +349,7 @@ watch(
           <span>
             失败追问自检
             <span class="block text-[11px] text-slate-500">
-              LLM 裁决判失败的用例，会在同一会话内追加一轮追问，让被测 Agent
+              LLM 裁决判失败的用例，会在同一会话内追加一轮追问，让 Agent
               自查错误原因并留存自检结论；通过、异常与被终止的用例不受影响。
             </span>
           </span>
