@@ -66,11 +66,14 @@ const template = computed(() => {
   return `${name}${version}`
 })
 
-/** 触发原因：trigger 是后端固定文案（self_check.py:107「LLM 裁决不通过」），轮次信息由 turn_index 补充 */
+/** 触发原因：trigger 是后端落库的固定文案（self_check.py:107），轮次信息由 turn_index 补充。
+ *  trigger 与轮次都没落库时不补造「LLM 裁决不通过」这类结论，直接写未记录。 */
 const triggerText = computed(() => {
-  const base = props.record.trigger || 'LLM 裁决不通过'
-  if (!triggerLabel.value) return `${base} —— 评测器在同一会话向 Agent 追加一轮自检提问，要求其自查口径。`
-  return `${base} —— ${triggerLabel.value} 轮次判定未通过后，评测器在同一会话向 Agent 追加一轮追问，要求其自查口径。`
+  const base = props.record.trigger
+  const tail = triggerLabel.value
+    ? `${triggerLabel.value} 判定未通过后，评测器在同一会话向 Agent 追加一轮追问，要求其自查口径。`
+    : '评测器在同一会话向 Agent 追加一轮追问自检；执行记录未保存触发轮次。'
+  return base ? `${base} —— ${tail}` : `后端未记录触发原因（self_check.trigger 为空）—— ${tail}`
 })
 
 /** 自检回答正文：SSE 聚合内容（与轮次 response_raw.content 同链，target_api.py:384-385） */
@@ -133,7 +136,7 @@ async function copyConclusion(): Promise<void> {
     <div class="selfdiv">
       <span class="tag"><TraceIcon name="refresh" :size="10" /> 追问自检</span>
       <span>
-        由 {{ triggerLabel ?? 'LLM 裁决失败' }} 自动触发 · 同一会话追加 1 轮 · 不参与通过判定
+        {{ triggerLabel ? `由 ${triggerLabel} 自动触发` : '由本次执行的失败判定自动触发（触发轮未记录）' }} · 同一会话追加 1 轮 · 不参与通过判定
       </span>
       <span class="sp" />
     </div>

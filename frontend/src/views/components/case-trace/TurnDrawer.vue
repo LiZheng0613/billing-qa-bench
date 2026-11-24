@@ -993,7 +993,7 @@ const selfTriggerValue = computed(() => {
               <div v-else-if="selfRecord && !selfCheckTurn" class="dempty">
                 <TraceIcon name="refresh" :size="14" />
                 <b>本次执行有 1 条追问自检</b>
-                <p>后端只保存了触发原因，没有触发轮次字段；自检内容按执行级归档，不推测属于哪一轮。</p>
+                <p>执行记录保存了这条自检，但没有触发轮次（self_check.turn_index 为空）；自检内容按执行级归档，不推测属于哪一轮。</p>
                 <button type="button" class="ev-chip" @click="emit('section', 'context')">
                   <TraceIcon name="refresh" :size="10" />
                   查看「派生与上下文」中的自检
@@ -1209,7 +1209,7 @@ const selfTriggerValue = computed(() => {
                 <div class="kv"><span class="k">发生时间</span><span class="v">{{ selfRecord.performed_at ? selfRecord.performed_at.replace('T', ' ').slice(0, 19) : '未记录' }}</span></div>
               </div>
               <div v-if="!selfCheckTurn" class="dsub">
-                执行记录只保存了触发原因与模板，没有触发轮次字段；这里按<b>执行级</b>展示，不推测具体轮次。
+                执行记录的 self_check 未保存触发轮次（turn_index 为空）；这里按<b>执行级</b>展示，不推测具体轮次。
               </div>
               <button
                 v-if="selfCheckTurn && selfCheckTurn.index !== turn.index"

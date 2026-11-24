@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { SelfCheckResult } from '../../../types'
 import { copyText } from '../../../utils/clipboard'
 import { useToastStore } from '../../../stores/toast'
@@ -25,11 +25,41 @@ const emit = defineEmits<{
 const toast = useToastStore()
 const promptOpen = ref(false)
 
+/**
+ * Prompt 预览折叠与判分页同规则：只有真实溢出才截断并显示「展开全文」。
+ * scrollHeight 不受 max-height 影响，开合两态都能量到完整内容高度。
+ */
+const PROMPT_CLAMP = 104
+const promptBody = ref<HTMLElement | null>(null)
+const promptOverflow = ref(false)
+let promptObserver: ResizeObserver | null = null
+
+function measurePrompt(): void {
+  const el = promptBody.value
+  if (!el) return
+  promptOverflow.value = el.scrollHeight > PROMPT_CLAMP + 4
+}
+
+onMounted(() => {
+  void nextTick(measurePrompt)
+  if (typeof ResizeObserver === 'undefined' || !promptBody.value) return
+  promptObserver = new ResizeObserver(() => measurePrompt())
+  promptObserver.observe(promptBody.value)
+})
+
+onBeforeUnmount(() => {
+  promptObserver?.disconnect()
+  promptObserver = null
+})
+
 const isDone = computed(() => props.record.status === 'DONE')
 const triggerIndex = computed(() => props.trigger?.index ?? null)
 const triggerLabel = computed(() => (triggerIndex.value ? `T${triggerIndex.value}` : '本次执行'))
-/** 后端 self_check 只记录触发原因，没有触发轮次字段：定位不到时按执行级描述，不推测轮次 */
-const triggerPhrase = computed(() => (triggerIndex.value ? `T${triggerIndex.value} 未通过` : '本次执行判失败'))
+/** 触发短语优先用后端落的 trigger（如「答案契约判分不通过」「LLM 裁决不通过」）；
+ *  缺失时才按执行级描述，且不替后端补「未通过」以外的判定含义。 */
+const triggerPhrase = computed(
+  () => props.record.trigger || (triggerIndex.value ? `T${triggerIndex.value} 判未通过` : '本次执行判未通过'),
+)
 const verdictScope = computed(() => (triggerIndex.value ? `${triggerLabel.value} 的判定结论` : '本次执行的判定结论'))
 const conclusion = computed(() => {
   if (isDone.value) return props.record.conclusion || '（Agent 未给出自检结论）'
@@ -95,11 +125,11 @@ async function copyPrompt(): Promise<void> {
             <TraceIcon name="bot" :size="10" />系统生成 · 已发送给 Agent
           </span>
         </div>
-        <div class="pc-body" :class="{ open: promptOpen }">{{ prompt || '（未记录自检 Prompt）' }}</div>
+        <div ref="promptBody" class="pc-body" :class="{ open: promptOpen, clamp: promptOverflow && !promptOpen }">{{ prompt || '（未记录自检 Prompt）' }}</div>
         <div class="pc-foot">
           <span class="cnt">{{ promptChars }} 字符</span>
           <span class="sp" />
-          <button v-if="prompt" type="button" @click="promptOpen = !promptOpen">
+          <button v-if="promptOverflow" type="button" @click="promptOpen = !promptOpen">
             <TraceIcon name="chev" :size="9" />
             {{ promptOpen ? '收起' : '展开全文' }}
           </button>
@@ -242,12 +272,10 @@ async function copyPrompt(): Promise<void> {
   line-height: 1.9;
   color: #374151;
   white-space: pre-wrap;
-  max-height: 104px;
-  overflow: hidden;
   word-break: break-word;
 }
-.pc-body.open { max-height: none; }
-.pc-body:not(.open)::after {
+.pc-body.clamp { max-height: 104px; overflow: hidden; }
+.pc-body.clamp::after {
   content: "";
   position: absolute;
   left: 0;

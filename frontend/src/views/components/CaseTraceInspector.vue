@@ -1093,7 +1093,10 @@ async function copyTraceUid(): Promise<void> {
           <TurnCompare
             v-else-if="mode === 'compare'"
             :turns="filteredTurns"
+            :grading-mode="model.gradingMode"
+            :self-check="model.selfCheck ? { triggerIndex: model.selfCheckTurn?.index ?? null } : null"
             @open="(index, section) => openDrawer(index, section)"
+            @page="activeTab = 'selfcheck'"
           />
 
           <div v-else class="mx-auto flex w-full max-w-[1020px] flex-col gap-2">

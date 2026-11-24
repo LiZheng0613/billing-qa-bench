@@ -5,10 +5,15 @@ import TraceIcon from './TraceIcon.vue'
 
 const props = defineProps<{
   turns: TurnVM[]
+  /** 判分模式：只用于把「轮次分」写成对应模式的分母，不影响对照逻辑 */
+  gradingMode?: string
+  /** 追问自检：存在即渲染「派生轮次 S1 · 不进入对照」说明条（原型同款） */
+  selfCheck?: { triggerIndex: number | null } | null
 }>()
 
 const emit = defineEmits<{
   (e: 'open', index: number, section: 'turn' | 'judge'): void
+  (e: 'page'): void
 }>()
 
 interface ValueGap {
@@ -77,7 +82,7 @@ function failedRules(turn: TurnVM): string {
 }
 
 function diffHeadline(turn: TurnVM): string {
-  if (!turn.expected) return multiTurn.value ? '本轮缺少期望' : '缺少期望答案'
+  if (!turn.expected) return multiTurn.value ? '本轮无文本期望' : '无文本期望答案'
   if (turn.verdict === 'unknown') return '未判定'
   const count = valueGaps(turn).length
   if (count) return `${count} 处数值差异`
@@ -94,11 +99,18 @@ function reasonOf(turn: TurnVM): string {
 
 function diffNote(turn: TurnVM): string {
   if (!turn.expected) {
+    // 真实库的快照大多没有 turns[].expected_answer，期望常以 expected_rules 表达：
+    // 不能一句「补上期望答案」把规则型期望说成没写期望。
+    const tail = turn.rules.length ? '；期望若以 expected_rules 表达，请以该轮的规则命中为准。' : '。'
     return multiTurn.value
-      ? `多轮用例没有为第 ${turn.index} 轮维护期望答案（用例快照 turns[].expected_answer），因此无法逐轮对照；补上该轮期望后即可比对。`
-      : '用例快照未提供期望答案（expected_answer），无法做对照；在用例编辑器补上期望答案后即可比对。'
+      ? `多轮用例没有为第 ${turn.index} 轮维护文本期望（用例快照 turns[].expected_answer），因此无法逐轮对照${tail}`
+      : `用例快照未提供文本期望答案（expected_answer），无法做数值对照${tail}`
   }
-  if (turn.verdict === 'unknown') return '本轮没有规则 / 契约门槛，后端也未提供轮次分，无法判定口径是否一致。'
+  if (turn.verdict === 'unknown') {
+    return props.gradingMode === 'ANSWER_CONTRACT'
+      ? '本轮没有落库契约闸门事实，后端也未提供轮次级质量分，无法判定口径是否一致。'
+      : '本轮没有规则 / 契约门槛，后端也未提供轮次分，无法判定口径是否一致。'
+  }
   const gaps = valueGaps(turn)
   if (gaps.length) {
     const head = gaps[0]
@@ -128,7 +140,7 @@ const summary = computed(() => {
         <TraceIcon name="x" :size="10" /> 判定未通过 <b>{{ summary.judgeFail }}</b> 轮
       </span>
       <span v-if="summary.noExpect" class="s">
-        <TraceIcon name="info" :size="10" /> 缺少期望 <b>{{ summary.noExpect }}</b> 轮
+        <TraceIcon name="info" :size="10" /> 无文本期望 <b>{{ summary.noExpect }}</b> 轮
       </span>
       <span v-if="summary.unknown" class="s">
         <TraceIcon name="info" :size="10" /> 未判定 <b>{{ summary.unknown }}</b> 轮
@@ -183,7 +195,7 @@ const summary = computed(() => {
         <div class="cmpcol expect">
           <div class="ch"><TraceIcon name="target" :size="10" /> 期望回复 · {{ turn.expectedSource || '用例快照' }}</div>
           <div class="cb" :class="{ missing: !turn.expected }">
-            {{ turn.expected || '本轮没有维护期望答案。' }}
+            {{ turn.expected || (turn.rules.length ? '本轮没有维护文本期望答案（expected_answer）；判定依据见下方规则命中。' : '本轮没有维护文本期望答案（expected_answer）。') }}
           </div>
         </div>
       </div>
@@ -227,6 +239,19 @@ const summary = computed(() => {
         </div>
       </div>
     </article>
+
+    <div v-if="selfCheck" class="cmp-self">
+      <span class="sw-badge"><TraceIcon name="refresh" :size="10" />派生轮次 S1</span>
+      <span>
+        {{
+          selfCheck.triggerIndex
+            ? `追问自检由 T${selfCheck.triggerIndex} 的失败判定触发，只有实际回复、没有期望答案，因此不进入对照。`
+            : '追问自检记录未保存触发轮次，只有实际回复、没有期望答案，因此不进入对照。'
+        }}
+      </span>
+      <span class="sp" />
+      <button type="button" @click="emit('page')">查看完整自检 <TraceIcon name="chevron-r" :size="9" /></button>
+    </div>
   </div>
 </template>
 
@@ -394,6 +419,47 @@ const summary = computed(() => {
 .etag.sky i { background: #0ea5e9; }
 .etag.violet i { background: #8b5cf6; }
 .etag.orange i { background: #f97316; }
+.cmp-self {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 2px 0 10px;
+  padding: 9px 12px;
+  border: 1px dashed #fcd34d;
+  border-radius: 11px;
+  background: #fffdf7;
+  font-size: 10px;
+  line-height: 1.7;
+  color: #92400e;
+}
+.cmp-self .sw-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fff;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  padding: 1.5px 7px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #92400e;
+}
+.cmp-self .sp { flex: 1; }
+.cmp-self button {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 9.5px;
+  color: #92400e;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 @media (max-width: 760px) {
   .cmpgrid { grid-template-columns: 1fr; }
   .cmpcol.expect { border-left: 0; border-top: 1px dashed #e8e8ed; }
