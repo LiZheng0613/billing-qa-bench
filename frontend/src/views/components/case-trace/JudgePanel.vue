@@ -684,7 +684,10 @@ function conclusionText(turn: TurnVM): string {
     : turn.score === null
       ? '执行记录未留存轮次级分数'
       : `${turn.score} / 100`
-  return `T${turn.index} 结论：${VERDICT_META[turn.verdict].label}\n${contractMode ? '质量分' : '得分'}：${scoreText}\n${contractMode ? '闸门' : '硬门槛'}：${gate}\n${reason}`
+  const terminationLine = terminationLabel.value
+    ? `终止状态：${terminationLabel.value}（后端按终止类硬失败否决 pass）\n`
+    : ''
+  return `T${turn.index} 结论：${VERDICT_META[turn.verdict].label}\n${contractMode ? '质量分' : '得分'}：${scoreText}\n${contractMode ? '闸门' : '硬门槛'}：${gate}\n${terminationLine}${reason}`
 }
 
 function copyConclusion(turn: TurnVM): void {

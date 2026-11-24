@@ -423,17 +423,30 @@ async function copyJudgeFlow(): Promise<void> {
   const contract = props.model.gradingMode === 'ANSWER_CONTRACT'
   const scoreName = contract ? '质量分' : '综合分'
   const attribution = `错误归因 ${tags.value.length + sessionTags.value.length} 条`
+  /** 终止类硬失败也否决 pass：复制文本要写清，不能只留「pass = false + 高分」 */
+  const termNote = terminationLabel.value ? ` · ${terminationLabel.value}（终止类硬失败否决 pass）` : ''
   /** 多轮只有整通一次裁决：复制文本也必须写清是执行级结论，不能挂到本轮 */
   const verdictLine = multiTurn.value
-    ? `执行级 pass = ${execPassLabel.value} · 执行级${scoreName} ${fmtScore(props.model.totalScore)} · ${attribution}（整通一次裁决，不归属本轮）`
+    ? `执行级 pass = ${execPassLabel.value} · 执行级${scoreName} ${fmtScore(props.model.totalScore)} · ${attribution}（整通一次裁决，不归属本轮）${termNote}`
     : contract
-      ? `质量分 ${fmtScore(turn.score)} · ${attribution}（pass 不由裁判给出，按契约闸门计算）`
-      : `pass = ${turn.pass} · ${scoreName} ${fmtScore(turn.score)} · ${attribution}`
+      ? `质量分 ${fmtScore(turn.score)} · ${attribution}（pass 不由裁判给出，按契约闸门计算）${termNote}`
+      : `pass = ${turn.pass} · ${scoreName} ${fmtScore(turn.score)} · ${attribution}${termNote}`
+  /** 复制文本补一行「校验」：pass = false 的分数或门槛依据要能自证，不能只丢一个布尔值 */
+  const gatePart =
+    terminationLabel.value && turn.verdict !== 'unknown'
+      ? `执行因${terminationLabel.value}按硬失败否决 pass`
+      : !turn.rules.length && !turn.contract
+        ? '本轮无硬门槛'
+        : `按硬门槛 pass ${turn.gateOk}`
+  const verifyLine = contract
+    ? `本轮 pass ${turn.verdict === 'unknown' ? '—' : turn.pass} · 质量分 ${fmtScore(turn.score)}（仅参考）`
+    : `按分数 pass ${turn.score === null ? '未提供轮次分' : turn.score >= props.model.passLine} / ${gatePart}`
   const parts = [
     `流程裁决 · T${turn.index}`,
     `用户问题：${turn.query || '—'}`,
     `裁判模型：${judgeModel.value}${judgeTemperature.value !== null ? ` · temperature ${judgeTemperature.value}` : ''}${judgeTokensInfo.value.scope === 'none' ? ' · 裁判 tokens 未记录' : ` · 裁判 tokens ${judgeTokensText.value}${judgeTokensNote.value}`}`,
     `返回：${verdictLine}`,
+    `校验：${verifyLine}`,
     `结论：${judgeConclusion.value}`,
   ]
   if (judgePrompt.value) parts.push('', '--- 裁决 Prompt ---', judgePrompt.value)
