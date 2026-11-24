@@ -1319,7 +1319,8 @@ async function copyTraceUid(): Promise<void> {
 
           <div v-else class="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
             <template v-if="model.turns.length">所有轮次的 <code class="font-mono">tool_calls</code> 都为空，页面不补造调用步骤。</template>
-            <template v-else>本次执行没有逐轮记录，页面不补造调用步骤。</template>
+            <template v-else-if="turnsUsed">本次执行共 {{ turnsUsed }} 轮，但没有留存逐轮调用记录，页面不补造调用步骤。</template>
+            <template v-else>本次执行没有产生对话轮次，页面不补造调用步骤。</template>
           </div>
 
           <div class="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-500">
