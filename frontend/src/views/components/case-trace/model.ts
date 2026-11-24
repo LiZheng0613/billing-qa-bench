@@ -319,10 +319,11 @@ function errorTagsOf(judges: JudgeResult[]): string[] {
 
 function totalScoreOf(detail: ExecutionDetail): number | null {
   if (detail.grading_mode === 'ANSWER_CONTRACT') {
+    // 契约模式的主分只认四维质量分；answer_grading.total_score 是评分卡总分
+    // （任务列表排序用，900005=100 / 900006=70），把它当质量分展示会张冠李戴。
+    // 质量分裁判不可用时宁可显示「未留存质量分」，也不借评分卡总分充数。
     const quality = obj(obj(detail.judge_result)?.quality)
-    const value = num(quality?.total_score)
-    if (value !== null) return value
-    return num(obj(detail.answer_grading)?.total_score)
+    return num(quality?.total_score)
   }
   return num(detail.total_score)
 }

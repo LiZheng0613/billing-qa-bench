@@ -266,7 +266,11 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     if (turn.verdict === 'unknown') {
       return [
         { text: '本轮未判定：' },
-        { text: '后端没有提供本轮分数与硬门槛，不据此推断本轮通过。' },
+        {
+          text: contractMode
+            ? '后端没有提供本轮质量分与契约事实，不据此推断本轮通过。'
+            : '后端没有提供本轮分数与硬门槛，不据此推断本轮通过。',
+        },
       ]
     }
     const weak = turn.dimensions
@@ -309,7 +313,7 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     if (overall.value === null) {
       // 有轮次但没有执行级分（异常 / 裁判未产出）：不拼「执行级综合分 — / 100」
       return [
-        { text: `共 ${total} 轮，后端未提供轮次级分数与硬门槛，无法判定逐轮结论；执行记录也没有留存${contractMode ? '质量分' : '执行级综合分'}。` },
+        { text: `共 ${total} 轮，后端未提供轮次级${contractMode ? '质量分与契约事实' : '分数与硬门槛'}，无法判定逐轮结论；执行记录也没有留存${contractMode ? '质量分' : '执行级综合分'}。` },
         {
           text: execVerdict
             ? `整通执行按记录判「${execVerdict}」。`
@@ -318,7 +322,7 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
       ]
     }
     return [
-      { text: `共 ${total} 轮，后端未提供轮次级分数与硬门槛，无法判定逐轮结论；执行级综合分 ` },
+      { text: `共 ${total} 轮，后端未提供轮次级${contractMode ? '质量分与契约事实' : '分数与硬门槛'}，无法判定逐轮结论；${contractMode ? '质量分' : '执行级综合分'} ` },
       { text: `${overallText} / 100`, strong: true },
       {
         text: execVerdict
@@ -342,7 +346,7 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     // 会话级归因不归属某一轮：最低项只说该轮自己的轮次级归因
     const tags = low.tags
     parts.push({ text: '最低项为 ' })
-    parts.push({ text: `T${low.index} ${low.score ?? '—'} 分`, strong: true })
+    parts.push({ text: `T${low.index} ${low.score ?? '—'} ${contractMode ? '质量分' : '分'}`, strong: true })
     if (tags.length) parts.push({ text: `（${tags.join('、')}）` })
     parts.push({ text: '；' })
   }
@@ -573,7 +577,11 @@ function dimPercent(value: number | null, max: number): number {
 }
 
 function verdictTitle(turn: TurnVM): string {
-  if (turn.verdict === 'unknown') return '未判定：缺少轮次级门槛与分数'
+  if (turn.verdict === 'unknown') {
+    return props.model.gradingMode === 'ANSWER_CONTRACT'
+      ? '未判定：缺少轮次级质量分与契约事实'
+      : '未判定：缺少轮次级门槛与分数'
+  }
   if (props.model.gradingMode === 'ANSWER_CONTRACT') {
     // 契约模式的 pass 只看闸门与终止状态，质量分再高也不会把未通过读成通过
     return turn.verdict === 'pass'
@@ -581,6 +589,12 @@ function verdictTitle(turn: TurnVM): string {
       : turn.verdict === 'warn'
         ? '部分命中：质量分不参与 pass，执行级判定为未通过'
         : '未通过：执行级判定为未通过（契约模式由闸门与终止状态决定）'
+  }
+  // 多轮没有轮次级分数时，pass 只由已落库的硬门槛决定，不能写成「总分达标」
+  if (turn.score === null) {
+    return turn.verdict === 'pass'
+      ? '通过：多轮执行未落库轮次级分数，本轮按已落库的硬门槛判定（总分列显示 —）'
+      : '未通过：多轮执行未落库轮次级分数，本轮按已落库的硬门槛判定（总分列显示 —）'
   }
   return turn.verdict === 'pass'
     ? `通过：硬门槛全过且总分 ≥ ${passLine.value}`
