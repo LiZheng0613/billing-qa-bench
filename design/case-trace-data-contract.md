@@ -884,3 +884,18 @@ mock 新增通过用例执行 **#6581**（BILL-FEE-0422 · 2 轮全通过 · sel
 - **门槛面板**：同一批执行会让「未通过门槛」面板挂着「硬门槛不过，总分再高也判『未通过』」，等于推翻执行结论。现 `execPassed === true` 时标题写「未通过门槛（轮次级）」，提示改「这些是轮次级未过项，只影响对应轮次结论；执行级已按落库判定为「通过」」；执行未通过 / 未判定时保留原文案。
 - **证据报文缺字段渲染成 `null`**：`CopyBox.vue` 的 `pretty(null)` 返回字符串 `"null"`，请求体 / 响应体 / 裁判返回 / 自检返回字段为 `null` 时会显示「4 B · 1 行」的 `null`，并能被复制出去；调用方传 `empty` 文案（如「执行记录未保存请求体（request_payload.body 为空）」）永远不生效。现 `CopyBox` 统一把 `null` 归一为未记录，走 `empty` 空态，复制按钮随之隐藏；字节数、行数、高亮渲染同源，不再出现「null」。
 - **验证**：真实 `5173` `17425` / `14870` 判分页结论为「……执行级按落库判定为「通过」；列出的未过门槛属于轮次级，只影响该轮结论，不改变执行级结果。」，门槛面板为「未通过门槛（轮次级） · 2 项 · 这些是轮次级未过项……」；`14866`（无轮次级未过项）仍为「硬门槛全部通过，按总分定档。」；mock `900001`（执行未通过）仍为「硬门槛未全部通过，结论为「未通过」」+「未通过门槛」；抽屉 `17425` T1 保持「本轮意图为 CLARIFY……不代表澄清动作本身有错」。证据报文回归：`14866` 请求体 400 B / 响应体 1775 B、`16360` 流式响应 129 B 仍正常渲染并带复制按钮，抽屉内无独立 `null` 文本。全页无 `NaN` / `undefined` / `[object Object]`。`npm run typecheck` / `npm run build`（8.05s / 8.00s）通过。
+
+### 12.30 RUBRIC 演示种子没有逐轮轨迹，但真实引擎执行不丢轮次（2026-11-24）
+
+- **起因**：审「RUBRIC · 轮次超限是不是不保留执行对话记录，后续开发人员无法定位调优」。结论要分两类：一类是演示种子只落了执行级，一类是真实执行同样缺、属于写入侧配置 / schema 缺口。两类都不能靠展示层补造。
+- **A 类 · 演示种子只有执行级**：真实库 1449 条执行里 RUBRIC 有 1214 条（83.8%），`task_id` 全为空、`case_snapshot.code` 全为 `DEMO-*`、56 条 `error_message` 全以「演示数据：」开头。这批记录 0 条 `turn_trace`、0 条 `judge_result`（但 1203 条 `judge_tokens > 0`）、0 条 `rule_result` / `answer_grading` / `fact_results` / `diagnostics` / `self_check` / `grader_version`，执行级只剩 `status`、`pass_flag`、`total_score`、`termination_status`、`turns_used`、`max_turns`、`simulator_tokens`、`judge_tokens`、`latency_ms`、`error_message`、`case_snapshot`。它们不在 8877 mock 服务里，而在 `5173` 直连的同一个库中，所以开发人员在真实控制台最常撞见的就是它们。
+- **真实引擎执行不会丢轮次**：pytest 引擎执行 16/16 有 `turn_trace`，LEGACY 178/178（含 15 条 `MAX_TURNS_EXCEEDED`）、契约 54/54；逐条比对「`turn_trace` 行数 = `turns_used`」在两个模式的 232 条执行上全部相等（mismatch 0），只有 RUBRIC 1214 条全部不等（0 vs N）。代码侧也一致：`execute()` 的 `_run_single` / `_run_static` / `_run_dynamic` 三条路径都会 `_save_turn()`；`GradingMode` 枚举只有 `LEGACY` / `ANSWER_CONTRACT`，全仓 grep `RUBRIC` 0 命中，当前代码不会产生 RUBRIC 记录。因此「轮次超限丢对话」在真实链路不成立，A 类是数据来源问题。
+- **页面口径不变**：这批执行已按「逐轮明细未留存 · 共 N 轮 · 结束方式 · `error_message` · tokens / 耗时 / trace_uid / 用例快照」诚实降级（`14944` 显示「演示数据：达到最大轮次仍未完成目标」、12/12 轮、4,419 tokens、1.28 s、53.4 分），不补造对话内容。要解决的是清理或标注这批种子数据，不是改展示。
+- **B 类 · 真实执行同样缺，不能归给 mock**：
+  - Agent 调用链：16 条 pytest 真实引擎执行 16/16 轮的 `tool_calls` 是 JSON `null`。`_build_record()` 会写 `response.tool_calls`，`DEFAULT_EXTRACTORS` 也有 `$.data.tool_calls`，但 5 个环境的 `extractors` 都没配这一项（`QA-MOCK` 只配了 answer / session_id / intent / generated_sql / api_params / raw_db_data）。属配置没开，不是页面问题。
+  - Agent 自身 tokens：`DEFAULT_EXTRACTORS` 里没有 usage 键，`_build_record()` 也不读 usage，任何环境都不会有 Agent 用量，页面「Agent 用量未记录」是正确展示。
+  - `evidence`：`_build_record()` 不写该列，列存在但恒为 0 条，调用链页只能走「原始条目」降级。
+  - 轮次级判分：`turn_trace` 表没有 `judge_score` / `dimension_scores` / `fact_results` / `contract_passed` / `contract_total` / `judge_reason` 列，后端只在 `_complete()` 写执行级四维；真实多轮也无法回答「哪一轮拉低了分数」，页面回退「执行级口径」是唯一诚实形态。
+  - `generated_sql` 列：真实 pytest 16/16 为空；只有环境配了该 extractor 且响应含 `data.generated_sql` 时才写列，历史 252 条值实际来自 `response_raw.body.data.generated_sql`，上游改结构就会丢。
+- **不是缺口（避免误判）**：模拟器字段 `simulator_thought` / `simulator_status` / `rendered_prompt` 覆盖 66/119，正好等于 `input_source='SIMULATOR'` 的轮次数，首轮 `INITIAL` 本来就不该有模拟器思考（66/66 完整）；LEGACY 2 条 `ERROR` 的 `turns_used=0` 属未产生轮次，页面已按 0 轮处理。
+- **影响**：本轮无代码改动，仅记录审计结论。A 类由数据治理处理；B 类需后端补 extractor 配置与 schema，页面在此之前继续保持「未记录」三态。
