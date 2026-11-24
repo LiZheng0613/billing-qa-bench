@@ -14,7 +14,14 @@ import {
 } from '../../utils/format'
 import { copyText } from '../../utils/clipboard'
 import { useToastStore } from '../../stores/toast'
-import { buildTraceModel, PASS_LINE_SOURCE_LABEL, phaseBuckets, phaseMeta } from './case-trace/model'
+import {
+  buildTraceModel,
+  fmtMs,
+  PASS_LINE_SOURCE_LABEL,
+  phaseBuckets,
+  phaseMeta,
+  type TurnStepVM,
+} from './case-trace/model'
 import { useTraceView, type StatusFilter } from './case-trace/useTraceView'
 import TraceIcon from './case-trace/TraceIcon.vue'
 import TurnBubble from './case-trace/TurnBubble.vue'
@@ -276,7 +283,7 @@ const turnsUsed = computed(() => {
 /** 对话页空态：区分「真的没产生轮次」与「跑了但没留存逐轮明细」 */
 const turnEmptyCopy = computed(() => {
   const used = turnsUsed.value
-  const title = used ? '没有逐轮明细' : '没有对话轮次'
+  const title = used ? '逐轮明细未留存' : '没有对话轮次'
   if (judgeScore.value === null) {
     return {
       title,
@@ -370,18 +377,56 @@ const pageDims = computed(() =>
 
 // ---- 执行快照页 ----
 const snapshot = computed(() => props.detail?.case_snapshot ?? null)
-const snapshotTurns = computed(() => snapshot.value?.turns ?? [])
+const snapshotTurns = computed(() => {
+  // case_snapshot 是历史自由 JSON：turns 可能缺省（真实库 1326 条为 null），
+  // 也可能被写成标量；只接受数组，避免把异常结构当轮次渲染。
+  const raw = snapshot.value?.turns
+  return Array.isArray(raw) ? raw : []
+})
+/**
+ * 只有真正带 expected_answer 的轮次才算「逐轮期望」。
+ * 快照里 turns 有记录但期望为空时应如实写成「没保存」，不能把空轮次算进期望条数。
+ */
+const snapshotTurnExpects = computed(() =>
+  snapshotTurns.value.filter((item) => {
+    const value = item?.expected_answer
+    return typeof value === 'string' ? value.trim().length > 0 : Boolean(value)
+  }),
+)
+/**
+ * 真实库里 1409 条快照只有 689 条带非空 expected_rules，turns[].expected_answer 一条都没有：
+ * 期望常常以规则表达而不是文本答案，空态必须说明这一点，不能写成「用例没写期望」。
+ */
+function hasRuleConfig(value: unknown): boolean {
+  return Boolean(value && typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0)
+}
+const snapshotHasRuleExpect = computed(() => {
+  if (hasRuleConfig(snapshot.value?.expected_rules)) return true
+  return snapshotTurns.value.some((item) => hasRuleConfig(item?.expected_rules))
+})
 
 // ---- 页面级调用链（原始报文页） ----
 const chainSteps = computed(() =>
   model.value.turns.flatMap((turn) => turn.steps.map((step) => ({ turn: turn.index, step }))),
 )
 
-const chainTotalMs = computed(() => chainSteps.value.reduce((sum, item) => sum + item.step.ms, 0))
+/** 只有落了时延的步骤才参与耗时统计；全都没落库时页面写 —，不写 0.00s */
+const chainTimedSteps = computed(() =>
+  chainSteps.value.filter((item): item is { turn: number; step: TurnStepVM & { ms: number } } =>
+    typeof item.step.ms === 'number',
+  ),
+)
+
+const chainTotalMs = computed(() => chainTimedSteps.value.reduce((sum, item) => sum + item.step.ms, 0))
+
+/** 只有整条链路每一步都落了时延，阶段条才按时间轴着色；否则一律按步数比例，避免未记录的阶段被画成 0ms */
+const chainFullyTimed = computed(
+  () => chainSteps.value.length > 0 && chainTimedSteps.value.length === chainSteps.value.length,
+)
 
 const chainSlowest = computed(() => {
-  if (!chainSteps.value.length) return null
-  return chainSteps.value.reduce((acc, item) => (item.step.ms > acc.step.ms ? item : acc), chainSteps.value[0])
+  if (!chainTimedSteps.value.length) return null
+  return chainTimedSteps.value.reduce((acc, item) => (item.step.ms > acc.step.ms ? item : acc), chainTimedSteps.value[0])
 })
 
 const chainWarnSteps = computed(() => chainSteps.value.filter((item) => item.step.status === 'warn'))
@@ -400,24 +445,27 @@ const chainBusiest = computed(() => {
 
 const maxTurnMs = computed(() =>
   model.value.turns.reduce(
-    (max, turn) => Math.max(max, phaseBuckets(turn.steps).reduce((sum, bucket) => sum + bucket.ms, 0)),
+    (max, turn) => Math.max(max, phaseBuckets(turn.steps).reduce((sum, bucket) => sum + (bucket.ms ?? 0), 0)),
     0,
   ),
 )
 
 const toolStats = computed(() => {
-  const map = new Map<string, { tool: string; calls: number; fail: number; ms: number }>()
+  const map = new Map<string, { tool: string; calls: number; fail: number; ms: number; timed: number }>()
   for (const item of chainSteps.value) {
     const key = item.step.tool
-    const row = map.get(key) ?? { tool: key, calls: 0, fail: 0, ms: 0 }
+    const row = map.get(key) ?? { tool: key, calls: 0, fail: 0, ms: 0, timed: 0 }
     row.calls += 1
     if (item.step.status === 'warn') row.fail += 1
-    row.ms += item.step.ms
+    if (typeof item.step.ms === 'number') {
+      row.ms += item.step.ms
+      row.timed += 1
+    }
     map.set(key, row)
   }
   return [...map.values()]
-    .map((row) => ({ ...row, avg: Math.round(row.ms / Math.max(1, row.calls)) }))
-    .sort((a, b) => b.calls - a.calls || b.fail - a.fail || b.avg - a.avg)
+    .map((row) => ({ ...row, avg: row.timed ? Math.round(row.ms / row.timed) : null }))
+    .sort((a, b) => b.calls - a.calls || b.fail - a.fail || (b.avg ?? -1) - (a.avg ?? -1))
 })
 
 const toolStatsOpen = ref(false)
@@ -431,7 +479,7 @@ const slowSteps = computed(() =>
   [...chainSteps.value]
     .sort((a, b) => {
       const warnDiff = Number(b.step.status === 'warn') - Number(a.step.status === 'warn')
-      return warnDiff || b.step.ms - a.step.ms
+      return warnDiff || (b.step.ms ?? -1) - (a.step.ms ?? -1)
     })
     .slice(0, 5),
 )
@@ -583,6 +631,36 @@ const contractFacts = computed<ContractFactItem[]>(() => {
   if (Array.isArray(raw)) return raw as ContractFactItem[]
   const nested = contractGrading.value?.facts
   return Array.isArray(nested) ? (nested as ContractFactItem[]) : []
+})
+
+/**
+ * 快照页「判分口径」里的计数来自本次执行的落库结果，不是用例配置：
+ * 结果为空时不能写成「0 条」让人误读成用例没配规则 / 没写事实，
+ * 有快照规则就说明「未留存」，确实没配才写「未配置」。
+ */
+const ruleChipText = computed(() => {
+  if (ruleChecks.value.length) return `规则结果 ${ruleChecks.value.length} 条`
+  // 契约判分只写 fact_results（answer_grader 里 gates 由契约事实算出），RUBRIC 历史记录没有规则产物：
+  // 这两种情况写「未留存」会让人以为丢了数据，按模式说明规则结果为何为空。
+  if (props.detail?.grading_mode === 'ANSWER_CONTRACT') return '规则结果未参与契约判定'
+  if (props.detail?.grading_mode === 'RUBRIC') return '规则结果未记录（RUBRIC）'
+  return snapshotHasRuleExpect.value ? '规则结果未留存' : '未配置规则'
+})
+const factChipText = computed(() =>
+  contractFacts.value.length ? `契约事实 ${contractFacts.value.length} 项` : '契约事实未留存',
+)
+const gateChipText = computed(() =>
+  contractGates.value.length ? `契约闸门 ${contractGates.value.length} 项` : '契约闸门未留存',
+)
+/**
+ * 执行记录里的阈值在契约模式下不参与判定（executor.py:593 pass = grading.passed，即四项闸门），
+ * 它也没有跟四维质量分比较过，所以不能叫「质量分参考线」——只如实写「阈值」。
+ */
+const passLineChipText = computed(() => {
+  const source = PASS_LINE_SOURCE_LABEL[model.value.passLineSource]
+  return props.detail?.grading_mode === 'ANSWER_CONTRACT'
+    ? `阈值 ${model.value.passLine}（${source}）· 不参与契约判定`
+    : `pass 阈值 ${model.value.passLine}（${source}）`
 })
 
 const contractQuality = computed<{ total_score?: number; dimension_scores?: Record<string, number> } | null>(() => {
@@ -756,8 +834,12 @@ async function copyTraceUid(): Promise<void> {
               <p v-if="!model.turns.length" class="truncate text-[10px] text-slate-500">
                 {{
                   judgeScore !== null
-                    ? '执行记录只保留执行级结论，没有逐轮明细'
-                    : '本次执行没有产出判定结论，也没有逐轮明细'
+                    ? turnsUsed
+                      ? `执行记录只保留执行级结论，${turnsUsed} 轮的逐轮明细未留存`
+                      : '执行记录只保留执行级结论，没有逐轮明细'
+                    : turnsUsed
+                      ? `本次执行共 ${turnsUsed} 轮，但未留存逐轮明细，也没有执行级评分与结论`
+                      : '本次执行没有产生对话轮次，也没有执行级评分与结论'
                 }}
               </p>
               <p v-else-if="noneJudged" class="truncate text-[10px] text-slate-500">
@@ -969,7 +1051,9 @@ async function copyTraceUid(): Promise<void> {
                   未判定 {{ model.session.unknownCount }}
                 </span>
               </template>
-              <span v-else class="text-slate-500">没有逐轮明细</span>
+              <span v-else class="text-slate-500">
+                {{ turnsUsed ? `共 ${turnsUsed} 轮 · 逐轮明细未留存` : '没有逐轮明细' }}
+              </span>
               <span v-if="model.session.totalTokens" class="text-slate-500">
                 {{ model.session.totalTokens }} tokens
               </span>
@@ -1076,7 +1160,13 @@ async function copyTraceUid(): Promise<void> {
 
         <!-- ============================ 执行快照 ============================ -->
         <template v-if="activeTab === 'snapshot'">
-          <div class="space-y-3">
+          <EmptyState
+            v-if="!snapshot"
+            compact
+            title="没有执行快照"
+            description="执行记录未保存 case_snapshot；快照页不补造请求变量、期望答案与判分口径。"
+          />
+          <div v-else class="space-y-3">
             <div class="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
               <span class="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
                 <TraceIcon name="file" :size="13" />
@@ -1084,7 +1174,7 @@ async function copyTraceUid(): Promise<void> {
               <div class="min-w-0">
                 <p class="text-xs font-medium text-slate-800">执行快照 v{{ detail.case_version }}</p>
                 <p class="text-[10px] text-slate-500">
-                  用例当前版本 v{{ detail.case_version }} · 执行于 {{ formatDateTime(detail.started_at) }} · 快照中的变量与期望答案不随后续用例编辑改变
+                  用例版本 v{{ detail.case_version }}（执行时） · 执行于 {{ formatDateTime(detail.started_at) }} · 快照中的变量与期望答案不随后续用例编辑改变
                 </p>
               </div>
               <span class="flex-1" />
@@ -1117,43 +1207,66 @@ async function copyTraceUid(): Promise<void> {
 
               <div class="rounded-xl border border-slate-200 bg-white p-3">
                 <p class="text-[11px] font-medium text-slate-700">期望答案</p>
-                <p v-if="snapshot?.expected_answer" class="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-700">
-                  {{ snapshot.expected_answer }}
-                </p>
-                <div v-else-if="snapshotTurns.length" class="mt-2 space-y-1.5">
+                <template v-if="snapshot?.expected_answer">
+                  <p class="mt-1 text-[10px] text-slate-500">执行级期望答案</p>
+                  <p class="mt-1 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-700">
+                    {{ snapshot.expected_answer }}
+                  </p>
+                </template>
+                <div v-if="snapshotTurnExpects.length" class="mt-2 space-y-1.5">
+                  <p class="text-[10px] text-slate-500">逐轮期望</p>
                   <p
-                    v-for="item in snapshotTurns"
+                    v-for="item in snapshotTurnExpects"
                     :key="String(item.index)"
                     class="text-[11px] leading-relaxed text-slate-700"
                   >
                     <span class="mr-1 font-mono text-[10px] text-indigo-600">T{{ item.index }}</span>
-                    {{ item.expected_answer || '—' }}
+                    {{ item.expected_answer }}
                   </p>
                 </div>
-                <p v-else class="mt-2 text-[11px] text-slate-400">快照未保存期望答案。</p>
-                <p class="mt-2 text-[10px] text-slate-500">
-                  共 {{ snapshotTurns.length }} 轮逐轮期望；{{ snapshotTurns.length ? '逐轮对齐' : '仅有执行级期望' }}。
+                <p v-if="!snapshot?.expected_answer && !snapshotTurnExpects.length" class="mt-2 text-[11px] text-slate-400">
+                  {{
+                    snapshotHasRuleExpect
+                      ? '快照没有文本期望答案（expected_answer 与 turns[].expected_answer 均为空）；本用例的期望以 expected_rules 规则表达，见下方原始快照 JSON。'
+                      : '快照未保存期望答案（expected_answer 与 turns[].expected_answer 均为空），也没有 expected_rules。'
+                  }}
+                </p>
+                <p v-if="snapshotTurnExpects.length" class="mt-2 text-[10px] text-slate-500">
+                  {{
+                    snapshotTurns.length > snapshotTurnExpects.length
+                      ? `快照共 ${snapshotTurns.length} 轮，其中 ${snapshotTurnExpects.length} 轮有逐轮期望（用例快照 turns[].expected_answer）；其余轮次期望为空。`
+                      : `快照共 ${snapshotTurns.length} 轮，逐轮期望来自用例快照 turns[].expected_answer。`
+                  }}
+                </p>
+                <p v-else-if="snapshot?.expected_answer" class="mt-2 text-[10px] text-slate-500">
+                  快照只有执行级期望答案，没有逐轮期望。
                 </p>
               </div>
 
               <div class="rounded-xl border border-slate-200 bg-white p-3">
                 <p class="text-[11px] font-medium text-slate-700">判分口径</p>
                 <div class="mt-2 flex flex-wrap gap-1">
-                  <span class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">规则 {{ ruleChecks.length }} 条</span>
-                  <span class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">facts {{ contractFacts.length }}</span>
-                  <span class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">契约闸门 {{ contractGates.length }}</span>
+                  <span class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">{{ ruleChipText }}</span>
+                  <span
+                    v-if="detail.grading_mode === 'ANSWER_CONTRACT' || contractFacts.length"
+                    class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600"
+                  >{{ factChipText }}</span>
+                  <span
+                    v-if="detail.grading_mode === 'ANSWER_CONTRACT' || contractGates.length"
+                    class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600"
+                  >{{ gateChipText }}</span>
                   <span
                     class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600"
                     :title="detail.grading_mode === 'ANSWER_CONTRACT'
-                      ? `来源：${PASS_LINE_SOURCE_LABEL[model.passLineSource]}；契约模式 pass 只看四项闸门，该阈值仅作质量分参考`
+                      ? `来源：${PASS_LINE_SOURCE_LABEL[model.passLineSource]}；契约模式 pass 由四项闸门与终止状态决定，该阈值随执行落库、不参与判定`
                       : `来源：${PASS_LINE_SOURCE_LABEL[model.passLineSource]}`"
-                  >{{ detail.grading_mode === 'ANSWER_CONTRACT' ? '质量分参考线' : 'pass 阈值' }} {{ model.passLine }}（{{ PASS_LINE_SOURCE_LABEL[model.passLineSource] }}）</span>
+                  >{{ passLineChipText }}</span>
                 </div>
                 <p class="mt-2 text-[10px] leading-relaxed text-slate-500">
                   {{ detail.grading_mode === 'ANSWER_CONTRACT'
                     ? '契约模式：最终答案正确性优先，pass 由四项契约闸门与终止状态决定，质量分仅作参考；工具调用轨迹仅用于失败诊断。'
                     : detail.grading_mode === 'RUBRIC'
-                      ? '旧评分模式（RUBRIC）：规则 + LLM 评分，落库时只保留执行级综合分与最终结论，没有逐轮四维与裁判理由。'
+                      ? '旧评分模式（RUBRIC）：执行记录只保留执行级综合分与最终结论，没有逐轮四维与裁判理由；是否同时跑过规则未落库，页面不推断。'
                       : 'LEGACY 模式：规则 + LLM 裁判四维加权，硬门槛与总分同时满足才通过。' }}
                 </p>
               </div>
@@ -1217,12 +1330,17 @@ async function copyTraceUid(): Promise<void> {
                 链路总耗时
               </p>
               <p class="text-lg font-semibold tabular-nums text-slate-900">
-                {{ (chainTotalMs / 1000).toFixed(2) }}
-                <span class="text-xs font-normal text-slate-500">s</span>
+                {{ chainTimedSteps.length ? (chainTotalMs / 1000).toFixed(2) : '—' }}
+                <span v-if="chainTimedSteps.length" class="text-xs font-normal text-slate-500">s</span>
+                <span v-else class="text-xs font-normal text-slate-500">未记录时延</span>
               </p>
               <p class="truncate text-[10px] text-slate-500">
                 占执行总耗时
-                {{ detail.latency_ms ? Math.min(100, Math.round((chainTotalMs / detail.latency_ms) * 100)) : '—' }}%
+                {{
+                  chainTimedSteps.length && detail.latency_ms
+                    ? Math.min(100, Math.round((chainTotalMs / detail.latency_ms) * 100)) + '%'
+                    : '—'
+                }}
               </p>
             </div>
             <div
@@ -1247,8 +1365,7 @@ async function copyTraceUid(): Promise<void> {
                 最慢步骤
               </p>
               <p class="text-lg font-semibold tabular-nums text-slate-900">
-                {{ chainSlowest ? chainSlowest.step.ms : '—' }}
-                <span class="text-xs font-normal text-slate-500">ms</span>
+                {{ chainSlowest ? fmtMs(chainSlowest.step.ms) : '—' }}
               </p>
               <p class="truncate text-[10px] text-slate-500">
                 {{ chainSlowest ? `T${chainSlowest.turn} · ${chainSlowest.step.name}` : '—' }}
@@ -1263,7 +1380,13 @@ async function copyTraceUid(): Promise<void> {
                 {{ phase }}
               </span>
               <span class="inline-flex items-center gap-1"><i class="h-2 w-2 rounded-sm bg-amber-500" />失败 / 警告</span>
-              <span class="ml-auto">按阶段聚合 · 横轴统一 0–{{ (maxTurnMs / 1000).toFixed(2) }}s · 点击行看明细</span>
+              <span class="ml-auto">
+                {{
+                  chainFullyTimed
+                    ? `按阶段聚合 · 横轴统一 0–${(maxTurnMs / 1000).toFixed(2)}s · 点击行看明细`
+                    : '按阶段聚合并按步数比例着色（部分步骤未记录时延，不按 0ms 计）· 点击行看明细'
+                }}
+              </span>
             </div>
 
             <div class="mt-2 space-y-1.5">
@@ -1282,10 +1405,18 @@ async function copyTraceUid(): Promise<void> {
                     :key="bucket.key"
                     class="h-full flex-none"
                     :style="{
-                      width: `${Math.max(0.4, (bucket.ms / Math.max(1, maxTurnMs)) * 100)}%`,
+                      width: `${
+                        chainFullyTimed
+                          ? Math.max(0.4, ((bucket.ms ?? 0) / Math.max(1, maxTurnMs)) * 100)
+                          : Math.max(0.4, (bucket.n / Math.max(1, turn.steps.length)) * 100)
+                      }%`,
                       background: bucket.warn ? '#f59e0b' : bucket.color,
                     }"
-                    :title="`${bucket.label} · ${bucket.n} 步 · ${bucket.ms}ms`"
+                    :title="
+                      chainFullyTimed
+                        ? `${bucket.label} · ${bucket.n} 步 · ${fmtMs(bucket.ms)}`
+                        : `${bucket.label} · ${bucket.n} 步 · 时延未记录`
+                    "
                   />
                 </span>
                 <span
@@ -1324,7 +1455,7 @@ async function copyTraceUid(): Promise<void> {
                       <td class="max-w-[220px] truncate py-1 font-mono text-slate-600" :title="row.tool">{{ row.tool }}</td>
                       <td class="py-1 text-right font-mono text-slate-700">{{ row.calls }}</td>
                       <td class="py-1 text-right font-mono" :class="row.fail ? 'text-rose-600' : 'text-slate-500'">{{ row.fail }}</td>
-                      <td class="py-1 text-right font-mono text-slate-500">{{ row.avg }}ms</td>
+                      <td class="py-1 text-right font-mono text-slate-500">{{ row.avg === null ? '—' : `${row.avg}ms` }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1350,7 +1481,7 @@ async function copyTraceUid(): Promise<void> {
                     <span class="min-w-0 flex-1 truncate" :class="item.step.status === 'warn' ? 'text-amber-700' : 'text-slate-600'" :title="`${item.step.name} · ${item.step.tool}`">
                       {{ item.step.name }} · {{ item.step.tool }}
                     </span>
-                    <span class="flex-none font-mono text-slate-500">{{ item.step.ms }}ms</span>
+                    <span class="flex-none font-mono text-slate-500">{{ fmtMs(item.step.ms) }}</span>
                   </div>
                 </div>
                 <p class="mt-2 text-[10px] leading-relaxed text-slate-500">

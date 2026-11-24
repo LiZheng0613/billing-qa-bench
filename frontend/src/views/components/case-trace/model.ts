@@ -105,7 +105,8 @@ export interface TurnStepVM {
   tool: string
   name: string
   param: string
-  ms: number
+  /** 后端没落库时延就留 null（界面显示 —），不拿 0 冒充「很快」 */
+  ms: number | null
   status: 'ok' | 'warn'
   phase: string
   args: unknown
@@ -353,10 +354,16 @@ function rulesOf(
   const rows: TurnRuleVM[] = checks.map((raw) => {
     const item = obj(raw) ?? {}
     const type = str(item.type)
+    // 后端每条 check 都写 passed（真实库 146 条 rule_result 全部带该字段）；
+    // 缺失时不能默认「通过」，按未通过展示并注明字段缺失，避免页面替记录下结论。
+    const hasPassed = typeof item.passed === 'boolean'
+    const passed = hasPassed ? (item.passed as boolean) : false
     return {
       name: str(item.label) || RULE_LABEL[type] || type || '校验项',
-      pass: item.passed !== false,
-      why: str(item.reason) || (item.passed === false ? '未命中' : ''),
+      pass: passed,
+      why:
+        str(item.reason) ||
+        (hasPassed ? (passed ? '' : '未命中') : '后端未记录 passed，页面按未通过展示'),
       type,
       expected: str(item.expected),
       actual: str(item.actual),
@@ -445,7 +452,7 @@ function stepsOf(turn: TurnTrace): TurnStepVM[] {
     .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
     .map((item, index) => {
       const ms =
-        num(item.latency_ms) ?? num(item.elapsed_ms) ?? num(item.duration_ms) ?? num(item.ms) ?? 0
+        num(item.latency_ms) ?? num(item.elapsed_ms) ?? num(item.duration_ms) ?? num(item.ms)
       const flag = str(item.status).toUpperCase()
       const status: 'ok' | 'warn' = /FAIL|ERROR|TIMEOUT|DENIED|WARN/.test(flag) ? 'warn' : 'ok'
       const tool = str(item.tool) || str(item.name) || str(item.kind) || `tool_${index + 1}`
@@ -491,10 +498,13 @@ export function turnSql(turn: TurnTrace | undefined | null): string {
   return str(turn.generated_sql) || str(obj(obj(response?.body)?.data)?.generated_sql)
 }
 
-function requestOf(turn: TurnTrace): TurnRequestVM {  const payload = obj(turn.request_payload)
+function requestOf(turn: TurnTrace): TurnRequestVM {
+  const payload = obj(turn.request_payload)
   const headers = headersOf(payload)
   return {
-    method: str(payload?.method) || 'POST',
+    // 后端 request_payload 一定写 method；缺失（历史 / 异常记录）时留空，
+    // 不能让页面默认显示 POST 冒充落库事实。
+    method: str(payload?.method),
     url: str(payload?.url),
     headers,
     body: payload?.body ?? null,
@@ -509,9 +519,18 @@ function expectedOf(
   single: boolean,
 ): { text: string; source: string; scope: 'turn' | 'session' | 'none' } {
   const turns = snapshot?.turns ?? []
-  const matched = turns.find((item) => item.index === index) ?? turns[index - 1]
+  const direct = turns.find((item) => item.index === index)
+  const positional = turns[index - 1]
+  // 真实快照的 turns[] 全部带 index（182 个元素 100% 有），按 index 精确匹配；
+  // 只有结构里确实没写 index 时才按位置兜底，避免 index 对不上时张冠李戴。
+  const matched =
+    direct ?? (positional && typeof positional.index !== 'number' ? positional : undefined)
   if (matched?.expected_answer) {
-    return { text: matched.expected_answer, source: `用例快照 · 第 ${index} 轮期望`, scope: 'turn' }
+    return {
+      text: matched.expected_answer,
+      source: direct ? `用例快照 · 第 ${index} 轮期望` : `用例快照 · 第 ${index} 轮期望（按位置匹配）`,
+      scope: 'turn',
+    }
   }
   // 单轮用例的顶层期望就是唯一一轮的期望；多轮不把会话级期望硬套到每一轮
   if (single && snapshot?.expected_answer) {
@@ -827,19 +846,23 @@ export function phaseBuckets(steps: TurnStepVM[]): Array<{
   label: string
   color: string
   n: number
-  ms: number
+  /** 该阶段所有步骤都没落库时延时为 null，界面显示 —，不按 0ms 聚合 */
+  ms: number | null
   warn: number
 }> {
   const order = ['规划', '生成 SQL', '执行查询', '口径校验', '组织回复', '其他']
   return order
     .map((phase) => {
       const items = steps.filter((step) => step.phase === phase)
+      const timed = items
+        .map((step) => step.ms)
+        .filter((value): value is number => typeof value === 'number')
       return {
         key: phase,
         label: phaseMeta(phase).label,
         color: phaseMeta(phase).color,
         n: items.length,
-        ms: items.reduce((sum, step) => sum + step.ms, 0),
+        ms: timed.length ? timed.reduce((sum, value) => sum + value, 0) : null,
         warn: items.filter((step) => step.status === 'warn').length,
       }
     })

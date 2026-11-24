@@ -25,14 +25,17 @@ const lines = computed(() => {
 })
 
 /** 本轮真实取数（raw_db_data）——只展示标量，不猜结构。 */
-const dataRows = computed<Array<[string, string]>>(() => {
+const scalarRows = computed<Array<[string, string]>>(() => {
   const raw = props.turn.turn.raw_db_data
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return []
   return Object.entries(raw as Record<string, unknown>)
     .filter(([, value]) => value === null || typeof value !== 'object')
-    .slice(0, 8)
     .map(([key, value]) => [key, value === null ? '—' : String(value)])
 })
+const DATA_CLAMP = 8
+const dataRows = computed(() => scalarRows.value.slice(0, DATA_CLAMP))
+/** 只展示前 8 项时要说明还有多少项，避免把截断读成全部取数 */
+const dataRowsHidden = computed(() => Math.max(0, scalarRows.value.length - dataRows.value.length))
 
 const stepCount = computed(() => props.turn.steps.length)
 const timeLabel = computed(() => `${props.turn.at ? props.turn.at.slice(11, 19) : '—'}`)
@@ -99,6 +102,7 @@ const timeLabel = computed(() => `${props.turn.at ? props.turn.at.slice(11, 19) 
             <div class="dbh"><TraceIcon name="db" :size="11" /> 本轮工具返回（raw_db_data）</div>
             <div class="dchips">
               <span v-for="([key, value], index) in dataRows" :key="index"><b>{{ key }}</b> {{ value }}</span>
+              <span v-if="dataRowsHidden" class="more">另有 {{ dataRowsHidden }} 项 · 见「证据」</span>
             </div>
           </div>
 
@@ -266,6 +270,7 @@ const timeLabel = computed(() => `${props.turn.at ? props.turn.at.slice(11, 19) 
   color: #6b7280;
 }
 .dchips span b { font-weight: 500; color: #374151; }
+.dchips span.more { color: #9ca3af; border-style: dashed; background: #fcfcfd; }
 .ans-foot {
   display: flex;
   align-items: center;

@@ -52,12 +52,26 @@ watch(filterMode, () => {
 })
 
 const buckets = computed(() => phaseBuckets(props.steps))
-const totalMs = computed(() => props.steps.reduce((sum, step) => sum + Math.max(0, step.ms), 0))
-const slowLimit = computed(() =>
-  Math.max(50, Math.round((totalMs.value / Math.max(1, props.steps.length)) * 2)),
+/** 只有后端真正落了时延的步骤才参与总耗时 / 平均值，未落库的步骤不按 0ms 计算 */
+const timedSteps = computed(() =>
+  props.steps.filter((step): step is TurnStepVM & { ms: number } => typeof step.ms === 'number'),
+)
+const totalMs = computed(() => timedSteps.value.reduce((sum, step) => sum + step.ms, 0))
+const slowLimit = computed<number | null>(() =>
+  timedSteps.value.length
+    ? Math.max(50, Math.round((totalMs.value / Math.max(1, timedSteps.value.length)) * 2))
+    : null,
 )
 const warnCount = computed(() => props.steps.filter((step) => step.status === 'warn').length)
-const slowCount = computed(() => props.steps.filter((step) => step.ms >= slowLimit.value).length)
+/** 整轮每一步都落了时延才按时间轴画阶段条；有缺失就整轮按步数比例，免得缺失段被读成 0ms */
+const fullyTimed = computed(
+  () => props.steps.length > 0 && timedSteps.value.length === props.steps.length,
+)
+const slowCount = computed(() =>
+  slowLimit.value === null
+    ? 0
+    : timedSteps.value.filter((step) => step.ms >= slowLimit.value!).length,
+)
 
 const groups = computed(() =>
   phaseBuckets(props.steps)
@@ -68,7 +82,9 @@ const groups = computed(() =>
         .filter((item) => item.step.phase === group.key)
         .filter((item) => {
           if (filterMode.value === 'warn') return item.step.status === 'warn'
-          if (filterMode.value === 'slow') return item.step.ms >= slowLimit.value
+          if (filterMode.value === 'slow') {
+            return slowLimit.value !== null && item.step.ms !== null && item.step.ms >= slowLimit.value
+          }
           return true
         }),
     }))
@@ -101,15 +117,10 @@ function toggleStep(index: number): void {
   openSteps.value = next
 }
 
-function stepArgs(step: TurnStepVM, index: number): unknown {
-  if (step.args !== null && step.args !== undefined) return step.args
-  return { tool: step.tool, step: step.name, input: step.param || '', step_index: index + 1 }
-}
-
-function stepResult(step: TurnStepVM): unknown {
-  if (step.result !== null && step.result !== undefined) return step.result
-  return step.raw
-}
+/**
+ * 步骤只展示后端真实落库的字段：arguments / result 缺失时不再拼一个「看起来像 arguments」的对象，
+ * 直接给原始条目 —— 展示层没有资格替执行记录补结构。
+ */
 </script>
 
 <template>
@@ -121,12 +132,12 @@ function stepResult(step: TurnStepVM): unknown {
 
     <template v-else>
       <template v-if="buckets.length >= 3">
-        <div class="cdist">
+        <div v-if="totalMs > 0 && fullyTimed" class="cdist">
           <i
             v-for="bucket in buckets"
             :key="bucket.key"
             :style="{
-              width: `${(bucket.ms / Math.max(1, totalMs)) * 100}%`,
+              width: `${((bucket.ms ?? 0) / Math.max(1, totalMs)) * 100}%`,
               background: bucket.warn ? '#f59e0b' : bucket.color,
             }"
             :title="`${bucket.label} · ${bucket.n} 步 · ${fmtMs(bucket.ms)}`"
@@ -213,8 +224,15 @@ function stepResult(step: TurnStepVM): unknown {
               <span v-if="item.step.raw.tool_call_id"><b>tool_call_id</b>{{ item.step.raw.tool_call_id }}</span>
               <span v-else><b>阶段</b>{{ item.step.phase }}</span>
             </div>
-            <CopyBox title="arguments" :value="stepArgs(item.step, item.index)" :max-height="'26vh'" />
-            <CopyBox title="result" :value="stepResult(item.step)" :max-height="'26vh'" />
+            <CopyBox v-if="item.step.args !== null && item.step.args !== undefined" title="arguments" :value="item.step.args" :max-height="'26vh'" />
+            <CopyBox v-if="item.step.result !== null && item.step.result !== undefined" title="result" :value="item.step.result" :max-height="'26vh'" />
+            <CopyBox
+              v-if="item.step.args === null || item.step.args === undefined || item.step.result === null || item.step.result === undefined"
+              title="原始条目"
+              note="后端未拆分 arguments / result"
+              :value="item.step.raw"
+              :max-height="'26vh'"
+            />
           </div>
         </div>
       </div>
