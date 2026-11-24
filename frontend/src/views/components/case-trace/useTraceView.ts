@@ -206,6 +206,21 @@ export function useTraceView(detail: () => ExecutionDetail | null, initialTab: (
 
   const turns = computed(() => detail()?.turns ?? [])
 
+  // 链接里的 drawer 轮次可能已不存在（历史链接、切到别的执行）：直接关闭抽屉，
+  // 避免打开一个「T— 本轮没有提问记录」的空抽屉；URL 会随状态同步清掉参数。
+  watch(
+    [turns, detail],
+    ([list, record]) => {
+      // 详情还没到（组件先于请求挂载）时不能判空，否则会把合法 drawer 参数误清掉
+      if (!record || !drawer.open || drawer.turnIndex === null) return
+      if (!list.some((turn) => turn.turn_index === drawer.turnIndex)) {
+        drawer.open = false
+        drawer.focusTag = null
+      }
+    },
+    { immediate: true },
+  )
+
   function openDrawer(
     index: number,
     section: DrawerSection = 'turn',

@@ -129,6 +129,21 @@ const visibleTabs = computed(() =>
   TABS.filter((item) => item.key !== 'selfcheck' || Boolean(model.value.selfCheck)),
 )
 
+/**
+ * 页签必须落在当前可见集合里：自检页签只在真发生过追问时出现，
+ * 旧链接（?tab=selfcheck）指向没有自检的执行时若不放回对话轮次，
+ * 页面会既没有高亮页签、又渲染出「未开启自检」的空态（通过的用例还会漏出自检字样）。
+ */
+watch(
+  [visibleTabs, () => props.detail],
+  ([tabs, detail]) => {
+    // 详情请求返回前 model 为空，不能据此把自检页签判为不可用
+    if (!detail) return
+    if (!tabs.some((item) => item.key === activeTab.value)) activeTab.value = 'turns'
+  },
+  { immediate: true },
+)
+
 const STATUS_OPTIONS: Array<{ key: StatusFilter; label: string }> = [
   { key: 'all', label: '全部' },
   { key: 'pass', label: '通过' },
