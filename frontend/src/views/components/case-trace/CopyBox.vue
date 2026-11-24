@@ -26,10 +26,13 @@ const isHeaders = computed(() => props.kind === 'headers')
 const headers = computed<Array<[string, string]>>(() =>
   Array.isArray(props.value) ? (props.value as Array<[string, string]>) : [],
 )
-const body = computed(() => pretty(props.value))
+// 落库字段缺失时调用方传 null：JSON.stringify(null) 会得到字符串 "null"，
+// 页面上就成了有内容的「null」并能被复制。这里统一按未记录处理，交给 empty 文案。
+const normalized = computed(() => (props.value === null ? undefined : props.value))
+const body = computed(() => pretty(normalized.value))
 const hasBody = computed(() => isHeaders.value ? headers.value.length > 0 : Boolean(body.value))
-const size = computed(() => (isHeaders.value ? '' : byteSize(props.value)))
-const lines = computed(() => (isHeaders.value ? 0 : lineCount(props.value)))
+const size = computed(() => (isHeaders.value ? '' : byteSize(normalized.value)))
+const lines = computed(() => (isHeaders.value ? 0 : lineCount(normalized.value)))
 
 const rendered = computed(() => {
   if (props.kind === 'text') {
@@ -38,14 +41,14 @@ const rendered = computed(() => {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
   }
-  return highlightJson(props.value)
+  return highlightJson(normalized.value)
 })
 
 async function copy(): Promise<void> {
   let text = props.copyAs ?? ''
   if (!text) {
     if (isHeaders.value) text = headers.value.map(([key, value]) => `${key}: ${value}`).join('\n')
-    else text = typeof props.value === 'string' ? props.value : body.value
+    else text = typeof normalized.value === 'string' ? normalized.value : body.value
   }
   if (!text) {
     toast.info('没有可复制的内容')
