@@ -8,7 +8,10 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
+from dataclasses import replace
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +24,39 @@ from billing_qa.services.llm.client import ModelContext
 
 def _role_value(role: ModelRole | str) -> str:
     return role.value if isinstance(role, ModelRole) else str(role)
+
+
+# ------------------------------------------------------------------ #
+# 执行期快照缓存（短 TTL）
+# ------------------------------------------------------------------ #
+# 模型注册是低频变更数据，但执行热路径每次都要「查库 + 解密 api_key」。
+# 加短 TTL 进程内缓存后，稳态下每次执行不再重复这些查询与解密；
+# 管理端变更由 invalidate_model_cache() 主动失效（api/v1/models.py
+# 各写端点调用），TTL 兜底覆盖绕过 API 直接改库的场景。
+_CONTEXT_CACHE_TTL_SECONDS = 5.0
+_context_cache: dict[tuple[Any, ...], tuple[float, ModelContext]] = {}
+
+
+def invalidate_model_cache() -> None:
+    """模型注册变更后调用：立即清空执行期快照缓存。"""
+    _context_cache.clear()
+
+
+def _cache_hit(key: tuple[Any, ...]) -> ModelContext | None:
+    hit = _context_cache.get(key)
+    if hit is None or time.monotonic() - hit[0] >= _CONTEXT_CACHE_TTL_SECONDS:
+        return None
+    return hit[1]
+
+
+def _cache_store(key: tuple[Any, ...], context: ModelContext) -> ModelContext:
+    _context_cache[key] = (time.monotonic(), context)
+    return context
+
+
+def _copy(context: ModelContext) -> ModelContext:
+    # 缓存中的实例是共享底本；对外一律返回副本，避免调用方修改串味。
+    return replace(context)
 
 
 async def get_model(db: AsyncSession, model_id: int) -> ModelConfig:
@@ -81,10 +117,16 @@ async def resolve_context(
     model_id: int | None = None,
     roles: Sequence[ModelRole | str] = (),
 ) -> ModelContext:
-    """解析模型并转成执行期快照，供 LLMClient 直接使用。"""
-    return ModelContext.from_orm(
+    """解析模型并转成执行期快照（短 TTL 缓存），供 LLMClient 直接使用。"""
+    key = ("ctx", model_id, tuple(_role_value(role) for role in roles))
+    hit = _cache_hit(key)
+    if hit is not None:
+        return _copy(hit)
+    context = ModelContext.from_orm(
         await resolve_model(db, model_id=model_id, roles=roles)
     )
+    _cache_store(key, context)
+    return _copy(context)
 
 
 async def resolve_unique_active(db: AsyncSession, role: ModelRole | str) -> ModelConfig:
@@ -117,13 +159,68 @@ async def resolve_unique_active(db: AsyncSession, role: ModelRole | str) -> Mode
 
 
 async def resolve_unique_context(db: AsyncSession, role: ModelRole | str) -> ModelContext:
-    """唯一启用模型的执行期快照，供模拟器等固定角色使用。"""
-    return ModelContext.from_orm(await resolve_unique_active(db, role))
+    """唯一启用模型的执行期快照（短 TTL 缓存），供模拟器等固定角色使用。"""
+    key = ("unique", _role_value(role))
+    hit = _cache_hit(key)
+    if hit is not None:
+        return _copy(hit)
+    context = ModelContext.from_orm(await resolve_unique_active(db, role))
+    _cache_store(key, context)
+    return _copy(context)
+
+
+async def resolve_contexts(
+    db: AsyncSession, model_ids: Sequence[int], role: ModelRole | str
+) -> list[ModelContext]:
+    """按 id 顺序批量解析多个同角色模型的执行期快照（缓存 + 单条 IN 查询）。
+
+    校验口径与 resolve_model 完全一致（存在 / 启用 / 角色匹配），异常
+    类型与消息也逐字相同；缓存命中的 id 不再查库，未命中的合并为一次
+    IN 查询。重复 id 按原顺序重复返回（与逐个 db.get 的历史行为一致）。
+    """
+    allowed = [_role_value(role)]
+    ordered = [int(item) for item in model_ids]
+    if not ordered:
+        return []
+    resolved: dict[int, ModelContext] = {}
+    missing: list[int] = []
+    for model_id in dict.fromkeys(ordered):
+        hit = _cache_hit(("ctx", model_id, tuple(allowed)))
+        if hit is not None:
+            resolved[model_id] = hit
+        else:
+            missing.append(model_id)
+    if missing:
+        rows = {
+            int(row.id): row
+            for row in (
+                await db.execute(
+                    select(ModelConfig).where(ModelConfig.id.in_(missing))
+                )
+            ).scalars()
+        }
+        for model_id in missing:
+            model = rows.get(model_id)
+            if model is None:
+                raise NotFoundError(f"模型 id={model_id} 不存在")
+            if not model.is_active:
+                raise ValidationError(f"模型 {model.name} 已停用，请换用启用的模型")
+            if model.role not in allowed:
+                raise ValidationError(
+                    f"模型 {model.name} 的角色是 {model.role}，"
+                    f"当前场景需要 {' / '.join(allowed)}"
+                )
+            resolved[model_id] = _cache_store(
+                ("ctx", model_id, tuple(allowed)), ModelContext.from_orm(model)
+            )
+    return [_copy(resolved[model_id]) for model_id in ordered]
 
 
 __all__ = [
     "get_model",
+    "invalidate_model_cache",
     "resolve_context",
+    "resolve_contexts",
     "resolve_model",
     "resolve_unique_active",
     "resolve_unique_context",

@@ -35,6 +35,7 @@ from billing_qa.schemas.model_config import (
 )
 from billing_qa.services.llm.client import LLMClient, ModelContext
 from billing_qa.services.llm.opencode_catalog import fetch_opencode_catalog
+from billing_qa.services.llm.registry import invalidate_model_cache
 
 router = APIRouter(
     prefix="/models",
@@ -192,6 +193,7 @@ async def create_model(
     db.add(model)
     await db.commit()
     await db.refresh(model)
+    invalidate_model_cache()
     return model_to_out(model, reveal=_can_read_secret(user))
 
 
@@ -308,6 +310,7 @@ async def update_model(
             model.serve_password_encrypted = encrypt_value(payload.serve_password)
     await db.commit()
     await db.refresh(model)
+    invalidate_model_cache()
     return model_to_out(model, reveal=_can_read_secret(user))
 
 
@@ -346,6 +349,7 @@ async def delete_model(model_id: int, db: AsyncSession = Depends(get_db)) -> Mes
     code = model.code
     await db.delete(model)
     await db.commit()
+    invalidate_model_cache()
     return MessageResponse(message=f"模型 {code} 已删除")
 
 
