@@ -1008,8 +1008,11 @@ async def task_executions(
     max_score: float | None = Query(default=None, ge=0, le=100, description="最高得分"),
     sort: str | None = Query(
         default=None,
-        pattern="^(score_desc|score_asc)$",
-        description="排序：score_desc 得分从高到低 / score_asc 得分从低到高",
+        pattern="^(score_desc|score_asc|latency_desc|latency_asc)$",
+        description=(
+            "排序：score_desc 得分从高到低 / score_asc 得分从低到高 / "
+            "latency_desc 时延从高到低 / latency_asc 时延从低到高"
+        ),
     ),
     latest_per_case: bool = Query(
         default=False, description="是否按用例只返回最新一次尝试（批量任务详情用）"
@@ -1049,6 +1052,10 @@ async def task_executions(
         order_by = [ExecutionRecord.total_score.desc().nulls_last(), ExecutionRecord.id.desc()]
     elif sort == "score_asc":
         order_by = [ExecutionRecord.total_score.asc().nulls_last(), ExecutionRecord.id.desc()]
+    elif sort == "latency_desc":
+        order_by = [ExecutionRecord.latency_ms.desc().nulls_last(), ExecutionRecord.id.desc()]
+    elif sort == "latency_asc":
+        order_by = [ExecutionRecord.latency_ms.asc().nulls_last(), ExecutionRecord.id.desc()]
     else:
         order_by = [ExecutionRecord.id.desc()]
 

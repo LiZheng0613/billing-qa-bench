@@ -58,7 +58,8 @@ const executionStatus = ref('')
 const executionKeyword = ref('')
 const executionMinScore = ref<number | null>(null)
 const executionMaxScore = ref<number | null>(null)
-const executionSort = ref<'' | 'score_desc' | 'score_asc'>('')
+type ExecutionSort = '' | 'score_desc' | 'score_asc' | 'latency_desc' | 'latency_asc'
+const executionSort = ref<ExecutionSort>('')
 const live = ref(false)
 const showCopy = ref(false)
 const showRoundsExport = ref(false)
@@ -182,16 +183,19 @@ function matchesExecutionFilters(item: CaseExecutionItem): boolean {
 }
 
 function sortExecutions(): void {
-  if (!executionSort.value) return
-  const direction = executionSort.value === 'score_asc' ? 1 : -1
+  const sort = executionSort.value
+  if (!sort) return
+  const byLatency = sort === 'latency_desc' || sort === 'latency_asc'
+  const direction = sort.endsWith('_asc') ? 1 : -1
   executions.value = [...executions.value].sort((left, right) => {
-    const leftScore = left.total_score
-    const rightScore = right.total_score
-    if (leftScore === null || leftScore === undefined) {
-      return rightScore === null || rightScore === undefined ? right.id - left.id : 1
+    const leftValue = byLatency ? left.latency_ms : left.total_score
+    const rightValue = byLatency ? right.latency_ms : right.total_score
+    // 空值与后端 nulls_last 口径一致：升序降序都排在最后。
+    if (leftValue === null || leftValue === undefined) {
+      return rightValue === null || rightValue === undefined ? right.id - left.id : 1
     }
-    if (rightScore === null || rightScore === undefined) return -1
-    return (leftScore - rightScore) * direction || right.id - left.id
+    if (rightValue === null || rightValue === undefined) return -1
+    return (leftValue - rightValue) * direction || right.id - left.id
   })
 }
 
@@ -558,7 +562,7 @@ function applyExecutionFilters(next: {
   keyword: string
   minScore: number | null
   maxScore: number | null
-  sort: '' | 'score_desc' | 'score_asc'
+  sort: ExecutionSort
 }): void {
   if (next.minScore !== null && next.maxScore !== null && next.minScore > next.maxScore) {
     toast.error('最低分不能大于最高分')

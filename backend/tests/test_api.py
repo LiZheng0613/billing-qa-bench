@@ -473,6 +473,66 @@ async def test_task_lifecycle_with_metrics(client: httpx.AsyncClient) -> None:
     assert len(trend["points"]) >= 1
 
 
+async def test_task_execution_latency_sort(client: httpx.AsyncClient) -> None:
+    """任务执行明细支持按时延排序，空时延无论升降序都排在最后。"""
+    cases = (await client.get("/cases", params={"page_size": 200})).json()
+    target = next(item for item in cases["items"] if item["code"] == "DEMO-SINGLE-001")
+    created = await client.post(
+        "/tasks",
+        json={
+            "name": f"pytest 时延排序 {uuid.uuid4().hex[:6]}",
+            "case_ids": [target["id"]],
+            "concurrency": 1,
+            "auto_start": False,
+        },
+    )
+    assert created.status_code == 200, created.text
+    task_id = created.json()["id"]
+    try:
+        async with SessionLocal() as db:
+            for latency in (1200.0, 300.0, 900.0, None):
+                db.add(
+                    ExecutionRecord(
+                        trace_uid=str(uuid.uuid4()),
+                        task_id=task_id,
+                        case_id=target["id"],
+                        case_version=1,
+                        case_snapshot={},
+                        status="PASS",
+                        pass_flag=True,
+                        total_score=80.0,
+                        turns_used=1,
+                        latency_ms=latency,
+                        started_at=datetime.now(),
+                    )
+                )
+            await db.commit()
+
+        unordered = (await client.get(f"/tasks/{task_id}/executions")).json()
+        assert unordered["total"] == 4
+        desc = (
+            await client.get(
+                f"/tasks/{task_id}/executions", params={"sort": "latency_desc"}
+            )
+        ).json()
+        assert [item["latency_ms"] for item in desc["items"]] == [1200.0, 900.0, 300.0, None]
+        asc = (
+            await client.get(
+                f"/tasks/{task_id}/executions", params={"sort": "latency_asc"}
+            )
+        ).json()
+        assert [item["latency_ms"] for item in asc["items"]] == [300.0, 900.0, 1200.0, None]
+        invalid = await client.get(
+            f"/tasks/{task_id}/executions", params={"sort": "latency_bad"}
+        )
+        assert invalid.status_code == 422
+    finally:
+        async with SessionLocal() as db:
+            await db.execute(delete(ExecutionRecord).where(ExecutionRecord.task_id == task_id))
+            await db.execute(delete(BatchTask).where(BatchTask.id == task_id))
+            await db.commit()
+
+
 async def test_execution_pass_rate_window(client: httpx.AsyncClient) -> None:
     """大盘最近执行通过率以时间窗内（默认 24 小时）的已判定执行为基准。"""
     payload = (await client.get("/executions/pass-rate")).json()

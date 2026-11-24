@@ -413,7 +413,7 @@ export const api = {
         keyword?: string
         min_score?: number
         max_score?: number
-        sort?: 'score_desc' | 'score_asc'
+        sort?: 'score_desc' | 'score_asc' | 'latency_desc' | 'latency_asc'
         latest_per_case?: boolean
         page?: number
         page_size?: number

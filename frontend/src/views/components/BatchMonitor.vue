@@ -20,6 +20,8 @@ import SelectButton from '../../components/SelectButton.vue'
 
 const auth = useAuthStore()
 
+type ExecutionSort = '' | 'score_desc' | 'score_asc' | 'latency_desc' | 'latency_asc'
+
 const props = withDefaults(
   defineProps<{
     task: BatchTask | null
@@ -35,7 +37,7 @@ const props = withDefaults(
     executionKeyword?: string
     executionMinScore?: number | null
     executionMaxScore?: number | null
-    executionSort?: '' | 'score_desc' | 'score_asc'
+    executionSort?: ExecutionSort
     exporting?: boolean
     retryCandidates?: TaskRetryCandidates | null
   }>(),
@@ -63,7 +65,7 @@ const emit = defineEmits<{
       keyword: string
       minScore: number | null
       maxScore: number | null
-      sort: '' | 'score_desc' | 'score_asc'
+      sort: ExecutionSort
     },
   ): void
   (e: 'export', format: 'xlsx' | 'jsonl'): void
@@ -371,7 +373,7 @@ const filterMaxScore = ref<string | number>(
 const filterScorePreset = ref<ScorePreset>(
   presetFromRange(props.executionMinScore, props.executionMaxScore),
 )
-const filterSort = ref<'' | 'score_desc' | 'score_asc'>(props.executionSort)
+const filterSort = ref<ExecutionSort>(props.executionSort)
 
 /** 数字输入框配合 v-model 时可能返回 number，统一转成字符串后再判断。 */
 function hasScoreInput(value: string | number): boolean {
@@ -516,6 +518,13 @@ function toggleScoreSort(): void {
   if (filterSort.value === 'score_desc') filterSort.value = 'score_asc'
   else if (filterSort.value === 'score_asc') filterSort.value = ''
   else filterSort.value = 'score_desc'
+  emitFilters()
+}
+
+function toggleLatencySort(): void {
+  if (filterSort.value === 'latency_desc') filterSort.value = 'latency_asc'
+  else if (filterSort.value === 'latency_asc') filterSort.value = ''
+  else filterSort.value = 'latency_desc'
   emitFilters()
 }
 
@@ -866,6 +875,8 @@ onBeforeUnmount(clearFilterTimer)
               <option value="">默认排序</option>
               <option value="score_desc">得分从高到低</option>
               <option value="score_asc">得分从低到高</option>
+              <option value="latency_desc">时延从高到低</option>
+              <option value="latency_asc">时延从低到高</option>
             </select>
           </div>
           <button v-if="hasFilter" class="btn-ghost btn-xs" @click="resetFilters">
@@ -947,7 +958,11 @@ onBeforeUnmount(clearFilterTimer)
               <th class="th">
                 <button
                   class="inline-flex items-center gap-1 transition"
-                  :class="filterSort ? 'text-indigo-600' : 'hover:text-slate-700'"
+                  :class="
+                    filterSort === 'score_desc' || filterSort === 'score_asc'
+                      ? 'text-indigo-600'
+                      : 'hover:text-slate-700'
+                  "
                   title="点击切换得分排序"
                   @click="toggleScoreSort"
                 >
@@ -959,7 +974,29 @@ onBeforeUnmount(clearFilterTimer)
               </th>
               <th class="th">轮次</th>
               <th class="th">尝试</th>
-              <th class="th">时延</th>
+              <th class="th">
+                <button
+                  class="inline-flex items-center gap-1 transition"
+                  :class="
+                    filterSort === 'latency_desc' || filterSort === 'latency_asc'
+                      ? 'text-indigo-600'
+                      : 'hover:text-slate-700'
+                  "
+                  title="点击切换时延排序"
+                  @click="toggleLatencySort"
+                >
+                  时延
+                  <span class="text-[9px] leading-none">
+                    {{
+                      filterSort === 'latency_asc'
+                        ? '▲'
+                        : filterSort === 'latency_desc'
+                          ? '▼'
+                          : '↕'
+                    }}
+                  </span>
+                </button>
+              </th>
               <th class="th">开始时间</th>
               <th class="th text-right">结果</th>
             </tr>
