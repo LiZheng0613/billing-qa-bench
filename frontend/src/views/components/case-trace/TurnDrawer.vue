@@ -446,8 +446,21 @@ const selfTriggerValue = computed(() => {
               </button>
             </div>
             <div class="dsub">
-              pass = 硬门槛全过 且综合分 ≥ {{ passLine }}；<template v-if="turn.verdict === 'unknown'">本轮没有规则 / 契约门槛，也未提供轮次级分数，无法判定。</template><template v-else>本轮{{ turn.pass ? '满足。' : '不满足。' }}</template>
-              <template v-if="turn.score === null">多轮执行只落库执行级总分，单轮分数不做拆分，因此本轮显示 —。</template>
+              <template v-if="model.gradingMode === 'ANSWER_CONTRACT'">
+                pass = 契约门槛全过 且契约分达标；当前契约事实 {{ contractStat.text }}<template
+                  v-if="contractStat.text === '—'"
+                >（执行记录未提供事实明细）</template><template v-else>（{{ contractStat.warn ? '未全过' : '全过' }}）</template>，质量分仅参考，不参与本轮 pass。
+              </template>
+              <template v-else>
+                <template v-if="turn.verdict === 'unknown'">
+                  pass = 硬门槛全过 且综合分 ≥ {{ passLine }}；本轮没有规则 / 契约门槛，也未提供轮次级分数，无法判定。
+                </template>
+                <template v-else-if="turn.score === null">
+                  多轮执行未落库轮次级分数，本轮 pass 按已落库的硬门槛判定为「{{ turn.pass ? '通过' : '未通过' }}」，不参与分数比较。
+                </template>
+                <template v-else>pass = 硬门槛全过 且综合分 ≥ {{ passLine }}；本轮{{ turn.pass ? '满足。' : '不满足。' }}</template>
+              </template>
+              <template v-if="turn.score === null">执行级总分不拆分到本轮，因此分数显示 —。</template>
               <template v-if="sessionTags.length"> 会话级归因 {{ sessionTags.length }} 条只作上下文，不计入本轮 pass。</template>
             </div>
           </section>
@@ -564,8 +577,16 @@ const selfTriggerValue = computed(() => {
                 <p v-else class="muted">执行记录没有给出这一轮的裁判结论原文，不代裁判补写。</p>
                 <div class="djv-meta">
                   <span>pass = {{ turn.verdict === 'unknown' ? '—' : turn.pass }}</span>
-                  <span>阈值 {{ passLine }}（{{ passLineSource }}）</span>
-                  <span v-if="turn.score === null" class="flag">本轮无独立分 · 数字为执行级汇总</span>
+                  <template v-if="model.gradingMode === 'ANSWER_CONTRACT'">
+                    <span>
+                      契约门槛 {{ contractStat.text }}
+                      <template v-if="contractStat.text !== '—'"> · {{ contractStat.warn ? '未全过' : '全过' }}</template>
+                    </span>
+                    <span>质量分阈值 {{ passLine }}（仅参考）</span>
+                  </template>
+                  <span v-else>阈值 {{ passLine }}（{{ passLineSource }}）</span>
+                  <span v-if="turn.score === null && turn.verdict !== 'unknown'" class="flag">本轮无独立分 · pass 仅依据硬门槛</span>
+                  <span v-else-if="turn.score === null" class="flag">本轮无独立分 · 数字为执行级汇总</span>
                 </div>
               </div>
 
@@ -609,13 +630,14 @@ const selfTriggerValue = computed(() => {
                 <div>
                   {{ rule.name }}
                   <span v-if="rule.why" class="why">{{ rule.why }}</span>
-                  <span v-if="rule.expected || rule.actual" class="ra">
-                    <em>期望</em>{{ rule.expected || '—' }} <em>实际</em>{{ rule.actual || '—' }}
+                  <span v-if="rule.expected || rule.actual || rule.evidence" class="ra">
+                    <em>期望</em>{{ rule.expected || '—' }} 
+                    <em>{{ rule.actual ? '实际' : rule.evidence ? '命中片段' : '实际' }}</em><template v-if="rule.actual">{{ rule.actual }}</template><template v-else-if="rule.evidence">{{ rule.evidence }}</template><template v-else-if="rule.pass">已命中（后端未记录取值）</template><template v-else>—</template>
                   </span>
                 </div>
               </div>
             </div>
-            <div v-else class="dempty">本轮的 <code>rule_check</code> 为空，没有可展示的规则结果；界面不做推断。</div>
+            <div v-else class="dempty">本轮没有配置规则检查项（<code>rule_check.checks</code> 为空），没有可展示的规则结果；界面不做推断。</div>
             <div v-if="isClarifyTurn" class="dsub">
               本轮意图为 CLARIFY：规则按「期望数值是否出现在回复里」校验，Agent 先反问、暂不给数值时会记为未命中，这不代表澄清动作本身有错。
             </div>
@@ -1207,7 +1229,9 @@ const selfTriggerValue = computed(() => {
               <span style="color: #9ca3af; font-size: 9px">T{{ sessionTagTurn.index }} 判定</span>
               <span class="go">›</span>
             </button>
-            <div class="dsub">会话级归因只在「判定」段标注；这里给出会话汇总与最低轮次，帮助解释本轮所处位置，不重复计入本轮判定。</div>
+            <div class="dsub">会话级归因只在「判定」段标注；这里给出会话汇总与最低轮次，帮助解释本轮所处位置，不重复计入本轮判定。<template
+                v-if="turns.length > 1 && !model.session.lowest"
+              > 本次执行未落库轮次级分数，轮次高低无法比较，「最低轮次」显示 —。</template></div>
           </section>
 
           <section class="dsec">

@@ -700,7 +700,10 @@ export function buildTraceModel(detail: ExecutionDetail | null): TraceModel {
       variables: sessionVariables,
       hiddenContext: list(turn.hidden_context_released),
       // 单轮执行的自检只能属于唯一一轮；多轮必须靠触发轮次字段，定位不到就不认领
-      selfCheck: single || (triggerIndex !== null && triggerIndex === turn.turn_index),
+      // 单轮只会有一个候选轮，但「有自检记录」仍是前提：900009 这类单轮失败但未跑自检的
+      // 执行不能被标成「已触发」，否则标题与空态自相矛盾。
+      selfCheck:
+        Boolean(selfCheck) && (single || (triggerIndex !== null && triggerIndex === turn.turn_index)),
       evidenceRows: evidence.length,
     }
   })
@@ -711,12 +714,12 @@ export function buildTraceModel(detail: ExecutionDetail | null): TraceModel {
   const unknownCount = turnVMs.filter((turn) => turn.verdict === 'unknown').length
   const sessionIds = [...new Set(turnVMs.map((turn) => turn.sessionId).filter((id): id is string => Boolean(id)))]
   const latencies = turnVMs.map((turn) => turn.latency).filter((value): value is number => typeof value === 'number')
-  const lowest = turnVMs.reduce<TurnVM | null>((acc, turn) => {
-    if (!acc) return turn
-    if (turn.score === null) return acc
-    if (acc.score === null) return turn
-    return turn.score < acc.score ? turn : acc
-  }, null)
+  const lowest = turnVMs
+    .filter((turn) => turn.score !== null)
+    .reduce<TurnVM | null>((acc, turn) => {
+      if (!acc) return turn
+      return (turn.score ?? 0) < (acc.score ?? 0) ? turn : acc
+    }, null)
   const session: SessionStats = {
     turns: turnVMs.length,
     passCount,
