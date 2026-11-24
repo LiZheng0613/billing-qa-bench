@@ -310,7 +310,7 @@ async function copyJudgeFlow(): Promise<void> {
     `流程裁决 · T${turn.index}`,
     `用户问题：${turn.query || '—'}`,
     `裁判模型：${judgeModel.value}${judgeTemperature.value !== null ? ` · temperature ${judgeTemperature.value}` : ''}`,
-    `返回：pass = ${turn.pass} · 综合分 ${fmtScore(turn.score)} · 错误归因 ${tags.value.length + sessionTags.value.length} 条`,
+    `返回：pass = ${turn.pass} · ${props.model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '综合分'} ${fmtScore(turn.score)} · 错误归因 ${tags.value.length + sessionTags.value.length} 条`,
     `结论：${judgeConclusion.value}`,
   ]
   if (judgePrompt.value) parts.push('', '--- 裁决 Prompt ---', judgePrompt.value)
@@ -430,7 +430,7 @@ const selfTriggerValue = computed(() => {
                 <div class="dv">{{ turn.rules.length ? `${rulesPassed} / ${turn.rules.length}` : '—' }}</div>
               </div>
               <div class="dstat" :class="{ warn: contractStat.warn }">
-                <div class="dl">契约</div>
+                <div class="dl">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '契约事实' : '契约' }}</div>
                 <div class="dv">{{ contractStat.text }}</div>
               </div>
               <div class="dstat" :class="{ warn: turn.score !== null && !turn.pass }">
@@ -473,7 +473,7 @@ const selfTriggerValue = computed(() => {
                 </template>
                 <template v-else>pass = 硬门槛全过 且综合分 ≥ {{ passLine }}；本轮{{ turn.pass ? '满足。' : '不满足。' }}</template>
               </template>
-              <template v-if="turn.score === null">执行级总分不拆分到本轮，因此分数显示 —。</template>
+              <template v-if="turn.score === null">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '执行级质量分不拆分到本轮，因此分数显示 —。' : '执行级总分不拆分到本轮，因此分数显示 —。' }}</template>
               <template v-if="sessionTags.length"> 会话级归因 {{ sessionTags.length }} 条只作上下文，不计入本轮 pass。</template>
             </div>
           </section>
@@ -584,7 +584,7 @@ const selfTriggerValue = computed(() => {
                         ? '质量分参考'
                         : '本轮综合分'
                       : model.totalScore !== null
-                        ? '执行级综合分'
+                        ? model.gradingMode === 'ANSWER_CONTRACT' ? '执行级质量分' : '执行级综合分'
                         : '无分'
                   }}</i>
                 </span>
@@ -603,7 +603,7 @@ const selfTriggerValue = computed(() => {
                       契约门槛 {{ contractStat.text }}
                       <template v-if="contractStat.text !== '—'"> · {{ contractStat.warn ? '未全过' : '全过' }}</template>
                     </span>
-                    <span>质量分阈值 {{ passLine }}（仅参考）</span>
+                    <span>质量分参考线 {{ passLine }}（仅参考）</span>
                   </template>
                   <span v-else>阈值 {{ passLine }}（{{ passLineSource }}）</span>
                   <span
@@ -612,7 +612,7 @@ const selfTriggerValue = computed(() => {
                   >
                     分数已达标 · 硬门槛未全过
                   </span>
-                  <span v-if="turn.score === null && turn.verdict !== 'unknown'" class="flag">本轮无独立分 · pass 仅依据硬门槛</span>
+                  <span v-if="turn.score === null && turn.verdict !== 'unknown'" class="flag">本轮无独立分 · pass 仅依据{{ model.gradingMode === 'ANSWER_CONTRACT' ? '契约闸门' : '硬门槛' }}</span>
                   <span v-else-if="turn.score === null" class="flag">本轮无独立分 · 数字为执行级汇总</span>
                 </div>
               </div>
@@ -642,7 +642,7 @@ const selfTriggerValue = computed(() => {
                 </div>
                 <div class="djv-note">
                   {{ scoreInfo.hint }}；四维合计 {{ fmtScore(dimensionTotal) }}，{{
-                    dimsFromExec ? '是执行级评分，不是本轮独立得分。' : '与本轮综合分一致。'
+                    dimsFromExec ? `是执行级${model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '评分'}，不是本轮独立得分。` : `与本轮${model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '综合分'}一致。`
                   }}
                 </div>
               </div>
@@ -762,9 +762,15 @@ const selfTriggerValue = computed(() => {
             <h5>裁决返回校验 <span class="sp" /><span class="cnt">schema</span></h5>
             <div class="dkv">
               <div class="kv"><span class="k">维度合计</span><span class="v">{{ fmtScore(dimensionTotal) }} / 100</span></div>
-              <div class="kv"><span class="k">合计 = 综合分</span><span class="v">{{ dimsCompareScore !== null && Math.abs(dimensionTotal - dimsCompareScore) < 0.05 ? '是' : (drawerDims.length ? '否' : '无四维分') }}</span></div>
-              <div class="kv"><span class="k">按分数 pass</span><span class="v">{{ turn.score !== null && turn.score >= passLine ? 'true' : 'false' }}</span></div>
-              <div class="kv"><span class="k">按硬门槛 pass</span><span class="v">{{ turn.gateOk ? 'true' : 'false' }}</span></div>
+              <div class="kv"><span class="k">合计 = {{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '综合分' }}</span><span class="v">{{ dimsCompareScore !== null && Math.abs(dimensionTotal - dimsCompareScore) < 0.05 ? '是' : (drawerDims.length ? '否' : '无四维分') }}</span></div>
+              <template v-if="model.gradingMode === 'ANSWER_CONTRACT'">
+                <div class="kv"><span class="k">质量分达参考线</span><span class="v">{{ turn.score !== null && turn.score >= passLine ? 'true' : 'false' }}<em>仅参考，不参与 pass</em></span></div>
+                <div class="kv"><span class="k">按契约闸门 pass</span><span class="v">{{ detail?.pass_flag === true ? 'true' : detail?.pass_flag === false ? 'false' : '未记录' }}<em>执行级判定，不由质量分推出</em></span></div>
+              </template>
+              <template v-else>
+                <div class="kv"><span class="k">按分数 pass</span><span class="v">{{ turn.score === null ? '未提供轮次分' : turn.score >= passLine ? 'true' : 'false' }}</span></div>
+                <div class="kv"><span class="k">按硬门槛 pass</span><span class="v">{{ turn.gateOk ? 'true' : 'false' }}</span></div>
+              </template>
               <div class="kv"><span class="k">标签均在枚举内</span><span class="v">{{ tagsInEnum ? '是' : '否' }}</span></div>
             </div>
           </section>
@@ -1084,7 +1090,12 @@ const selfTriggerValue = computed(() => {
               <div class="dchain">
                 <div class="ln">
                   <span class="k">输入</span>
-                  <span class="v">用户问题 + 候选回答 + 规则结果 + 期望答案<em>规则由系统先算好再拼入，不交给模型自行判断</em></span>
+                  <span class="v">
+                    <template v-if="model.gradingMode === 'ANSWER_CONTRACT'">
+                      用户问题 + 候选回答 + 白盒取数明细 + 期望答案<em>契约闸门由后端规则计算，不交给模型判断；模型只给质量分</em>
+                    </template>
+                    <template v-else>用户问题 + 候选回答 + 白盒取数明细 + 期望答案<em>取数明细与期望答案由系统先算好再拼入，不交给模型自行判断</em></template>
+                  </span>
                 </div>
                 <div class="ln">
                   <span class="k">调用</span>
@@ -1092,7 +1103,7 @@ const selfTriggerValue = computed(() => {
                 </div>
                 <div class="ln">
                   <span class="k">返回</span>
-                  <span class="v">pass = {{ turn.pass }} · 综合分 {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}</em></span>
+                  <span class="v">pass = {{ turn.pass }} · {{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '综合分' }} {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}</em></span>
                 </div>
                 <div class="ln">
                   <span class="k">校验</span>
@@ -1102,8 +1113,9 @@ const selfTriggerValue = computed(() => {
                       <em>契约模式的 pass 只看四项闸门与终止状态，质量分高低不改变 pass</em>
                     </template>
                     <template v-else>
-                      按分数 pass {{ turn.score !== null && turn.score >= passLine }} / 按硬门槛 pass {{ turn.gateOk }}
-                      <em>pass = 硬门槛全过 且综合分 ≥ {{ passLine }}，两者不一致时以硬门槛为准</em>
+                      按分数 pass {{ turn.score === null ? '未提供轮次分' : turn.score >= passLine }} / 按硬门槛 pass {{ turn.gateOk }}
+                      <em v-if="turn.score === null">本轮没有轮次级综合分，pass 只按已落库的硬门槛判定</em>
+                      <em v-else>pass = 硬门槛全过 且综合分 ≥ {{ passLine }}，两者不一致时以硬门槛为准</em>
                     </template>
                   </span>
                 </div>
@@ -1193,7 +1205,7 @@ const selfTriggerValue = computed(() => {
                 <span class="go">›</span>
               </button>
               <div class="dsub">
-                派生轮次由失败自动发起，用于复核原因，不改变本轮 pass / 综合分；只有 DONE / SKIPPED / ERROR 三态。
+                派生轮次由失败自动发起，用于复核原因，不改变本轮 pass / {{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '综合分' }}；只有 DONE / SKIPPED / ERROR 三态。
               </div>
             </template>
             <div v-else class="dempty">
