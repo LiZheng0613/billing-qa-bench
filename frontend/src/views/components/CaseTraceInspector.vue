@@ -220,6 +220,55 @@ const judgeScore = computed<number | null>(() => {
   return typeof raw.total_score === 'number' ? raw.total_score : detailScore
 })
 
+// 页头综合分口径：RUBRIC 历史执行只落库 total_score，没有裁判 JSON，
+// 不能沿用「LLM 裁判综合评分」这种把来源说死的话术。
+const scoreKpi = computed(() => {
+  const mode = props.detail?.grading_mode
+  if (mode === 'ANSWER_CONTRACT') return { label: '排序分', hint: '质量分参考' }
+  if (mode === 'RUBRIC') return { label: '综合评分', hint: '旧评分模式（RUBRIC）执行级综合分' }
+  const raw = props.detail?.judge_result
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return { label: '裁判综合分', hint: 'LLM 裁判综合评分' }
+  }
+  // 异常 / 终止执行可能在裁判前就落库，没有 judge_result 时不能把空槽说成 LLM 评分
+  return { label: '综合评分', hint: '执行记录未留存裁判评分' }
+})
+
+// 执行记录只落库 turns_used、没有 turn_trace 时，turns=[] 不能读成「没跑过轮次」
+const turnsUsed = computed(() => {
+  const value = props.detail?.turns_used
+  return typeof value === 'number' && value > 0 ? value : 0
+})
+
+/** 对话页空态：区分「真的没产生轮次」与「跑了但没留存逐轮明细」 */
+const turnEmptyCopy = computed(() => {
+  const used = turnsUsed.value
+  const title = used ? '没有逐轮明细' : '没有对话轮次'
+  if (judgeScore.value === null) {
+    return {
+      title,
+      description: used
+        ? `本次执行共 ${used} 轮，但没有留存逐轮明细，也没有执行级评分与结论。`
+        : '本次执行没有产生对话轮次，也没有执行级评分与结论。',
+    }
+  }
+  const score = judgeScore.value.toFixed(1)
+  if (props.detail?.grading_mode === 'RUBRIC') {
+    return {
+      title,
+      description: used
+        ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${score} 与通过结论，没有逐轮明细。`
+        : `该执行由旧评分模式（RUBRIC）落库，只保留执行级综合分 ${score} 与结论，没有逐轮明细。`,
+    }
+  }
+  return {
+    title,
+    description: used
+      ? `本次执行共 ${used} 轮，但执行记录只有执行级分数与结论，没有逐轮明细。`
+      : '执行记录只有执行级分数与结论，没有逐轮明细。',
+  }
+})
+
 const latencySpread = computed(() => {
   const values = model.value.turns
     .map((turn) => turn.latency)
@@ -689,14 +738,14 @@ async function copyTraceUid(): Promise<void> {
             </span>
             <div class="min-w-0">
               <p class="text-[10px] uppercase tracking-wider text-slate-500">
-                {{ detail.grading_mode === 'ANSWER_CONTRACT' ? '排序分' : '裁判综合分' }}
+                {{ scoreKpi.label }}
               </p>
               <p class="text-lg font-semibold tabular-nums text-indigo-600">
                 {{ formatScore(judgeScore) }}
                 <span class="text-xs font-normal text-slate-500">/ 100</span>
               </p>
               <p class="truncate text-[10px] text-slate-500">
-                {{ detail.grading_mode === 'ANSWER_CONTRACT' ? '质量分参考' : 'LLM 裁判综合评分' }}
+                {{ scoreKpi.hint }}
               </p>
             </div>
           </div>
@@ -909,14 +958,8 @@ async function copyTraceUid(): Promise<void> {
           <EmptyState
             v-if="!model.turns.length"
             compact
-            title="没有对话轮次"
-            :description="
-              judgeScore === null
-                ? '本次执行没有产生对话轮次，也没有执行级评分与结论。'
-                : detail.grading_mode === 'RUBRIC'
-                  ? '该执行由旧评分模式（RUBRIC）落库，只保留执行级分数与结论，没有逐轮明细。'
-                  : '执行记录只有执行级分数与结论，没有逐轮明细。'
-            "
+            :title="turnEmptyCopy.title"
+            :description="turnEmptyCopy.description"
           />
           <div v-else-if="!filteredTurns.length" class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-500">
             当前筛选条件下没有轮次，可清空搜索或切回「全部」。
@@ -1063,7 +1106,9 @@ async function copyTraceUid(): Promise<void> {
                 <p class="mt-2 text-[10px] leading-relaxed text-slate-500">
                   {{ detail.grading_mode === 'ANSWER_CONTRACT'
                     ? '契约模式：最终答案正确性优先，工具调用轨迹仅用于失败诊断。'
-                    : 'LEGACY 模式：规则 + LLM 裁判四维加权，硬门槛与总分同时满足才通过。' }}
+                    : detail.grading_mode === 'RUBRIC'
+                      ? '旧评分模式（RUBRIC）：规则 + LLM 评分，落库时只保留执行级综合分与通过结论，没有逐轮四维与裁判理由。'
+                      : 'LEGACY 模式：规则 + LLM 裁判四维加权，硬门槛与总分同时满足才通过。' }}
                 </p>
               </div>
 
