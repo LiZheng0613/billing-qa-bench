@@ -14,6 +14,7 @@ import {
   fmtMs,
   fmtScore,
   scoreLabel,
+  terminationLabelOf,
   type TurnVM,
   type TraceModel,
 } from './model'
@@ -74,13 +75,7 @@ const passLineSource = computed(() => PASS_LINE_SOURCE_LABEL[props.model.passLin
 const finishReason = computed(() => finishReasonOf(props.turn?.turn))
 const multiTurn = computed(() => props.turns.length > 1)
 /** 终止类硬失败：后端 judge.py 对 MAX_TURNS_EXCEEDED / REPETITION_ABORT 直接否决 pass */
-const terminationLabel = computed(() => {
-  const term = String(props.detail?.termination_status ?? '')
-  const status = String(props.detail?.status ?? '')
-  if (term === 'REPETITION_ABORT' || status === 'REPETITION_ABORT') return '复读熔断'
-  if (term === 'MAX_TURNS_EXCEEDED' || term === 'MAX_TURNS' || status === 'MAX_TURNS_EXCEEDED') return '轮次超限'
-  return ''
-})
+const terminationLabel = computed(() => terminationLabelOf(props.detail))
 /** 分数达线但本轮未通过：说清是终止熔断、真有失败门槛，还是后端没记录原因 */
 const overLineFailNote = computed(() => {
   if (terminationLabel.value) return `分数已达标 · 执行因${terminationLabel.value}按硬失败判未通过`
@@ -231,6 +226,11 @@ const judgeConclusion = computed(() => {
   if (multiTurn.value && turn.sessionJudgeReason) return `（会话级，不归属本轮）${turn.sessionJudgeReason}`
   return '裁判未给出结论'
 })
+/** 裁判理由多以「。」结尾，直接拼附加口径会出现「。；」，去掉句末标点再拼 */
+function appendClause(text: string, clause: string): string {
+  const trimmed = text.replace(/[。．.]+$/, '')
+  return trimmed ? `${trimmed}；${clause}` : clause
+}
 /** 裁判温度只在裁决原始返回里出现过才展示 */
 const judgeTemperature = computed<number | null>(() => {
   const raw = judgeRaw.value as Record<string, unknown> | null
@@ -523,7 +523,9 @@ const selfTriggerValue = computed(() => {
             <span>tokens {{ turn.agentTokens }}</span>
           </template>
           <span class="dot">·</span>
-          <span>{{ scoreInfo.label }} <b :class="{ low: turn.score === null || turn.score < passLine }">{{ fmtScore(turn.score) }}</b></span>
+          <span
+            :title="turn.score === null ? '本轮没有轮次级分数；执行级综合分见「判定」段' : scoreInfo.hint"
+          >{{ scoreInfo.label }} <b :class="{ low: turn.score === null || turn.score < passLine }">{{ fmtScore(turn.score) }}</b></span>
         </div>
 
         <div class="dr-turns">
@@ -1274,10 +1276,10 @@ const selfTriggerValue = computed(() => {
                   <span class="v">
                     <template v-if="model.gradingMode === 'ANSWER_CONTRACT'">
                       <template v-if="multiTurn">
-                        执行级质量分 {{ fmtScore(model.totalScore) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}；质量分与闸门都是执行级结果，不拆到本轮</em>
+                        执行级质量分 {{ fmtScore(model.totalScore) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ appendClause(judgeConclusion, '质量分与闸门都是执行级结果，不拆到本轮') }}</em>
                       </template>
                       <template v-else>
-                        质量分 {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}；pass 不由裁判给出，按契约闸门计算</em>
+                        质量分 {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ appendClause(judgeConclusion, 'pass 不由裁判给出，按契约闸门计算') }}</em>
                       </template>
                     </template>
                     <template v-else>

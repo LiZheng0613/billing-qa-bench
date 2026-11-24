@@ -13,6 +13,7 @@ import {
   SCOPE_META,
   TAG_TONE,
   VERDICT_META,
+  terminationLabelOf,
   type TraceModel,
   type TurnVM,
   type Verdict,
@@ -39,13 +40,7 @@ const passLine = computed(() => props.model.passLine)
  * 终止类硬失败：后端 judge.py 对 MAX_TURNS_EXCEEDED / REPETITION_ABORT 直接否决 pass，
  * 与规则闸门无关。这种记录的判定口径不能只写「硬门槛 + 分数」（14876 / 14935 规则 0/0）。
  */
-const terminationLabel = computed(() => {
-  const term = String(props.detail?.termination_status ?? '')
-  const status = String(props.detail?.status ?? '')
-  if (term === 'REPETITION_ABORT' || status === 'REPETITION_ABORT') return '复读熔断'
-  if (term === 'MAX_TURNS_EXCEEDED' || term === 'MAX_TURNS' || status === 'MAX_TURNS_EXCEEDED') return '轮次超限'
-  return ''
-})
+const terminationLabel = computed(() => terminationLabelOf(props.detail))
 /** 两种模式的 pass 口径不同：契约只看闸门（answer_grader.passed = all(gates)），质量分不参与 */
 const passRuleBody = computed(() => {
   if (props.model.gradingMode === 'ANSWER_CONTRACT') {
@@ -283,10 +278,15 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
       const divergence =
         threshold !== null && execPassed.value === false && props.score >= threshold
           ? terminationLabel.value
-            ? `落库总分不低于该执行快照的阈值 ${threshold}；本次执行以${terminationLabel.value}结束，后端按终止类硬失败否决 pass，规则明细未留存。`
+            ? `落库总分不低于该执行快照的阈值 ${threshold}；本次执行以${terminationLabel.value}结束，后端按终止类硬失败否决 pass，落库最终结论为「未通过」，规则明细未留存。`
             : `落库总分不低于该执行快照的阈值 ${threshold}，但历史记录没有保存当时的判定依据（规则），页面按落库结论记为「未通过」，不反推原因。`
           : ''
-      return [{ text: divergence ? `${base}${divergence}` : base }]
+      // 句子说了「保留最终结论」，就得把结论写出来；终止执行同时交代终止状态（14944 是轮次超限）
+      let verdictTail = divergence
+      if (!verdictTail && execPassed.value !== null) {
+        verdictTail = `落库最终结论为「${execPassed.value ? '通过' : '未通过'}」${terminationLabel.value ? `，本次执行以${terminationLabel.value}结束` : ''}。`
+      }
+      return [{ text: `${base}${verdictTail}` }]
     }
     return [
       {
@@ -360,14 +360,20 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
   if (allUnknown.value) {
     const execVerdict =
       execPassed.value === true ? '通过' : execPassed.value === false ? '未通过' : null
+    // 终止执行（如 14875 轮次超限、61 分 ≥ 60）不能只写「按记录判未通过」，
+    // 否则读者看不到否决来源；终止标签已核对过 status / termination_status。
+    const execClause =
+      execVerdict === '未通过' && terminationLabel.value
+        ? `因${terminationLabel.value}按硬失败判「未通过」`
+        : execVerdict
+          ? `按记录判「${execVerdict}」`
+          : null
     if (overall.value === null) {
       // 有轮次但没有执行级分（异常 / 裁判未产出）：不拼「执行级综合分 — / 100」
       return [
         { text: `共 ${total} 轮，后端未提供轮次级${contractMode ? '质量分与契约事实' : '分数与硬门槛'}，无法判定逐轮结论；执行记录也没有留存${contractMode ? '质量分' : '执行级综合分'}。` },
         {
-          text: execVerdict
-            ? `整通执行按记录判「${execVerdict}」。`
-            : '不据此推断整通执行通过。',
+          text: execClause ? `整通执行${execClause}。` : '不据此推断整通执行是否通过。',
         },
       ]
     }
@@ -375,9 +381,7 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
       { text: `共 ${total} 轮，后端未提供轮次级${contractMode ? '质量分与契约事实' : '分数与硬门槛'}，无法判定逐轮结论；${contractMode ? '质量分' : '执行级综合分'} ` },
       { text: `${overallText} / 100`, strong: true },
       {
-        text: execVerdict
-          ? ` 只代表整通执行，整通执行按记录判「${execVerdict}」。`
-          : ' 只代表整通执行，不据此推断某轮通过。',
+        text: ` 只代表整通执行，${execClause ?? '不据此推断整通执行是否通过'}。`,
       },
     ]
   }

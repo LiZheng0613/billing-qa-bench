@@ -46,6 +46,22 @@ export function passLineOf(detail: ExecutionDetail | null): { value: number; sou
   if (fromSnapshot !== null && fromSnapshot > 0) return { value: fromSnapshot, source: 'case_snapshot' }
   return { value: DEFAULT_PASS_LINE, source: 'default' }
 }
+
+/**
+ * 终止类硬失败：后端 judge.py 对 MAX_TURNS_EXCEEDED / REPETITION_ABORT 直接否决 pass，
+ * 与规则 / 契约闸门无关。`status` 与 `termination_status` 并非一一对应（GIVE_UP 同时出现在
+ * 普通失败与复读熔断里），所以两个字段都要看；匹配不到时返回空串，由调用方按「未记录」处理。
+ */
+export function terminationLabelOf(
+  detail: Pick<ExecutionDetail, 'status' | 'termination_status'> | null | undefined,
+): string {
+  const term = String(detail?.termination_status ?? '')
+  const status = String(detail?.status ?? '')
+  if (term === 'REPETITION_ABORT' || status === 'REPETITION_ABORT') return '复读熔断'
+  if (term === 'MAX_TURNS_EXCEEDED' || term === 'MAX_TURNS' || status === 'MAX_TURNS_EXCEEDED') return '轮次超限'
+  return ''
+}
+
 /** 归因作用域：这两类问题按整通会话判定 */
 export const SESSION_SCOPE_TAGS = new Set(['未主动反问', '超出最大轮次'])
 

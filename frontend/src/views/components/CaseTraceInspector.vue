@@ -20,6 +20,7 @@ import {
   PASS_LINE_SOURCE_LABEL,
   phaseBuckets,
   phaseMeta,
+  terminationLabelOf,
   type TurnStepVM,
 } from './case-trace/model'
 import { useTraceView, type StatusFilter } from './case-trace/useTraceView'
@@ -344,6 +345,22 @@ const tokenKpi = computed(() => {
     value: total,
     hint: `模拟器 ${formatNumber(simulator)} · 裁判 ${formatNumber(judge)} · 不含 Agent 自身用量`,
   }
+})
+
+/**
+ * 追问自检空态：SKIPPED 用后端 skip_reason；异常 / 终止执行说明是哪种结束方式，
+ * 不能一律写「任务未开启或本次未触发」——MAX_TURNS / 复读熔断是记录里已有的事实。
+ */
+const selfCheckEmptyText = computed(() => {
+  if (model.value.selfCheckSkipReason) {
+    return `执行记录：${model.value.selfCheckSkipReason}（self_check = SKIPPED）；页面不补造自检内容。`
+  }
+  if (props.detail?.status === 'ERROR' || props.detail?.status === 'ABORTED') {
+    return '执行以异常 / 终止结束，未进入追问自检；没有 self_check 记录。'
+  }
+  const term = terminationLabelOf(props.detail)
+  if (term) return `执行以${term}结束，本次没有 self_check 记录；页面不补造自检内容。`
+  return '本次执行没有 self_check 记录（任务未开启或本次未触发）；页面不补造自检内容。'
 })
 
 const sessionConsistent = computed(() => model.value.session.sessionIds.length <= 1)
@@ -1170,13 +1187,7 @@ async function copyTraceUid(): Promise<void> {
             v-else
             compact
             :title="model.selfCheckSkipReason ? '未触发追问自检' : '没有追问自检记录'"
-            :description="
-              model.selfCheckSkipReason
-                ? `执行记录：${model.selfCheckSkipReason}（self_check = SKIPPED）；页面不补造自检内容。`
-                : detail.status === 'ERROR' || detail.status === 'ABORTED'
-                  ? '执行以异常 / 终止结束，未进入追问自检；没有 self_check 记录。'
-                  : '本次执行没有 self_check 记录（任务未开启或本次未触发）；页面不补造自检内容。'
-            "
+            :description="selfCheckEmptyText"
           />
         </template>
 
