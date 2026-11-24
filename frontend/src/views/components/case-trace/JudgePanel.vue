@@ -182,24 +182,53 @@ const lowest = computed<TurnVM | null>(() => {
   return list.reduce((acc, turn) => ((turn.score ?? 0) < (acc.score ?? 0) ? turn : acc), list[0])
 })
 
+/** 执行记录里是否有裁判 JSON：没有记录时不能把界面结论标成「LLM 综合结论」 */
+const hasJudgeRecord = computed(() => {
+  const raw = props.detail?.judge_result
+  return Boolean(raw && typeof raw === 'object' && !Array.isArray(raw))
+})
+const conclusionTitle = computed(() => (hasJudgeRecord.value ? 'LLM 综合结论' : '综合结论'))
+
+// 执行记录只落库 turns_used、没有 turn_trace 时，turns=[] 不能读成「没跑过轮次」
+const turnsUsed = computed(() => {
+  const value = props.detail?.turns_used
+  return typeof value === 'number' && value > 0 ? value : 0
+})
+
 const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() => {
   const total = turns.value.length
   if (!total) {
+    const used = turnsUsed.value
     // 没有轮次也没有分数：异常 / 终止执行落库时 pass_flag 会被后端写成 false，
     // 但从未产出裁判结论，不能沿用旧 RUBRIC 的「只保留执行级分数与结论」话术。
+    // 同时 turns=[] 只代表没有留存明细，turns_used 仍可能大于 0（真实 15525 走了 2 轮）。
     if (props.score === null) {
-      return [{ text: '本次执行没有产生对话轮次，也没有执行级评分与结论。' }]
+      return [
+        {
+          text: used
+            ? `本次执行共 ${used} 轮，但没有留存逐轮明细，也没有执行级评分与结论。`
+            : '本次执行没有产生对话轮次，也没有执行级评分与结论。',
+        },
+      ]
     }
     // 旧 RUBRIC 执行（当前库 1226 条）只有执行级分数与结论，说清缺什么，不拿「没有轮次」一句带过
     if (props.model.gradingMode === 'RUBRIC') {
       const scoreText = props.score.toFixed(1)
       return [
         {
-          text: `本次执行由旧评分模式（RUBRIC）落库：只保留执行级综合分 ${scoreText} 与通过结论，没有轮次明细、裁判理由与四维得分。`,
+          text: used
+            ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${scoreText} 与通过结论，没有逐轮明细、裁判理由与四维得分。`
+            : `本次执行由旧评分模式（RUBRIC）落库：只保留执行级综合分 ${scoreText} 与通过结论，没有轮次明细、裁判理由与四维得分。`,
         },
       ]
     }
-    return [{ text: '本次执行没有对话轮次。' }]
+    return [
+      {
+        text: used
+          ? `本次执行共 ${used} 轮，但执行记录只有执行级分数与结论，没有逐轮明细。`
+          : '本次执行没有对话轮次。',
+      },
+    ]
   }
   const overallText = overall.value === null ? '—' : overall.value.toFixed(1)
   if (total === 1) {
@@ -238,8 +267,8 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
       { text: `${overallText} / 100`, strong: true },
       {
         text: execVerdict
-          ? ` 仅作参考，整通执行按记录判「${execVerdict}」。`
-          : ' 仅作参考，不据此推断某轮通过。',
+          ? ` 只代表整通执行，整通执行按记录判「${execVerdict}」。`
+          : ' 只代表整通执行，不据此推断某轮通过。',
       },
     ]
   }
@@ -531,7 +560,7 @@ function copyConclusion(turn: TurnVM): void {
         </div>
 
         <div class="jtxt">
-          <span class="t">LLM 综合结论</span>
+          <span class="t">{{ conclusionTitle }}</span>
           <template v-for="(part, index) in conclusionParts" :key="index">
             <b v-if="part.strong">{{ part.text }}</b>
             <template v-else>{{ part.text }}</template>
