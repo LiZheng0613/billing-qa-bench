@@ -250,7 +250,12 @@ const passHeadline = computed(() => {
   if (!model.value.turns.length) return '—'
   if (allPass.value) return '通过'
   if (noneJudged.value) return '未判定'
-  return model.value.turns.length === 1 ? '未通过' : '部分通过'
+  // 单轮时轮次结论就是这一轮的结论：达线但硬门槛未全过应显示「部分命中」，
+  // 不能因为整通执行未通过就抹掉轮次的部分命中（900003 / 900006）。
+  if (model.value.turns.length === 1) {
+    return model.value.turns[0].verdict === 'warn' ? '部分命中' : '未通过'
+  }
+  return '部分通过'
 })
 
 // ---- 判分页：执行级维度（契约模式取质量分维度） ----
@@ -646,10 +651,12 @@ async function copyTraceUid(): Promise<void> {
                 <span class="text-xs font-normal text-slate-500">/ {{ model.turns.length }} 轮</span>
               </p>
               <p v-if="noneJudged" class="truncate text-[10px] text-slate-500">
-                后端未提供轮次级分数与硬门槛
+                {{ model.turns.length }} 轮均未判定 · 无轮次级分数与门槛
               </p>
               <p v-else class="truncate text-[10px] text-slate-500">
-                {{ model.session.passCount }} 轮达标 · {{ model.session.warnCount + model.session.failCount }} 轮待改进<template
+                {{ model.session.passCount }} 轮通过<template v-if="model.session.warnCount">
+                  · {{ model.session.warnCount }} 轮部分命中</template><template v-if="model.session.failCount">
+                  · {{ model.session.failCount }} 轮未通过</template><template
                   v-if="model.session.unknownCount"
                 > · {{ model.session.unknownCount }} 轮未判定</template>
               </p>

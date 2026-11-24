@@ -46,6 +46,8 @@ const overall = computed<number | null>(() => {
 })
 
 const passCount = computed(() => turns.value.filter((turn) => turn.verdict === 'pass').length)
+const warnCount = computed(() => turns.value.filter((turn) => turn.verdict === 'warn').length)
+const failCount = computed(() => turns.value.filter((turn) => turn.verdict === 'fail').length)
 const unknownCount = computed(() => turns.value.filter((turn) => turn.verdict === 'unknown').length)
 const allUnknown = computed(() => turns.value.length > 0 && unknownCount.value === turns.value.length)
 
@@ -62,21 +64,12 @@ const execPassed = computed<boolean | null>(() => {
 })
 
 const verdictLabel = computed(() => {
-  // 没有轮次（旧 RUBRIC 执行 / 执行期报错）时按执行级结论说话，不套「部分通过」
-  if (turns.value.length === 0) {
-    if (execPassed.value === null) return '未判定'
-    return execPassed.value ? '通过' : '未通过'
-  }
-  if (allUnknown.value) return '未判定'
+  // 执行级结论只认 pass_flag（缺失时才回落到「综合分 ≥ 通过线」）；
+  // 多轮全轮「未判定」只影响逐轮，不能覆盖整通执行已经落库的通过 / 未通过。
   if (execPassed.value === null) return '未判定'
   return execPassed.value ? '通过' : '未通过'
 })
 const verdictTone = computed<Verdict>(() => {
-  if (turns.value.length === 0) {
-    if (execPassed.value === null) return 'unknown'
-    return execPassed.value ? 'pass' : 'fail'
-  }
-  if (allUnknown.value) return 'unknown'
   if (execPassed.value === null) return 'unknown'
   return execPassed.value ? 'pass' : 'fail'
 })
@@ -153,6 +146,8 @@ const tagTotal = computed(
 interface TagAgg {
   name: string
   turns: number[]
+  /** 会话级归因没有轮次字段：只去重，不累计轮次、不跳轮 */
+  perTurn: boolean
 }
 
 function aggregateTags(scope: 'session' | 'turn'): TagAgg[] {
@@ -162,8 +157,13 @@ function aggregateTags(scope: 'session' | 'turn'): TagAgg[] {
     for (const name of list) {
       if (!name) continue
       const hit = map.get(name)
+      if (scope === 'session') {
+        // 执行级 error_tags 会被复制到每一轮，累计轮次会伪造「×N / T1」归属
+        if (!hit) map.set(name, { name, turns: [], perTurn: false })
+        continue
+      }
       if (hit) hit.turns.push(turn.index)
-      else map.set(name, { name, turns: [turn.index] })
+      else map.set(name, { name, turns: [turn.index], perTurn: true })
     }
   }
   return [...map.values()]
@@ -205,10 +205,16 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     return parts
   }
   if (allUnknown.value) {
+    const execVerdict =
+      execPassed.value === true ? '通过' : execPassed.value === false ? '未通过' : null
     return [
       { text: `共 ${total} 轮，后端未提供轮次级分数与硬门槛，无法判定逐轮结论；执行级综合分 ` },
       { text: `${overallText} / 100`, strong: true },
-      { text: ' 仅作参考，不据此推断某轮通过。' },
+      {
+        text: execVerdict
+          ? ` 仅作参考，整通执行按记录判「${execVerdict}」。`
+          : ' 仅作参考，不据此推断某轮通过。',
+      },
     ]
   }
   const parts: Array<{ text: string; strong?: boolean }> = [
@@ -243,6 +249,13 @@ interface GateItem {
   why: string
   tone: string
 }
+
+const failedContractGates = computed(() =>
+  props.model.contract.exists
+    ? props.model.contract.gates.filter((gate) => !gate.passed && gate.key !== 'facts')
+    : [],
+)
+const lastTurnIndex = computed(() => turns.value[turns.value.length - 1]?.index ?? null)
 
 const gates = computed<GateItem[]>(() => {
   const rows: GateItem[] = []
@@ -279,6 +292,19 @@ const gates = computed<GateItem[]>(() => {
           tone: 'contract',
         })
       }
+    }
+  }
+  // facts 已在上面按失败事实展开；这里补上同一份契约记录里的其他失败闸门（安全 / 行为 / 扩展），
+  // 不能让 900006 这种 gates.safety=false 的执行只看到 facts 一项。
+  if (lastTurnIndex.value !== null) {
+    for (const gate of failedContractGates.value) {
+      rows.push({
+        turn: lastTurnIndex.value,
+        kind: 'contract',
+        title: `${gate.label}闸门`,
+        why: `${gate.label}闸门未通过（执行级契约）`,
+        tone: 'contract',
+      })
     }
   }
   return rows.sort((a, b) => a.turn - b.turn || (a.kind === 'rule' ? -1 : 1))
@@ -406,6 +432,7 @@ function tagTone(name: string): string {
 }
 
 function tagTitle(agg: TagAgg): string {
+  if (!agg.perTurn) return `${agg.name} · 会话级归因 · 未拆分到轮次`
   return `${agg.name} · 出现于 T${agg.turns.join(' · T')} · 打开该轮判定段`
 }
 
@@ -488,20 +515,17 @@ function copyConclusion(turn: TurnVM): void {
             <div class="jtagrow">
               <span class="jscope" :title="SCOPE_META.session.hint">会话级</span>
               <template v-if="sessionTagAgg.length">
-                <button
+                <span
                   v-for="agg in sessionTagAgg"
                   :key="agg.name"
-                  type="button"
-                  class="etag tag-btn"
+                  class="etag"
                   :class="tagTone(agg.name)"
                   :title="tagTitle(agg)"
-                  @click="openTag(agg)"
                 >
                   <i />
                   {{ agg.name }}
-                  <b v-if="agg.turns.length > 1" class="c">×{{ agg.turns.length }}</b>
-                  <b class="c">T{{ agg.turns[0] }}</b>
-                </button>
+                </span>
+                <span class="etag-note">未拆分到轮次</span>
               </template>
               <span v-else class="etag-none">无</span>
             </div>
@@ -542,6 +566,8 @@ function copyConclusion(turn: TurnVM): void {
 
       <div v-if="turns.length" class="jchips">
         <span class="passchip">轮次通过 <b>{{ passCount }} / {{ turns.length }}</b></span>
+        <span v-if="warnCount" class="warnchip">部分命中 <b>{{ warnCount }}</b></span>
+        <span v-if="failCount" class="failchip">未通过 <b>{{ failCount }}</b></span>
         <span v-if="unknownCount">未判定 <b>{{ unknownCount }}</b></span>
         <span v-if="Number(detail.judge_result?.agreement) > 0">
           双裁判一致 <b>{{ detail.judge_result?.agreement }}/{{ turns.length }}</b>
@@ -801,6 +827,18 @@ function copyConclusion(turn: TurnVM): void {
                           事实明细按整通执行判定，可在「证据 · 流程裁决」查看。
                         </p>
                       </template>
+                      <template v-if="turn.index === lastTurnIndex && failedContractGates.length">
+                        <div class="jdc-sep">执行级契约闸门</div>
+                        <div
+                          v-for="gate in failedContractGates"
+                          :key="gate.key"
+                          class="jdc bad"
+                        >
+                          <span class="ic"><TraceIcon name="x" :size="11" /></span>
+                          <span class="nm">{{ gate.label }}闸门</span>
+                          <span class="why">未通过</span>
+                        </div>
+                      </template>
                       <p v-if="!turn.rules.length && !turn.contract && turn.factsScope !== 'execution'" class="jdc-none">
                         本轮没有规则或契约门槛，无法据此判定。
                       </p>
@@ -877,7 +915,9 @@ function copyConclusion(turn: TurnVM): void {
           </template>
 
           <tr v-if="turns.length > 1" class="sum">
-            <td class="n">均分</td>
+            <td class="n" :title="perTurnDims ? '已评分轮次四维均值' : '无轮次级四维，此行为执行级汇总'">
+              {{ perTurnDims ? '均分' : '执行级' }}
+            </td>
             <td class="vd">
               <span class="sumvd"><b>{{ passCount }}</b>/{{ turns.length }} 通过</span>
             </td>
@@ -1045,6 +1085,10 @@ function copyConclusion(turn: TurnVM): void {
 .jchips span b { color: var(--ink-soft); font-family: "JetBrains Mono", Consolas, monospace; font-weight: 600; }
 .jchips span.passchip { color: #047857; background: var(--green-soft); border-color: var(--green-edge); }
 .jchips span.passchip b { color: #047857; }
+.jchips span.warnchip { color: #b45309; background: var(--amber-soft); border-color: var(--amber-edge); }
+.jchips span.warnchip b { color: #b45309; }
+.jchips span.failchip { color: #be123c; background: var(--rose-soft); border-color: var(--rose-edge); }
+.jchips span.failchip b { color: #be123c; }
 
 /* ---------- 归因 ---------- */
 .jtags { margin-top: 9px; padding-top: 8px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 5px; }
@@ -1060,6 +1104,7 @@ function copyConclusion(turn: TurnVM): void {
 .etag.violet i { background: #8b5cf6; }
 .etag.orange i { background: #f97316; }
 .etag-none { font-size: 9px; color: #cbd5e1; }
+.etag-note { font-size: 9px; color: var(--faint); }
 .etag-more { font-size: 8.5px; color: var(--faint); }
 .tag-btn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
 .tag-btn:hover { color: var(--ink); }
