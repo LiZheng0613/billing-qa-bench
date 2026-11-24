@@ -1163,12 +1163,24 @@ export interface TurnTrace {
   generated_sql: string | null
   api_params: Record<string, unknown> | null
   raw_db_data: Record<string, unknown> | null
+  /** 被测 Agent 在本轮返回的工具调用（用于页面级调用链与抽屉执行段） */
+  tool_calls: Array<Record<string, unknown>> | null
+  /** 本轮取数证据（当前后端通常为空，前端按空值降级） */
+  evidence: unknown[] | null
   ttft_ms: number | null
   latency_ms: number | null
   rule_check: Record<string, unknown> | null
   simulator_prompt_tokens: number
   simulator_completion_tokens: number
   created_at: string
+  /** 可选的轮次级判分：当前后端多轮执行不落库，缺失时前端如实降级为 — */
+  judge_score?: number | null
+  dimension_scores?: Record<string, number> | null
+  error_tags?: string[] | null
+  contract_passed?: number | null
+  contract_total?: number | null
+  judge_reason?: string | null
+  fact_results?: Array<Record<string, unknown>> | null
 }
 
 export interface JudgeResult {
@@ -1361,6 +1373,8 @@ export interface ExecutionDetail extends ExecutionListItem {
 export interface SelfCheckResult {
   status: string
   trigger?: string | null
+  /** 自检追问发生时所在的轮次（= 最后一轮）；老执行记录可能缺失，前端退正则解析 trigger */
+  turn_index?: number | null
   skip_reason?: string | null
   session_id?: string | null
   template_code?: string | null

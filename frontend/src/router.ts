@@ -146,7 +146,13 @@ const routes: RouteRecordRaw[] = [
 export const router = createRouter({
   history: createWebHistory(),
   routes,
-  scrollBehavior: () => ({ top: 0 }),
+  scrollBehavior: (to, from, savedPosition) => {
+    if (savedPosition) return savedPosition
+    // 同一页面只同步查询参数（页签 / 抽屉 / 筛选）时保持当前位置，
+    // 否则会把「定位到对话」等就地滚动拉回页面顶部。
+    if (to.path === from.path) return {}
+    return { top: 0 }
+  },
 })
 
 router.beforeEach(async (to) => {

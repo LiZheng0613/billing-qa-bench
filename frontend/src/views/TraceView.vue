@@ -8,6 +8,7 @@ import StatusPill from '../components/StatusPill.vue'
 import CaseTraceInspector from './components/CaseTraceInspector.vue'
 import type { BatchTask, ExecutionDetail, TaskProgressEvent } from '../types'
 import { errorMessage } from '../utils/errors'
+import { formatDateTime, formatMs } from '../utils/format'
 import { useBreadcrumbStore } from '../stores/breadcrumb'
 import type { BreadcrumbItem } from '../stores/breadcrumb'
 import { useToastStore } from '../stores/toast'
@@ -29,11 +30,30 @@ const executionId = computed(() => {
   return Number.isFinite(value) && value > 0 ? value : null
 })
 
-const ACTIVE_EXECUTION_STATUSES = new Set(['PENDING', 'RUNNING'])
-/** 执行中的记录才需要持续拉取最新轮次与判分结果。 */
+const ACTIVE_EXECUTION_STATUSES = new Set(['PENDING', 'RUNNING'])/** 执行中的记录才需要持续拉取最新轮次与判分结果。 */
 const executionActive = computed(
   () => Boolean(detail.value && ACTIVE_EXECUTION_STATUSES.has(detail.value.status)),
 )
+
+/** 页头副标题：与原型一致展示执行号 / 时间 / 模型 / 耗时 / 会话。 */
+/** 被测模型只可能出现在请求体里；取不到时退回裁判模型，并明确标注「裁判模型」。 */
+const headerAgentModel = computed(() => {
+  for (const turn of detail.value?.turns ?? []) {
+    const payload = turn.request_payload
+    if (!payload || typeof payload !== 'object') continue
+    const body = (payload as Record<string, unknown>).body
+    const source = body && typeof body === 'object' ? (body as Record<string, unknown>) : (payload as Record<string, unknown>)
+    const name = source.model ?? source.model_name ?? source.modelName
+    if (typeof name === 'string' && name) return name
+  }
+  return ''
+})
+const headerJudgeModel = computed(
+  () => detail.value?.judges.map((judge) => judge.model_name).filter(Boolean)[0] ?? '',
+)
+const headerModel = computed(() => headerAgentModel.value || headerJudgeModel.value)
+const headerModelLabel = computed(() => (headerAgentModel.value ? '模型' : '裁判模型'))
+const headerSession = computed(() => detail.value?.turns[0]?.session_id ?? '')
 
 // 从用例详情 / 调试工作台进入时优先展示用例路径，否则按批量任务路径展示。
 const origin = computed<'task' | 'case' | 'workbench'>(() => {
@@ -203,10 +223,10 @@ onBeforeUnmount(() => {
         {{ backLabel }}
       </button>
 
-      <PageHeader eyebrow="Single run · 单笔执行结果">
+      <PageHeader eyebrow="Case execution · 单笔执行结果">
         <template #title>
-          <h1 class="mt-2 flex flex-wrap items-center gap-2 text-[22px] font-semibold leading-tight tracking-[-0.02em] text-ink">
-            执行 #{{ detail?.id ?? executionId }}
+          <h1 class="mt-2 flex flex-wrap items-center gap-2 text-[26px] font-semibold leading-tight tracking-[-0.02em] text-ink">
+            {{ detail?.case_name || `执行 #${detail?.id ?? executionId}` }}
             <button
               v-if="detail?.case_id"
               type="button"
@@ -214,7 +234,7 @@ onBeforeUnmount(() => {
               title="查看用例详情"
               @click="openCase"
             >
-              · {{ detail.case_code || `用例 #${detail.case_id}` }}
+              {{ detail.case_code || `用例 #${detail.case_id}` }}
             </button>
             <StatusPill v-if="detail" :status="detail.status" size="sm" />
             <span
@@ -226,9 +246,27 @@ onBeforeUnmount(() => {
           </h1>
         </template>
         <template #sub>
-          <p class="mt-2 text-xs text-slate-600">
-            <span v-if="detail?.case_name">{{ detail.case_name }} · </span>
-            <span v-if="detail?.environment_name" class="mr-2">
+          <p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600">
+            <span>执行 #{{ detail?.id ?? executionId }}</span>
+            <template v-if="detail?.started_at">
+              <span class="text-slate-300">·</span>
+              <span>{{ formatDateTime(detail.started_at) }}</span>
+            </template>
+            <template v-if="headerModel">
+              <span class="text-slate-300">·</span>
+              <span>{{ headerModelLabel }} <span class="font-mono text-slate-700">{{ headerModel }}</span></span>
+            </template>
+            <template v-if="detail?.latency_ms !== null && detail?.latency_ms !== undefined">
+              <span class="text-slate-300">·</span>
+              <span>总耗时 {{ formatMs(detail.latency_ms) }}</span>
+            </template>
+            <template v-if="headerSession">
+              <span class="text-slate-300">·</span>
+              <span>会话 <span class="font-mono text-slate-700">{{ headerSession }}</span></span>
+            </template>
+          </p>
+          <p class="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <span v-if="detail?.environment_name">
               实际执行环境
               <span class="rounded-md border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
                 {{ detail.environment_name }}
