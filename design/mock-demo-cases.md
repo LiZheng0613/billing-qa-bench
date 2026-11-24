@@ -20,6 +20,8 @@ cd frontend
 npx vite --config vite.mock.config.ts
 ```
 
+> `vite.mock.config.ts` 的 `strictPort: false`：5174 被占用时 vite 会自动顺延到 5175。也可显式指定 `--port 5175`；换端口后是新的 origin，需要重新登录一次（mock 任意账号密码）。
+
 登录任意账号密码（mock 返回固定令牌 `mock-token-demo`）。
 
 - 直接落判分页：`http://127.0.0.1:5174/trace?execution=900004&tab=judge`

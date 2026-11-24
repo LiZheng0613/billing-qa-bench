@@ -889,6 +889,7 @@
   .tag-btn:hover .to{color:var(--brand)}
   .tag-btn[data-to="drawer"]:hover .to{transform:translateX(1.5px)}
   .etag .c{font-family:"JetBrains Mono",Consolas,monospace;font-size:8px;color:var(--faint);background:#f1f5f9;border-radius:999px;padding:0 4px;margin-left:2px;font-weight:500}
+  .etag-note{font-size:8.5px;color:var(--faint);white-space:nowrap}
 
 
   /* 行内展开明细（单轮 / 多轮共用） */
@@ -2197,6 +2198,8 @@
   }
 
   const tagChip = (n, cls, focus) => '<button class="etag tag-btn ' + (cls || TAG_TONE[n] || 'slate') + (focus ? ' focus' : '') + '" data-dr-tag="' + esc(n) + '" title="' + esc(n) + (focus ? ' · 已定位' : ' · 点击定位') + '"><i></i>' + esc(n) + '</button>';
+  /* 会话级归因没有轮次字段：不可点击、不挂 T 号，避免伪造「某轮命中」 */
+  const tagStatic = (n) => '<span class="etag ' + (TAG_TONE[n] || 'slate') + '" title="' + esc(n) + ' · 会话级归因 · 按整通会话判定，未拆分到轮次"><i></i>' + esc(n) + '</span><span class="etag-note">未拆分到轮次</span>';
   /* 归因标签统一入口：任何位置的「错误归因」都打开该轮证据抽屉的裁判段，并高亮该标签 */
   const tagLink = (n, i) => '<button class="etag tag-btn ' + (TAG_TONE[n] || 'slate') + '" data-to="drawer"' +
     ' data-ev="' + i + '" data-sec="judge" data-tag="' + esc(n) + '"' +
@@ -2315,7 +2318,7 @@
               (t.tags.length ? t.tags.map(x => tagLink(x, t.i)).join('') : '<span class="etag-none">无</span>') +
             '</div>' +
             (t.sessTags.length
-              ? '<div class="jx-attrib-row"><b>会话级</b>' + t.sessTags.map(x => tagLink(x, t.i)).join('') + '</div>'
+              ? '<div class="jx-attrib-row"><b>会话级</b>' + t.sessTags.map(x => tagStatic(x)).join('') + '</div>'
               : '') +
           '</div>' +
           '<div class="jx-acts">' +
@@ -2336,30 +2339,39 @@
     const cTotal = ts.reduce((n,t) => n + ct(t)[1], 0);
     const passCnt = ts.filter(t => t.pass).length;
     const allPass = passCnt === ts.length;
-    const verdict = allPass ? (overall >= 90 ? '优秀' : '通过') : (ts.length === 1 ? '未通过' : '部分通过');
+    const verdict = allPass ? (overall >= 90 ? '优秀' : '通过') : (ts.length === 1 ? (ts[0].judge >= PASS_LINE ? '部分命中' : '未通过') : '部分通过');
     const sessTotal = ts.reduce((n,t) => n + t.sessTags.length, 0);
     const tagTotal = ts.reduce((n,t) => n + t.tags.length, 0) + sessTotal;
     const low = ts.reduce((a, t) => t.judge < a.judge ? t : a, ts[0]);
-    const aggOf = (list, get) => {
+    const aggOf = (list, get, scope) => {
       const out = [];
       list.forEach(t => get(t).forEach(x => {
         const hit = out.find(a => a.name === x);
+        if (scope === 'session') {
+          // 会话级归因没有轮次字段：只去重，不累计轮次、不挂 T 号
+          if (!hit) out.push({name: x, turns: []});
+          return;
+        }
         if (hit) hit.turns.push(t.i); else out.push({name: x, turns: [t.i]});
       }));
       const order = Object.keys(TAG_TONE);
       out.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
       return out;
     };
-    const tagAgg = aggOf(ts, t => t.tags);
-    const sessAgg = aggOf(ts, t => t.sessTags);
+    const tagAgg = aggOf(ts, t => t.tags, 'turn');
+    const sessAgg = aggOf(ts, t => t.sessTags, 'session');
     const tagBtn = (a, scope) =>
-      '<button class="etag tag-btn ' + (TAG_TONE[a.name] || 'slate') + '" data-to="drawer"' +
-        ' data-ev="' + a.turns[0] + '" data-sec="judge" data-tag="' + esc(a.name) + '" data-scope="' + scope + '"' +
-        ' title="' + esc(a.name) + ' · ' + SCOPE_META[scope].label + ' · 出现于 T' + a.turns.join(' · T') + ' · 右侧抽屉查看该轮裁判评分">' +
-        '<i></i>' + esc(a.name) +
-        (a.turns.length > 1 ? '<b class="c">×' + a.turns.length + '</b>' : '') +
-        '<b class="c">T' + a.turns[0] + '</b>' + toMark('drawer') +
-      '</button>';
+      scope === 'session'
+        ? '<span class="etag ' + (TAG_TONE[a.name] || 'slate') + '" title="' + esc(a.name) + ' · 会话级归因 · 按整通会话判定，未拆分到轮次">' +
+            '<i></i>' + esc(a.name) +
+          '</span><span class="etag-note">未拆分到轮次</span>'
+        : '<button class="etag tag-btn ' + (TAG_TONE[a.name] || 'slate') + '" data-to="drawer"' +
+            ' data-ev="' + a.turns[0] + '" data-sec="judge" data-tag="' + esc(a.name) + '" data-scope="' + scope + '"' +
+            ' title="' + esc(a.name) + ' · ' + SCOPE_META[scope].label + ' · 出现于 T' + a.turns.join(' · T') + ' · 右侧抽屉查看该轮裁判评分">' +
+            '<i></i>' + esc(a.name) +
+            (a.turns.length > 1 ? '<b class="c">×' + a.turns.length + '</b>' : '') +
+            '<b class="c">T' + a.turns[0] + '</b>' + toMark('drawer') +
+          '</button>';
     const tagRow = (scope, list) =>
       '<div class="jtagrow"><span class="jscope" title="' + SCOPE_META[scope].hint + '">' + SCOPE_META[scope].label + '</span>' +
         (list.length ? list.map(a => tagBtn(a, scope)).join('') : '<span class="etag-none">无</span>') +
@@ -2813,9 +2825,8 @@
     const low = ts.reduce((a, t) => t.judge < a.judge ? t : a, ts[0]);
     const sess = [];
     ts.forEach(t => t.sessTags.forEach(x => { if (sess.indexOf(x) < 0) sess.push(x); }));
-    const tagCount = ts.reduce((n, t) => n + t.tags.length + t.sessTags.length, 0);
-    const sessTurn = ts.filter(t => t.sessTags.length)[0] || null;
-    return { total, avg, pass, dims, low, sess, sessTurn, tagCount };
+    const tagCount = ts.reduce((n, t) => n + t.tags.length, 0) + sess.length;
+    return { total, avg, pass, dims, low, sess, tagCount };
   }
   function drawerSection(t, sec, focus){
     const passed = t.rules.filter(r => r.pass).length;
@@ -2989,13 +3000,13 @@
             (t.tags.length ? t.tags.map(x => tagChip(x, null, focus === x)).join('') : '<span class="etag-none">无</span>') +
           '</div>' +
           '<div class="jtagrow" style="margin-top:5px"><span class="jscope">会话级</span>' +
-            (t.sessTags.length ? t.sessTags.map(x => tagChip(x, null, focus === x)).join('') : '<span class="etag-none">无</span>') +
+            (t.sessTags.length ? t.sessTags.map(x => tagStatic(x)).join('') : '<span class="etag-none">无</span>') +
           '</div>' +
           '</div>' +
           '<div class="dsub">轮次级计入本轮判定；会话级按整通会话判定，只作为本轮判定上下文，不参与本轮 pass。</div>' +
           (focus && (t.tags.indexOf(focus) >= 0 || t.sessTags.indexOf(focus) >= 0)
             ? '<div class="dnote" style="color:var(--muted)">' + icon('info') +
-              '<span>已定位到「' + esc(focus) + '」：' + (TAG_SCOPE[focus] === 'session' ? '会话级归因，按整通会话判定，最早出现在 T' + t.i : '轮次级归因，归属 T' + t.i) + '。</span></div>'
+              '<span>已定位到「' + esc(focus) + '」：' + (TAG_SCOPE[focus] === 'session' ? '会话级归因，按整通会话判定，未拆分到轮次' : '轮次级归因，归属 T' + t.i) + '。</span></div>'
             : '') +
         '</div>' +
         '<div class="dsec"><h5>裁决返回校验 <span class="sp"></span><span class="cnt">schema</span></h5><div class="dkv">' +
@@ -3139,9 +3150,7 @@
             kv('会话 ID', 'sess_9f2c8a71d4e6b3') +
           '</div>' +
           (ss.sess.length
-            ? '<div style="margin-top:8px"><button class="ev-chip wide" data-ev="' + ss.sessTurn.i + '" data-sec="judge" data-tag="' + esc(ss.sess[0]) + '" title="会话级归因 · 打开 T' + ss.sessTurn.i + ' 判定段">' +
-              icon('alert') + '<span style="color:var(--ink-soft)">会话级归因 ' + ss.sess.length + ' 条</span><span class="sp"></span>' +
-              '<span style="color:var(--faint);font-size:9px">T' + ss.sessTurn.i + ' 判定</span><span class="go">›</span></button></div>'
+            ? '<div class="jtagrow" style="margin-top:8px"><span class="jscope">会话级归因</span>' + ss.sess.map(x => tagStatic(x)).join('') + '</div>'
             : '') +
           '<div class="dsub">会话级归因只在「判定」段标注；这里给出会话汇总与最低轮次，帮助解释本轮所处位置，不重复计入本轮判定。</div>' +
         '</div>' +
