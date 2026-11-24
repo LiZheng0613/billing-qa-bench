@@ -286,7 +286,7 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 | --- | --- |
 | 环境 | `QA-MOCK-JSON`：Agent 报文（Basic 鉴权 + 前置取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso`），**68 条 `ACTIVE` 用例绑定**（批量回归 67 条，慢响应用例单独演示）；`QA-MOCK`：SSE 流式演示环境，`seed_environment_runs.py` 在其上生成 67 条调试执行用于环境对比；`QA-MOCK-OFFLINE`：`is_active=false` 的停用环境，只用于演示环境校验失败（BUSINESS 错误） |
 | 用例 | 72 条（69 `ACTIVE` + 2 `DRAFT` + 1 `DISABLED`；33 条答案契约 + 39 条 4 维评分），全部带 `userid` / `custid` 请求变量（`userid` 取自话术中的号码，数字按字符串保存） |
-| 业务资产 | 4 个模型、4 套 Prompt（7 个版本）、14 条业务口径、8 条候选（NEW / TRIAGED / PROMOTED / REJECTED）、2 个数据源、14 条取数能力、13 条取证记录、1 条判分器自检、7 个演示账号（含锁定 / 停用各 1 个）、12 条演示审计 |
+| 业务资产 | 4 个模型、4 套 Prompt（7 个版本）、14 条业务口径、8 条候选（NEW / TRIAGED / PROMOTED / REJECTED）、2 个数据源、14 条取数能力、13 条取证记录、1 条判分器自检、7 个演示账号（含锁定 / 停用各 1 个）、7 条演示审计 |
 | 历史数据 | 9 条任务（3 完成 + 2 中断 + 3 定时计划 + 1 错误策略）+ 137 条任务内执行明细（含 1 条自动重试）+ 67 条 SSE 调试执行 + 1 条草稿沙箱试跑，合计 205 条执行、227 条轮次轨迹、205 条裁判明细（195 条执行有裁判，其中 10 条双裁判）、237 条事实级判分、53 条追问自检记录（46 `SKIPPED` / 6 `DONE` / 1 `ERROR`） |
 
 用例逐条清单与预期结果、Mock 数据口径、演示任务构成见 [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md)。
