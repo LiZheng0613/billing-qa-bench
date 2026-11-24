@@ -554,6 +554,7 @@ class CaseExecutor:
             base.answer_grading = {
                 "passed": False,
                 "gates": {"safety": False, "behavior": False, "facts": False, "extras": False},
+                "pass_threshold": ctx.pass_threshold,
                 "notes": conversation.notes,
             }
             return base
@@ -604,6 +605,8 @@ class CaseExecutor:
         base.pass_flag = passed
         base.total_score = grading.total_score
         base.answer_grading = grading.to_dict()
+        # 阈值随执行落库：契约模式下判定由 gates 决定，但界面展示口径需要真实通过线
+        base.answer_grading["pass_threshold"] = ctx.pass_threshold
         base.fact_results = grading.fact_dicts()
         base.diagnostics = grading.diagnostics
         base.lucky_pass = grading.lucky_pass
@@ -620,6 +623,7 @@ class CaseExecutor:
             "root_cause": grading.root_cause,
             "lucky_pass": grading.lucky_pass,
             "grader_version": grading.grader_version,
+            "threshold": ctx.pass_threshold,
             "notes": notes,
             # 四维裁判仅作质量分参考，不参与 pass
             "quality": quality,
@@ -659,6 +663,15 @@ class CaseExecutor:
                 attempt_no=max(1, int(attempt_no)),
                 started_at=now(),
             )
+            # 冻结本执行生效的最大轮次（与 _run_dynamic 使用同一钳制口径）
+            max_turns_raw = snapshot.get("max_turns")
+            if max_turns_raw:
+                try:
+                    record.max_turns = max(
+                        1, min(int(max_turns_raw), settings.max_turns_hard_limit)
+                    )
+                except (TypeError, ValueError):
+                    record.max_turns = None
             db.add(record)
             await db.commit()
             await db.refresh(record)

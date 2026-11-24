@@ -57,6 +57,8 @@ class SelfCheckResult:
     error: str | None = None
     performed_at: str | None = None
     notes: list[str] = field(default_factory=list)
+    # 自检追问挂靠的轮次（= 触发时的最后一轮）；供界面按轮归属，老记录缺失时前端退正则解析
+    turn_index: int | None = None
 
     @classmethod
     def skipped(cls, reason: str, **kwargs: Any) -> SelfCheckResult:
@@ -304,14 +306,24 @@ async def run_self_check(
 
     自检失败（模板缺失 / 被测接口异常）不影响原执行结果，仅记录 ERROR。
     """
+    trigger = self_check_trigger_reason(
+        status=status, judge_result=judge_result, has_records=bool(turn_records)
+    )
+    # 自检发生在原对话最后一轮之后：以最后一轮的 turn_index 作为归属轮次
+    last_turn_index: int | None = None
+    for item in reversed(turn_records or []):
+        if item.get("turn_index") is not None:
+            try:
+                last_turn_index = int(item["turn_index"])
+            except (TypeError, ValueError):
+                last_turn_index = None
+            break
     base = {
         "template_code": template_code,
         "template_name": template_name,
         "template_version": template_version,
+        "turn_index": last_turn_index,
     }
-    trigger = self_check_trigger_reason(
-        status=status, judge_result=judge_result, has_records=bool(turn_records)
-    )
     if trigger is None:
         return SelfCheckResult.skipped(
             self_check_skip_reason(

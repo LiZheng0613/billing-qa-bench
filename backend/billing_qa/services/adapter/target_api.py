@@ -400,6 +400,8 @@ class TargetApiAdapter:
                         request_payload=request_payload,
                         response_payload={
                             "mode": "sse",
+                            "status_code": response.status_code,
+                            "headers": _sanitize_headers(dict(response.headers)),
                             "frame_count": len(sse_result.frames),
                             "metadata": sse_result.merged_metadata,
                             "frames": sse_result.frames[-50:],
@@ -438,6 +440,8 @@ class TargetApiAdapter:
                     request_payload=request_payload,
                     response_payload={
                         "mode": "json",
+                        "status_code": response.status_code,
+                        "headers": _sanitize_headers(dict(response.headers)),
                         "body": payload,
                         "extraction": extraction_trace or None,
                     },
@@ -472,8 +476,8 @@ def basic_auth_header(username: str | None, password: str | None) -> str | None:
 
 
 def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
-    """记录原始报文时对敏感头做掩码。"""
-    sensitive = {"authorization", "cookie", "x-api-key", "token", "x-token"}
+    """记录原始报文时对敏感头做掩码（请求头 / 响应头共用）。"""
+    sensitive = {"authorization", "cookie", "x-api-key", "token", "x-token", "set-cookie"}
     return {
         key: ("***" if key.lower() in sensitive else value)
         for key, value in headers.items()
