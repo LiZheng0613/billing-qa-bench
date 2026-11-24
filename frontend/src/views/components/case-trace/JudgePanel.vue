@@ -249,7 +249,7 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     if (props.model.gradingMode === 'RUBRIC') {
       const scoreText = props.score.toFixed(1)
       const base = used
-        ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${scoreText} 与最终结论，没有逐轮明细、裁判理由与四维得分。`
+        ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${scoreText} 与最终结论，逐轮明细未留存，也没有裁判理由与四维得分。`
         : `本次执行由旧评分模式（RUBRIC）落库：只保留执行级综合分 ${scoreText} 与最终结论，没有轮次明细、裁判理由与四维得分。`
       // 真实库有 137 条 RUBRIC 失败记录总分 ≥ 快照阈值（如 16143：64.1 / 阈值 60），
       // 快照页又直接展示阈值；历史记录没保存当时的判定依据，页面只能说明差异、不反推原因。
@@ -264,7 +264,7 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     return [
       {
         text: used
-          ? `本次执行共 ${used} 轮，但执行记录只有执行级分数与结论，没有逐轮明细。`
+          ? `本次执行共 ${used} 轮，但执行记录只有执行级分数与结论，逐轮明细未留存。`
           : '本次执行没有对话轮次。',
       },
     ]

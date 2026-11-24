@@ -297,7 +297,7 @@ const turnEmptyCopy = computed(() => {
     return {
       title,
       description: used
-        ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${score} 与最终结论，没有逐轮明细。`
+        ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${score} 与最终结论，逐轮明细未留存。`
         : `该执行由旧评分模式（RUBRIC）落库，只保留执行级综合分 ${score} 与结论，没有逐轮明细。`,
     }
   }
@@ -305,14 +305,14 @@ const turnEmptyCopy = computed(() => {
     return {
       title,
       description: used
-        ? `本次执行共 ${used} 轮，但执行记录只有契约质量分与执行级结论，没有逐轮明细。`
+        ? `本次执行共 ${used} 轮，但执行记录只有契约质量分与执行级结论，逐轮明细未留存。`
         : '执行记录只有契约质量分与执行级结论，没有逐轮明细。',
     }
   }
   return {
     title,
     description: used
-      ? `本次执行共 ${used} 轮，但执行记录只有执行级分数与结论，没有逐轮明细。`
+      ? `本次执行共 ${used} 轮，但执行记录只有执行级分数与结论，逐轮明细未留存。`
       : '执行记录只有执行级分数与结论，没有逐轮明细。',
   }
 })
@@ -933,7 +933,9 @@ async function copyTraceUid(): Promise<void> {
               <p class="truncate text-[10px] text-slate-500">
                 {{
                   !model.turns.length
-                    ? '无逐轮记录，无法判断'
+                    ? turnsUsed
+                      ? '逐轮明细未留存，无法判断'
+                      : '无逐轮记录，无法判断'
                     : sessionConsistent
                       ? '各轮会话一致'
                       : `${model.session.sessionIds.length} 个会话 ID`
@@ -1286,7 +1288,7 @@ async function copyTraceUid(): Promise<void> {
                   {{ detail.grading_mode === 'ANSWER_CONTRACT'
                     ? '契约模式：最终答案正确性优先，pass 由四项契约闸门与终止状态决定，质量分仅作参考；工具调用轨迹仅用于失败诊断。'
                     : detail.grading_mode === 'RUBRIC'
-                      ? '旧评分模式（RUBRIC）：执行记录只保留执行级综合分与最终结论，没有逐轮四维与裁判理由；是否同时跑过规则未落库，页面不推断。'
+                      ? '旧评分模式（RUBRIC）：执行记录只保留执行级综合分与最终结论，逐轮四维与裁判理由未留存；是否同时跑过规则未落库，页面不推断。'
                       : 'LEGACY 模式：规则 + LLM 裁判四维加权，硬门槛与总分同时满足才通过。' }}
                 </p>
               </div>

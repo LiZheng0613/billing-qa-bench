@@ -180,13 +180,29 @@ const judgeTokens = computed(() =>
   props.model.judges.reduce((sum, judge) => sum + (judge.prompt_tokens ?? 0) + (judge.completion_tokens ?? 0), 0),
 )
 /**
- * 裁判 tokens 的来源：RUBRIC 执行没有 judge_result 行（真实库 1214 条全无），
+ * 裁判 tokens 的来源：有 judge 行就只认明细 —— 明细落库为 0 时也不能换成执行级合计，
+ * 否则会把整通用量读成这一轮的裁判用量。
+ * RUBRIC 执行没有 judge_result 行（真实库 1214 条全无），
  * 但 execution_record.judge_tokens 有值；这时只能给执行级合计，不能说「未记录」。
  */
-const judgeTokensInfo = computed<{ value: number; scope: 'judge' | 'execution' | 'none' }>(() => {
-  if (judgeTokens.value > 0) return { value: judgeTokens.value, scope: 'judge' }
+const judgeTokensInfo = computed<{ value: number | null; scope: 'judge' | 'execution' | 'none' }>(() => {
+  if (props.model.judges.length) {
+    return judgeTokens.value > 0 ? { value: judgeTokens.value, scope: 'judge' } : { value: null, scope: 'none' }
+  }
   const total = props.detail?.judge_tokens ?? 0
-  return total > 0 ? { value: total, scope: 'execution' } : { value: 0, scope: 'none' }
+  return total > 0 ? { value: total, scope: 'execution' } : { value: null, scope: 'none' }
+})
+/** tokens 展示统一走这里：null 写「未记录」，不用 0 冒充 */
+const judgeTokensText = computed(() =>
+  judgeTokensInfo.value.value === null ? '未记录' : String(judgeTokensInfo.value.value),
+)
+/** 多裁判时 tokens 是几位裁判的加总，必须连带说明，避免读成第 1 位裁判的量 */
+const judgeTokensNote = computed(() => {
+  if (judgeTokensInfo.value.scope === 'execution') return '（执行级合计 · judge_result 明细未落库）'
+  if (judgeTokensInfo.value.scope === 'judge' && props.model.judges.length > 1) {
+    return `（${props.model.judges.length} 位裁判合计）`
+  }
+  return ''
 })
 /** 本轮结论优先；多轮没有轮次级 reason 时明确标注为会话级结论 */
 const judgeConclusion = computed(() => {
@@ -397,7 +413,7 @@ async function copyJudgeFlow(): Promise<void> {
   const parts = [
     `流程裁决 · T${turn.index}`,
     `用户问题：${turn.query || '—'}`,
-    `裁判模型：${judgeModel.value}${judgeTemperature.value !== null ? ` · temperature ${judgeTemperature.value}` : ''}${judgeTokensInfo.value.value ? ` · 裁判 tokens ${judgeTokensInfo.value.value}${judgeTokensInfo.value.scope === 'execution' ? '（执行级合计）' : ''}` : ' · 裁判 tokens 未记录'}`,
+    `裁判模型：${judgeModel.value}${judgeTemperature.value !== null ? ` · temperature ${judgeTemperature.value}` : ''}${judgeTokensInfo.value.scope === 'none' ? ' · 裁判 tokens 未记录' : ` · 裁判 tokens ${judgeTokensText.value}${judgeTokensNote.value}`}`,
     `返回：${verdictLine}`,
     `结论：${judgeConclusion.value}`,
   ]
@@ -898,7 +914,7 @@ const selfTriggerValue = computed(() => {
             <div v-else class="dempty">执行记录既没有裁决 Prompt，也没有裁判原始返回。</div>
             <div class="dkv" style="margin-top: 8px">
               <div class="kv"><span class="k">裁判模型</span><span class="v">{{ judgeModel }}</span></div>
-              <div class="kv"><span class="k">裁判 tokens</span><span class="v">{{ judgeTokensInfo.value || '未记录' }}<em v-if="judgeTokensInfo.scope === 'execution'">执行级合计（judge_result 明细未落库）</em></span></div>
+              <div class="kv"><span class="k">裁判 tokens</span><span class="v">{{ judgeTokensText }}<em v-if="judgeTokensNote">{{ judgeTokensNote }}</em></span></div>
               <div class="kv"><span class="k">trace</span><span class="v">{{ traceUid || '未记录' }}</span></div>
             </div>
             <div v-if="judgeRawScope" class="dsub">
@@ -1216,7 +1232,7 @@ const selfTriggerValue = computed(() => {
                 </div>
                 <div class="ln">
                   <span class="k">调用</span>
-                  <span class="v">{{ judgeModel }}<em>裁判 tokens {{ judgeTokensInfo.value || '未记录' }}{{ judgeTokensInfo.scope === 'execution' ? '（执行级合计）' : '' }}{{ multiTurn ? ' · 整通一次裁决' : '' }}</em></span>
+                  <span class="v">{{ judgeModel }}<em>裁判 tokens {{ judgeTokensText }}{{ judgeTokensNote }}{{ multiTurn ? ' · 整通一次裁决' : '' }}</em></span>
                 </div>
                 <div class="ln">
                   <span class="k">返回</span>
