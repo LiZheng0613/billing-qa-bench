@@ -224,7 +224,8 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
   ]
   if (lowest.value) {
     const low = lowest.value
-    const tags = low.tags.concat(low.sessionTags)
+    // 会话级归因不归属某一轮：最低项只说该轮自己的轮次级归因
+    const tags = low.tags
     parts.push({ text: '最低项为 ' })
     parts.push({ text: `T${low.index} ${low.score ?? '—'} 分`, strong: true })
     if (tags.length) parts.push({ text: `（${tags.join('、')}）` })
@@ -870,17 +871,17 @@ function copyConclusion(turn: TurnVM): void {
                       <div class="jx-attrib-row">
                         <b>会话级</b>
                         <template v-if="turn.sessionTags.length">
-                          <button
+                          <span
                             v-for="tag in turn.sessionTags"
                             :key="tag"
-                            type="button"
-                            class="etag tag-btn"
+                            class="etag"
                             :class="tagTone(tag)"
-                            @click="emit('open', turn.index, 'judge', tag)"
+                            :title="SCOPE_META.session.hint"
                           >
                             <i />
                             {{ tag }}
-                          </button>
+                          </span>
+                          <span class="etag-note">未拆分到轮次</span>
                         </template>
                         <span v-else class="etag-none">无</span>
                       </div>

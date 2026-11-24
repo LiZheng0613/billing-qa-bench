@@ -237,7 +237,18 @@ const sessionAvg = computed(() => {
 
 /** 会话级口径：unknown 既不算通过也不算失败，避免多轮无判定时臆造「通过」。 */
 const decidedTurns = computed(() => props.turns.filter((item) => item.verdict !== 'unknown'))
+
+/** 执行级结论：`pass_flag` 是后端权威值；全轮未判定时也要给出执行级结论，不能显示「未判定」。 */
+const execPassed = computed<boolean | null>(() => {
+  if (typeof props.detail?.pass_flag === 'boolean') return props.detail.pass_flag
+  return null
+})
+/** 会话级口径：有 pass_flag 时跟执行级结论；没有时才按轮次聚合，unknown 不算通过也不失败。 */
 const sessionVerdictLabel = computed(() => {
+  if (execPassed.value !== null) {
+    const base = execPassed.value ? '通过' : '未通过'
+    return decidedTurns.value.length ? base : `${base}（执行级）`
+  }
   const decided = decidedTurns.value
   if (!decided.length) return '未判定'
   const passed = decided.filter((item) => item.pass).length
@@ -262,7 +273,8 @@ const sessionDimText = computed(() => {
     })
     .join(' / ')
 })
-const sessionTagTurn = computed(() => props.turns.find((item) => item.sessionTags.length) ?? null)
+/** 会话级归因没有轮次归属：抽屉里只展示去重后的标签，不挂 T 号、不做跳转。 */
+const sessionTagsAll = computed(() => [...new Set(props.turns.flatMap((item) => item.sessionTags))])
 
 const tags = computed(() => props.turn?.tags ?? [])
 const sessionTags = computed(() => props.turn?.sessionTags ?? [])
@@ -565,7 +577,15 @@ const selfTriggerValue = computed(() => {
                 </span>
                 <span class="djv-score">
                   <b>{{ fmtScore(turn.score ?? model.totalScore) }}</b><em>/ 100</em>
-                  <i>{{ turn.score !== null ? '本轮综合分' : model.totalScore !== null ? '执行级综合分' : '无分' }}</i>
+                  <i>{{
+                    turn.score !== null
+                      ? model.gradingMode === 'ANSWER_CONTRACT'
+                        ? '质量分参考'
+                        : '本轮综合分'
+                      : model.totalScore !== null
+                        ? '执行级综合分'
+                        : '无分'
+                  }}</i>
                 </span>
               </div>
 
@@ -585,6 +605,12 @@ const selfTriggerValue = computed(() => {
                     <span>质量分阈值 {{ passLine }}（仅参考）</span>
                   </template>
                   <span v-else>阈值 {{ passLine }}（{{ passLineSource }}）</span>
+                  <span
+                    v-if="model.gradingMode !== 'ANSWER_CONTRACT' && !turn.pass && turn.score !== null && turn.score >= passLine"
+                    class="flag"
+                  >
+                    分数已达标 · 硬门槛未全过
+                  </span>
                   <span v-if="turn.score === null && turn.verdict !== 'unknown'" class="flag">本轮无独立分 · pass 仅依据硬门槛</span>
                   <span v-else-if="turn.score === null" class="flag">本轮无独立分 · 数字为执行级汇总</span>
                 </div>
@@ -709,16 +735,17 @@ const selfTriggerValue = computed(() => {
               </div>
               <div class="jtagrow">
                 <span class="jscope">会话级</span>
-                <button
-                  v-for="tag in sessionTags"
-                  :key="tag"
-                  type="button"
-                  class="etag"
-                  :class="[toneOf(tag), { focus: focusTag === tag }]"
-                  :title="SCOPE_META.session.hint"
-                  @click="emit('focus-tag', tag, turn.index)"
-                ><i />{{ tag }}</button>
-                <span v-if="!sessionTags.length" class="etag-none">无</span>
+                <template v-if="sessionTags.length">
+                  <span
+                    v-for="tag in sessionTags"
+                    :key="tag"
+                    class="etag"
+                    :class="toneOf(tag)"
+                    :title="SCOPE_META.session.hint"
+                  ><i />{{ tag }}</span>
+                  <span class="etag-note">未拆分到轮次</span>
+                </template>
+                <span v-else class="etag-none">无</span>
               </div>
             </div>
             <div class="dsub">轮次级计入本轮判定；会话级按整通会话判定，只作为本轮判定上下文，不参与本轮 pass。</div>
@@ -1191,7 +1218,7 @@ const selfTriggerValue = computed(() => {
             <h5>会话级判定上下文 <span class="sp" /><span class="cnt">不参与本轮 pass</span></h5>
             <div class="dgrid">
               <div class="dstat">
-                <div class="dl">执行级综合分</div>
+                <div class="dl">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分参考' : '执行级综合分' }}</div>
                 <div class="dv">{{ fmtScore(model.judges.length ? model.judges[0].total_score : sessionAvg) }}<small v-if="sessionAvg !== null"> / 100</small></div>
               </div>
               <div class="dstat" :class="{ warn: model.session.passCount < turns.length }">
@@ -1215,20 +1242,17 @@ const selfTriggerValue = computed(() => {
               <div class="kv"><span class="k">会话一致性</span><span class="v">{{ model.session.consistentSession ? '同一会话' : '多会话（逐轮新会话）' }}</span></div>
               <div class="kv"><span class="k">pass 阈值</span><span class="v">{{ passLine }} · {{ passLineSource }}</span></div>
             </div>
-            <button
-              v-if="sessionTagTurn && sessionTagTurn.sessionTags.length"
-              type="button"
-              class="ev-chip wide"
-              style="margin-top: 8px"
-              :title="`会话级归因 → T${sessionTagTurn.index} 判定`"
-              @click="emit('focus-tag', sessionTagTurn.sessionTags[0], sessionTagTurn.index)"
-            >
-              <TraceIcon name="alert" :size="11" />
-              <span style="color: #374151">会话级归因 {{ sessionTagTurn.sessionTags.length }} 条</span>
-              <span class="sp" />
-              <span style="color: #9ca3af; font-size: 9px">T{{ sessionTagTurn.index }} 判定</span>
-              <span class="go">›</span>
-            </button>
+            <div v-if="sessionTagsAll.length" class="jtagrow" style="margin-top: 8px">
+              <span class="jscope" :title="SCOPE_META.session.hint">会话级归因</span>
+              <span
+                v-for="tag in sessionTagsAll"
+                :key="tag"
+                class="etag"
+                :class="toneOf(tag)"
+                :title="SCOPE_META.session.hint"
+              ><i />{{ tag }}</span>
+              <span class="etag-note">未拆分到轮次</span>
+            </div>
             <div class="dsub">会话级归因只在「判定」段标注；这里给出会话汇总与最低轮次，帮助解释本轮所处位置，不重复计入本轮判定。<template
                 v-if="turns.length > 1 && !model.session.lowest"
               > 本次执行未落库轮次级分数，轮次高低无法比较，「最低轮次」显示 —。</template></div>
@@ -1775,6 +1799,7 @@ const selfTriggerValue = computed(() => {
 .etag.sky i { background: #0ea5e9; }
 .etag.violet i { background: #8b5cf6; }
 .etag.orange i { background: #f97316; }
+.etag-note { font-size: 8.5px; color: #b0b6c1; white-space: nowrap; }
 .etag:hover { border-color: #c7d2fe; }
 .etag.focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.14); background: #f8f9ff; }
 .etag-none { font-size: 9.5px; color: #b0b6c1; }

@@ -858,7 +858,7 @@ async function copyTraceUid(): Promise<void> {
               </span>
             </div>
             <div v-if="model.judgeTags.length" class="mt-1 flex flex-wrap items-center gap-1">
-              <span class="text-[10px] text-slate-500">错误归因：</span>
+              <span class="text-[10px] text-slate-500">错误归因（执行级）：</span>
               <span
                 v-for="tag in model.judgeTags"
                 :key="tag"
