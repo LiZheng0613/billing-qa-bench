@@ -204,16 +204,30 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
   const overallText = overall.value === null ? '—' : overall.value.toFixed(1)
   if (total === 1) {
     const turn = turns.value[0]
+    if (turn.verdict === 'unknown') {
+      return [
+        { text: '本轮未判定：' },
+        { text: '后端没有提供本轮分数与硬门槛，不据此推断本轮通过。' },
+      ]
+    }
     const weak = turn.dimensions
       .filter((dim) => dim.value / dim.max < 0.8)
       .map((dim) => `${dim.label} ${dim.value}/${dim.max}`)
+    // 单轮结论跟轮次 verdict 走：82 分但规则未过是「部分命中」，不是「未通过」
     const parts: Array<{ text: string; strong?: boolean }> = [
-      { text: turn.verdict === 'pass' ? '本轮通过' : turn.verdict === 'unknown' ? '本轮未判定' : '本轮未通过' },
+      { text: turn.verdict === 'pass' ? '本轮通过' : turn.verdict === 'warn' ? '本轮部分命中' : '本轮未通过' },
       { text: '：总分 ' },
       { text: `${overallText} / 100`, strong: true },
     ]
-    if (weak.length) parts.push({ text: `；${weak.join('、')} 低于 80%。` })
-    else parts.push({ text: '。' })
+    if (turn.verdict === 'warn') {
+      parts.push({ text: '；达线但硬门槛未全过' })
+      if (weak.length) parts.push({ text: `，${weak.join('、')} 低于 80%` })
+      parts.push({ text: '。' })
+    } else if (weak.length) {
+      parts.push({ text: `；${weak.join('、')} 低于 80%。` })
+    } else {
+      parts.push({ text: '。' })
+    }
     return parts
   }
   if (allUnknown.value) {
