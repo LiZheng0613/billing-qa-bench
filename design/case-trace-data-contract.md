@@ -815,6 +815,21 @@ mock 新增通过用例执行 **#6581**（BILL-FEE-0422 · 2 轮全通过 · sel
 - **抽屉判定卡标题与来源不符**：原固定「LLM 裁判结论」，契约模式的闸门结论与没有 `judge_result` 的执行都被标成 LLM 产出。现 `judgeCardTitle`：契约 →「判定结论」；LEGACY 且有 `judge_result` 对象 →「LLM 裁判结论」；否则「判定结论」。
 - **验证**：临时把 mock `900009` 的 planner / db_query 时延置 `null`（验证后已还原并重启）：原始报文页显示「按阶段聚合并按步数比例着色（部分步骤未记录时延，不按 0ms 计）」，无 `.cdist`、无 `0ms` / `NaN`；抽屉显示「3 步 · 3 种工具 · 126ms」与「1 步 · —」，工具统计 `planner` / `db_query` 平均耗时为「—」。真实 `14866` 快照页显示「快照没有文本期望答案…本用例的期望以 expected_rules 规则表达」，chip「规则结果 4 条 / pass 阈值 60（执行口径）」；`16143` chip「规则结果未记录（RUBRIC）」；`14917` 快照 chip「规则结果未参与契约判定 / 契约事实 2 项 / 契约闸门 4 项 / 阈值 60（执行口径）· 不参与契约判定」、抽屉「阈值 60（随执行落库，不参与契约判定）」与「质量分 94.0 仅参考…」；`15525` 页头与文档流为「共 2 轮 · 逐轮明细未留存」，`14899` 仍为「没有对话轮次」；三页均无 `NaN` / `undefined` / `[object Object]`。`npm run typecheck` / `npm run build` 通过。
 
+### 12.23 Tokens 按角色拆分、抽屉裁决与响应形态按落库事实降级（2026-11-24）
+
+- **模拟器 tokens 被当成 Agent 用量**：`TurnVM` 原来只有一组 `promptTokens / completionTokens / tokens`，取值是 `usage.prompt || turn.simulator_prompt_tokens || 0`。真实库 `turn_trace` 267 轮的响应体全部没有 `usage`（`response_raw` 中 0 条），这个 `||` 实际永远落到模拟器列，界面上却是「Agent 本轮 tokens」；另有 213 轮模拟器两列都是 0，会被写成「0 tokens」，把「没记录」冒充成「零消耗」。现拆成 `agentPromptTokens / agentCompletionTokens / agentTokens` 与 `simulatorPromptTokens / simulatorCompletionTokens / simulatorTokens`，全部 `number | null`：`usageOf` 缺失返回 `null`，模拟器两列全 0 视为未记录；`agentTokens` 只在输入与输出都有值时求和，避免只把半边计成「合计」。`SessionStats` 的 `totalTokens` 换成 `agentTokens` / `simulatorTokens`，用 `sumOrNull` 只累加有值项，一项都没有时为 `null`。
+- **页头「总 Tokens」把模拟器 + 裁判说成总量**：大数字是 `simulator_tokens + judge_tokens`，标签却是「总 Tokens」，容易被读成全部用量（包含 Agent）。现标签改为「模拟器 + 裁判 Tokens」，hint 补「· 不含 Agent 自身用量」；两位列为 0 时不再显示 0，而是「—」+「执行记录未留存模拟器 / 裁判用量，不按 0 计」（真实 `14899`、mock `900008`）。对话页汇总行同样按 `agentTokens` / `simulatorTokens` 分档，不再累加模拟器列冒充 Agent 用量。
+- **抽屉「执行」段把缺失 usage 写成数值**：原「输入 / 输出 / 合计 tokens」直接渲染 0。现缺失显示「—」并补说明条「Agent 用量未记录（响应体里没有 usage 字段），不按 0 计」；有模拟器用量时单独说明「模拟器（生成用户话术）另用 N tokens，不计入 Agent 用量」。
+- **抽屉裁判 tokens 只认 `judge_result` 明细**：RUBRIC 执行没有 `judge_result` 行（真实库 1214 条全无），但 `execution_record.judge_tokens` 有值，原实现一律显示「未记录」。现优先累加裁判明细，缺失时回退执行级 `judge_tokens` 并标注「执行级合计（judge_result 明细未落库）」；复制「流程裁决」时也带上同口径。
+- **多裁判只取第 1 位的原始返回却不说**：`judgeRaw` 取 `judges[0].raw_response`，两位裁判交叉裁决时（真实 `17425` 为 94 / 88 → 执行级 AVG 91）页面展示的只是第一位裁判的报文。现展开行标注「第 1 / N 位裁判 · 已记录」，并补说明「执行级结论按 N 位合并（综合分 91）」；复制文本同步写「裁判返回（第 1 / N 位裁判）」。
+- **抽屉会话级分数取单个裁判分**：原 `model.judges[0].total_score` 被标成「执行级综合分」，与执行级 AVG 不符。现 `sessionScoreInfo` 优先取 `model.totalScore`（契约标签「质量分参考」，LEGACY「执行级综合分」），缺失时才退轮次均分并注明「轮次均分（执行级未记录）」；轮次分合计补「（N/M 轮有分）」。
+- **四维均值按索引对齐**：`sessionDimText` 用 `item.dimensions[index] ?? 0`，某轮缺某一维时会按 0 计入，凭空拉低均分。现按维度 key 取值，缺该维度的轮次不参与；完全没有轮次级四维时回退执行级四维，标签改「四维得分（执行级）」（真实 `14875` 显示「30 / 22 / 0 / 9」）。
+- **多轮抽屉把执行级裁决挂到本轮**：多轮执行只有一次整通裁决，抽屉「流程裁决 → 返回」原写「pass = … · 综合分 …」，读起来像本轮得分；契约模式还会显示轮次质量分（实际只有执行级）。现多轮统一写「执行级 pass = … · 执行级综合分 / 质量分 …」并注明「整通一次裁决，不归属本轮」；`pass_flag` 缺失时写「未记录」。多轮未判定轮不再输出 `pass = false`，改写「pass 未判定」。
+- **无硬门槛时仍输出 pass true/false**：校验行原固定「按硬门槛 pass {{ gateOk }}」，没有规则也没有契约事实时 `gateOk` 恒 true。现写「本轮无硬门槛」，既无分数也无门槛时补「不给出本轮 pass」。
+- **响应形态缺失被默认成「非流式 JSON」**：`responseMode` 为空时页面照样写「非流式 JSON」，等于替执行记录断言报文形态。现三态：`sse` →「流式 · N 帧」、`json` →「非流式 JSON」、其余 →「执行记录未保存响应形态」；无报文时说明条改「本轮执行记录里没有响应报文，因此没有响应头 / 响应体可展示」。真实库 267 轮 `response_raw` 都带 `mode`（257 json / 10 sse），该分支只服务异常 / 历史记录。
+- **SQL 来源一律写 `response_raw`**：`generated_sql` 列真实库 267 行全空，SQL 实际来自响应体 `body.data.generated_sql`；但页面固定标 `response_raw`，列里真有值时反而说错。现按 `turn_trace.generated_sql` 是否有值切换 `note` 与说明条文案（「本轮落库的 generated_sql」/「本轮响应体（generated_sql 列为空）」）。
+- **验证**：mock `5175`：`900002` 页头「模拟器 + 裁判 TOKENS 2,980 · 模拟器 0 · 裁判 2,980 · 不含 Agent 自身用量」，`900008` 为「— / 执行记录未留存模拟器 / 裁判用量，不按 0 计」；`900001` 抽屉 T1「输入 3842 / 输出 615 / 合计 4457」+「取自本轮响应体的 usage」；`900002` 抽屉判定段为「执行级综合分 92 / 会话级结论 · 未拆分到本轮」。真实 `5173`：`14899` 页头「—」且无「/ 100」；`15525` 页头「155 · 模拟器 155 · 裁判 0」、文档流「共 2 轮 · 逐轮明细未留存」；`17425` 抽屉「第 1 / 2 位裁判 · 已记录」+「执行级结论按 2 位合并（综合分 91）」；`14875` 「四维得分（执行级）30 / 22 / 0 / 9」。页面无 `NaN` / `undefined` / `[object Object]`。`npm run typecheck` / `npm run build`（12.68s）通过。
+
 
 
 
