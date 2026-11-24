@@ -35,12 +35,26 @@ const emit = defineEmits<{
 
 const turns = computed(() => props.model.turns)
 const passLine = computed(() => props.model.passLine)
+/**
+ * 终止类硬失败：后端 judge.py 对 MAX_TURNS_EXCEEDED / REPETITION_ABORT 直接否决 pass，
+ * 与规则闸门无关。这种记录的判定口径不能只写「硬门槛 + 分数」（14876 / 14935 规则 0/0）。
+ */
+const terminationLabel = computed(() => {
+  const term = String(props.detail?.termination_status ?? '')
+  const status = String(props.detail?.status ?? '')
+  if (term === 'REPETITION_ABORT' || status === 'REPETITION_ABORT') return '复读熔断'
+  if (term === 'MAX_TURNS_EXCEEDED' || term === 'MAX_TURNS' || status === 'MAX_TURNS_EXCEEDED') return '轮次超限'
+  return ''
+})
 /** 两种模式的 pass 口径不同：契约只看闸门（answer_grader.passed = all(gates)），质量分不参与 */
-const passRuleBody = computed(() =>
-  props.model.gradingMode === 'ANSWER_CONTRACT'
-    ? '安全 / 行为 / 事实 / 附加 四项契约闸门全过；质量分仅参考，不参与 pass'
-    : `硬门槛全过 且 total_score ≥ ${passLine.value}`,
-)
+const passRuleBody = computed(() => {
+  if (props.model.gradingMode === 'ANSWER_CONTRACT') {
+    return '安全 / 行为 / 事实 / 附加 四项契约闸门全过；质量分仅参考，不参与 pass'
+  }
+  const base = `硬门槛全过 且 total_score ≥ ${passLine.value}`
+  // 终止熔断同样否决 pass；只有终止类执行才补这句，正常记录保持原口径
+  return terminationLabel.value ? `${base}，且执行未因终止状态否决` : base
+})
 const passRule = computed(() => `pass = ${passRuleBody.value}`)
 /** 主分在契约模式下是四维质量分，不是契约排序分 / 执行级总分；列名与提示必须跟着走 */
 const scoreHeading = computed(() =>
@@ -219,6 +233,15 @@ const hasJudgeRecord = computed(() => {
 })
 const conclusionTitle = computed(() => (hasJudgeRecord.value ? 'LLM 综合结论' : '综合结论'))
 
+/** 本轮是否真有未过的门槛（规则 / 轮次契约 / 执行级事实闸门）；没有时不能凭空说门槛未过 */
+function hasFailedGate(turn: TurnVM): boolean {
+  return (
+    turn.rules.some((rule) => !rule.pass) ||
+    Boolean(turn.contract && turn.contract.passed < turn.contract.total) ||
+    (turn.factsScope === 'execution' && turn.facts.some((fact) => !fact.pass && fact.isGate))
+  )
+}
+
 // 执行记录只落库 turns_used、没有 turn_trace 时，turns=[] 不能读成「没跑过轮次」
 const turnsUsed = computed(() => {
   const value = props.detail?.turns_used
@@ -252,12 +275,16 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
         ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${scoreText} 与最终结论，逐轮明细未留存，也没有裁判理由与四维得分。`
         : `本次执行由旧评分模式（RUBRIC）落库：只保留执行级综合分 ${scoreText} 与最终结论，没有轮次明细、裁判理由与四维得分。`
       // 真实库有 137 条 RUBRIC 失败记录总分 ≥ 快照阈值（如 16143：64.1 / 阈值 60），
-      // 快照页又直接展示阈值；历史记录没保存当时的判定依据，页面只能说明差异、不反推原因。
+      // 快照页又直接展示阈值；判定依据（规则明细）没有落库，页面只能说明差异、不反推原因。
       // 只在阈值确实来自用例快照时引用「快照阈值」，前端默认兜底或执行口径不套用这句。
       const threshold = props.model.passLineSource === 'case_snapshot' ? props.model.passLine : null
+      // 终止原因其实落了库（termination_status），不能写成「没保存终止原因」；
+      // 只有没有终止状态时才说判定依据缺失。
       const divergence =
         threshold !== null && execPassed.value === false && props.score >= threshold
-          ? `落库总分不低于该执行快照的阈值 ${threshold}，但历史记录没有保存当时的判定依据（规则 / 终止原因），页面按落库结论记为「未通过」，不反推原因。`
+          ? terminationLabel.value
+            ? `落库总分不低于该执行快照的阈值 ${threshold}；本次执行以${terminationLabel.value}结束，后端按终止类硬失败否决 pass，规则明细未留存。`
+            : `落库总分不低于该执行快照的阈值 ${threshold}，但历史记录没有保存当时的判定依据（规则），页面按落库结论记为「未通过」，不反推原因。`
           : ''
       return [{ text: divergence ? `${base}${divergence}` : base }]
     }
@@ -304,8 +331,13 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
       if (contractMode) {
         // 契约模式的分数只是质量参考，未过线与否都不影响 pass
         parts.push({ text: '；质量分不参与契约模式的 pass，执行级判定为「未通过」（契约闸门未全过或终止状态否决）' })
-      } else {
+      } else if (terminationLabel.value) {
+        parts.push({ text: `；达线，但执行因${terminationLabel.value}按硬失败判「未通过」` })
+      } else if (hasFailedGate(turn)) {
         parts.push({ text: '；达线但硬门槛未全过' })
+      } else {
+        // 分数达线、没有失败门槛却判未通过：原因没有随执行落库，页面不替后端补
+        parts.push({ text: '；达线，但执行记录判「未通过」；未记录本轮哪项门槛未过，页面不推断' })
       }
       if (weak.length) parts.push({ text: `，${weak.join('、')} 低于 80%` })
       parts.push({ text: '。' })
@@ -380,7 +412,11 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
       execPassed.value === false
         ? contractMode
           ? '执行级按落库判定记为「未通过」；契约闸门未全过或终止状态否决。'
-          : '硬门槛未全部通过，结论为「未通过」。'
+          : terminationLabel.value
+            ? `执行因${terminationLabel.value}按硬失败判「未通过」。`
+            : turns.value.some(hasFailedGate)
+              ? '硬门槛未全部通过，结论为「未通过」。'
+              : '执行记录判「未通过」，但页面未看到未过的硬门槛，不推断原因。'
         : overall.value === null
           ? '整通执行按落库判定展示，不据分数定档。'
           : contractMode
@@ -621,7 +657,11 @@ function verdictTitle(turn: TurnVM): string {
   return turn.verdict === 'pass'
     ? `通过：硬门槛全过且总分 ≥ ${passLine.value}`
     : turn.verdict === 'warn'
-      ? '部分命中：总分达线，硬门槛未全过'
+      ? terminationLabel.value
+        ? `部分命中：总分达线，但执行因${terminationLabel.value}按硬失败判未通过`
+        : hasFailedGate(turn)
+          ? '部分命中：总分达线，硬门槛未全过'
+          : '部分命中：总分达线，执行记录判未通过（未记录未过的硬门槛）'
       : `未通过：总分未达 ${passLine.value} 或硬门槛未过`
 }
 
@@ -1027,7 +1067,10 @@ function copyConclusion(turn: TurnVM): void {
                         </div>
                       </template>
                       <p v-if="!turn.rules.length && !turn.contract && turn.factsScope !== 'execution'" class="jdc-none">
-                        本轮没有规则或契约门槛，无法据此判定。
+                        <template v-if="terminationLabel && !turn.pass && turn.verdict !== 'unknown'">
+                          本轮没有规则或契约门槛；执行因{{ terminationLabel }}按硬失败判「未通过」。
+                        </template>
+                        <template v-else>本轮没有规则或契约门槛，无法据此判定。</template>
                       </p>
                     </div>
 
@@ -1155,7 +1198,11 @@ function copyConclusion(turn: TurnVM): void {
             <span class="k">pass</span>
             <span class="wm">
               <b>{{ passRuleBody }}</b>
-              <em>{{ model.gradingMode === 'ANSWER_CONTRACT' ? '四项闸门任一未命中即 false；质量分只作参考' : '规则 / 契约任一未命中即 false' }}</em>
+              <em>
+                {{ model.gradingMode === 'ANSWER_CONTRACT' ? '四项闸门任一未命中即 false；质量分只作参考' : '规则 / 契约任一未命中即 false' }}<template
+                  v-if="terminationLabel && model.gradingMode !== 'ANSWER_CONTRACT'"
+                >；本次执行终止于{{ terminationLabel }}，按硬失败否决 pass</template>
+              </em>
             </span>
           </div>
           <div class="jw crit">

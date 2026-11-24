@@ -73,6 +73,25 @@ const passLine = computed(() => props.model.passLine)
 const passLineSource = computed(() => PASS_LINE_SOURCE_LABEL[props.model.passLineSource])
 const finishReason = computed(() => finishReasonOf(props.turn?.turn))
 const multiTurn = computed(() => props.turns.length > 1)
+/** 终止类硬失败：后端 judge.py 对 MAX_TURNS_EXCEEDED / REPETITION_ABORT 直接否决 pass */
+const terminationLabel = computed(() => {
+  const term = String(props.detail?.termination_status ?? '')
+  const status = String(props.detail?.status ?? '')
+  if (term === 'REPETITION_ABORT' || status === 'REPETITION_ABORT') return '复读熔断'
+  if (term === 'MAX_TURNS_EXCEEDED' || term === 'MAX_TURNS' || status === 'MAX_TURNS_EXCEEDED') return '轮次超限'
+  return ''
+})
+/** 分数达线但本轮未通过：说清是终止熔断、真有失败门槛，还是后端没记录原因 */
+const overLineFailNote = computed(() => {
+  if (terminationLabel.value) return `分数已达标 · 执行因${terminationLabel.value}按硬失败判未通过`
+  const turn = props.turn
+  const gateFailed =
+    (turn?.rules ?? []).some((rule) => !rule.pass) ||
+    Boolean(turn?.contract && turn.contract.passed < turn.contract.total) ||
+    (turn?.factsScope === 'execution' &&
+      (turn?.facts ?? []).some((fact) => !fact.pass && fact.isGate))
+  return gateFailed ? '分数已达标 · 硬门槛未全过' : '分数已达标 · 执行记录判未通过（未记录未过的硬门槛）'
+})
 const hasSql = computed(() => Boolean(props.turn?.sql))
 /**
  * SQL 在两处：`turn_trace.generated_sql` 列与响应体 `body.data.generated_sql`。
@@ -579,7 +598,9 @@ const selfTriggerValue = computed(() => {
                 <template v-else-if="turn.score === null">
                   多轮执行未落库轮次级分数，本轮 pass 按已落库的硬门槛判定为「{{ turn.pass ? '通过' : '未通过' }}」，不参与分数比较。
                 </template>
-                <template v-else>pass = 硬门槛全过 且综合分 ≥ {{ passLine }}；本轮{{ turn.pass ? '满足。' : '不满足。' }}</template>
+                <template v-else>
+                  pass = 硬门槛全过 且综合分 ≥ {{ passLine }}<template v-if="terminationLabel">，且执行未因终止状态否决</template>；本轮{{ turn.pass ? '满足。' : '不满足。' }}
+                </template>
               </template>
               <template v-if="turn.score === null">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '执行级质量分不拆分到本轮，因此分数显示 —。' : '执行级总分不拆分到本轮，因此分数显示 —。' }}</template>
               <template v-if="sessionTags.length"> 会话级归因 {{ sessionTags.length }} 条只作上下文，不计入本轮 pass。</template>
@@ -718,7 +739,7 @@ const selfTriggerValue = computed(() => {
                     v-if="model.gradingMode !== 'ANSWER_CONTRACT' && !turn.pass && turn.score !== null && turn.score >= passLine"
                     class="flag"
                   >
-                    分数已达标 · 硬门槛未全过
+                    {{ overLineFailNote }}
                   </span>
                   <span v-if="turn.score === null && turn.verdict !== 'unknown'" class="flag">本轮无独立分 · pass 仅依据{{ model.gradingMode === 'ANSWER_CONTRACT' ? '契约闸门' : '硬门槛' }}</span>
                   <span v-else-if="turn.score === null" class="flag">本轮无独立分 · 数字为执行级{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '综合分' }}</span>
@@ -878,6 +899,7 @@ const selfTriggerValue = computed(() => {
               <template v-else>
                 <div class="kv"><span class="k">按分数 pass</span><span class="v">{{ turn.score === null ? '未提供轮次分' : turn.score >= passLine ? 'true' : 'false' }}</span></div>
                 <div class="kv"><span class="k">按硬门槛 pass</span><span class="v">{{ !turn.rules.length && !turn.contract ? '本轮无硬门槛' : turn.gateOk ? 'true' : 'false' }}</span></div>
+                <div v-if="terminationLabel" class="kv"><span class="k">按终止状态 pass</span><span class="v">false<em>{{ terminationLabel }} 属于终止类硬失败，直接否决</em></span></div>
               </template>
               <div class="kv"><span class="k">标签均在枚举内</span><span class="v">{{ tagsInEnum ? '是' : '否' }}</span></div>
             </div>
@@ -1267,9 +1289,13 @@ const selfTriggerValue = computed(() => {
                     </template>
                     <template v-else>
                       按分数 pass {{ turn.score === null ? '未提供轮次分' : turn.score >= passLine }} /
-                      <template v-if="!turn.rules.length && !turn.contract">本轮无硬门槛</template>
+                      <template v-if="terminationLabel && turn.verdict !== 'unknown'">执行因{{ terminationLabel }}按硬失败否决 pass</template>
+                      <template v-else-if="!turn.rules.length && !turn.contract">本轮无硬门槛</template>
                       <template v-else>按硬门槛 pass {{ turn.gateOk }}</template>
-                      <em v-if="!turn.rules.length && !turn.contract && turn.score === null">
+                      <em v-if="terminationLabel && turn.verdict !== 'unknown'">
+                        {{ terminationLabel }}属于终止类硬失败，分数与门槛都不能覆盖
+                      </em>
+                      <em v-else-if="!turn.rules.length && !turn.contract && turn.score === null">
                         本轮没有轮次级综合分，也没有已落库的硬门槛，因此不给出本轮 pass
                       </em>
                       <em v-else-if="turn.score === null">本轮没有轮次级综合分，pass 只按已落库的硬门槛判定</em>
@@ -1751,6 +1777,7 @@ const selfTriggerValue = computed(() => {
   overflow-wrap: anywhere;
 }
 .kv .v b { font-weight: 600; }
+.kv .v em { display: block; font-style: normal; font-size: 9px; color: #9ca3af; margin-top: 1px; }
 
 .dchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
 .dchips span {
