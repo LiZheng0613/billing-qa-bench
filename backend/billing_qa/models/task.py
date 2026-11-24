@@ -29,6 +29,9 @@ class BatchTask(Base, TimestampMixin):
         Index("ix_batch_task_status", "status"),
         Index("ix_batch_task_created", "created_at"),
         Index("ix_batch_task_next_run", "schedule_type", "next_run_at"),
+        # 周期计划的历次执行、派生统计与调度器派发前检查都按此列过滤
+        Index("ix_batch_task_schedule_source", "schedule_source_id"),
+        Index("ix_batch_task_env", "environment_id"),
         # 同一轮的上一轮只能派生一个下一轮，保证自愈/重试幂等
         Index(
             "ux_batch_task_round_prev",

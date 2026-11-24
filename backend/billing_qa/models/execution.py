@@ -28,6 +28,11 @@ class ExecutionRecord(Base):
         Index("ix_execution_case_started", "case_id", "started_at"),
         Index("ix_execution_task_status", "task_id", "status"),
         Index("ix_execution_trace_uid", "trace_uid", unique=True),
+        # 「每用例最新一次」（max(id) GROUP BY case_id）与单用例 top-1 的
+        # 覆盖索引：尾列 id 让聚合与 ORDER BY id DESC 走 index-only scan
+        Index("ix_execution_task_case", "task_id", "case_id", "id"),
+        # 大盘通过率 / 时延 / 趋势等全窗口聚合按时间窗过滤
+        Index("ix_execution_started", "started_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
