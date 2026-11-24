@@ -1084,7 +1084,7 @@ onBeforeUnmount(() => {
           <span>近 24h 通过率</span>
           <span
             v-if="passDelta !== null"
-            class="rounded-full border px-1.5 py-px text-[9.5px] font-semibold normal-case tracking-normal"
+            class="shrink-0 whitespace-nowrap rounded-full border px-1.5 py-px text-[9.5px] font-semibold normal-case tracking-normal"
             :class="
               passDelta >= 0
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -1919,7 +1919,7 @@ onBeforeUnmount(() => {
               <thead>
                 <tr>
                   <th class="th">执行环境</th>
-                  <th class="th w-[210px] max-[1240px]:!w-auto">正确率</th>
+                  <th class="th w-[224px] max-[1240px]:!w-auto">正确率</th>
                   <th class="th w-[230px] max-[1240px]:!w-auto max-[900px]:hidden">稳定性</th>
                   <th class="th w-[178px] max-[1240px]:hidden">效率</th>
                   <th class="th w-[152px] max-[900px]:hidden">用例覆盖</th>
@@ -1982,7 +1982,7 @@ onBeforeUnmount(() => {
                         </span>
                         <span
                           v-if="envDelta(env) !== null"
-                          class="rounded-full border px-1.5 py-px text-[9px] font-semibold tabular-nums"
+                          class="shrink-0 whitespace-nowrap rounded-full border px-1.5 py-px text-[9px] font-semibold tabular-nums"
                           :class="
                             envDeltaValue(env) >= 0
                               ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
