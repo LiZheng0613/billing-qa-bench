@@ -425,7 +425,9 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
           ? '整通执行按落库判定展示，不据分数定档。'
           : contractMode
             ? '契约闸门全部通过，执行级判定为「通过」；质量分只作参考。'
-            : '硬门槛全部通过，按总分定档。',
+            : turns.value.some(hasFailedGate)
+              ? '执行级按落库判定为「通过」；列出的未过门槛属于轮次级，只影响该轮结论，不改变执行级结果。'
+              : '硬门槛全部通过，按总分定档。',
   })
   return parts
 })
@@ -819,10 +821,16 @@ function copyConclusion(turn: TurnVM): void {
     <!-- ===== 未通过门槛 ===== -->
     <div v-if="gates.length" class="jfails">
       <div class="jf-h">
-        <b>未通过门槛</b>
+        <b>{{ execPassed === true ? '未通过门槛（轮次级）' : '未通过门槛' }}</b>
         <span class="n">{{ gates.length }} 项</span>
         <span class="sp" />
-        <span class="tip">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '契约闸门未全过，质量分再高也判「未通过」' : '硬门槛不过，总分再高也判「未通过」' }}</span>
+        <span class="tip">{{
+          execPassed === true
+            ? '这些是轮次级未过项，只影响对应轮次结论；执行级已按落库判定为「通过」'
+            : model.gradingMode === 'ANSWER_CONTRACT'
+              ? '契约闸门未全过，质量分再高也判「未通过」'
+              : '硬门槛不过，总分再高也判「未通过」'
+        }}</span>
       </div>
       <div class="jf-grid">
         <button
