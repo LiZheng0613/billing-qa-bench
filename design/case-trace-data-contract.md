@@ -847,7 +847,14 @@ mock 新增通过用例执行 **#6581**（BILL-FEE-0422 · 2 轮全通过 · sel
 - **注释里的过时条数**：`JudgePanel.vue` 原注释写「当前库 1226 条」，实际 `grading_mode='RUBRIC'` 为 1214 条且会随执行增加变化，注释不适合固化条数，已删去具体数字。
 - **验证**：mock `900005` 结论为「本轮通过：质量分 94.0 / 100；契约闸门全部通过，质量分只作参考。」，真实 `14917` 保持「本轮部分命中：质量分 94.0 / 100；质量分不参与契约模式的 pass…」，LEGACY `900003` 仍为「本轮部分命中：总分 82.0 / 100；达线但硬门槛未全过…」；全页无 `NaN` / `undefined` / `[object Object]`。`npm run typecheck` / `npm run build`（12.10s）通过。
 
+### 12.26 终止类硬失败（REPETITION_ABORT / MAX_TURNS_EXCEEDED）不得写成「硬门槛未全过」（2026-11-24）
 
-
-
-
+- **后端口径**：`backend/billing_qa/services/engine/judge.py:313-318` 对 `REPETITION_ABORT` / `MAX_TURNS_EXCEEDED` 直接强制 `passed=False`，这是执行终止状态带来的否决，与规则 / 契约闸门无关；`judge_result.pass` 与 `execution_record.pass_flag` 都会落成 `false`，但 `total_score` 与裁判理由可以全为正面。
+- **两个字段都要看**：`execution_record.termination_status` 与 `status` 并非一一对应——`MAX_TURNS_EXCEEDED` 有 15 条写 `MAX_TURNS_EXCEEDED`、37 条写 `MAX_TURNS`；`REPETITION_ABORT` 有 2 条写 `REPETITION_ABORT`、8 条写 `GIVE_UP`。只用 `termination_status ?? status` 取值会让后两类漏判，因此 `terminationLabel` 同时匹配：`REPETITION_ABORT`（任一字段）→「复读熔断」，`MAX_TURNS_EXCEEDED` / `MAX_TURNS`（任一字段）→「轮次超限」。
+- **发现的矛盾**：真实 `14876` / `14935`（LEGACY、单轮、`REPETITION_ABORT`）总分 94.0 ≥ 阈值 60、`rule_check` 0/0、`judge_result.reason` 正面，判定页却写「达线但硬门槛未全过」；门槛检查空态与抽屉「分数已达标」flag 同样把原因归到门槛，等于让页面解释一个并不存在的门槛失败。
+- **判分页（`JudgePanel.vue`）**：新增 `terminationLabel`（`REPETITION_ABORT` →「复读熔断」，`MAX_TURNS_EXCEEDED` / `MAX_TURNS` →「轮次超限」）与 `hasFailedGate`；`passRuleBody` 仅在终止执行时补「，且执行未因终止状态否决」；单轮 `warn` 分支、多轮 `execPassed=false` 分支、`verdictTitle` 都改成三态——终止执行写「执行因…按硬失败判『未通过』」，有失败门槛仍写「硬门槛未全过」，两者都没有则写「未记录…页面不推断」；判定口径 `em` 补「本次执行终止于{{终止}}，按硬失败否决 pass」（契约模式不追加，闸门口径已覆盖）。
+- **门槛检查空态只分两态**：右栏只陈列门槛事实，终止执行写「本轮没有规则或契约门槛；执行因…按硬失败判『未通过』。」，其余仍写「本轮没有规则或契约门槛，无法据此判定。」，不在门槛栏解释门槛以外的原因。
+- **抽屉（`TurnDrawer.vue`）**：新增 `terminationLabel` / `overLineFailNote`；`sec=turn` 的 pass 公式补「，且执行未因终止状态否决」；分数达标 flag 由「分数已达标 · 硬门槛未全过」改为「分数已达标 · 执行因复读熔断按硬失败判未通过」；`裁决返回校验` 增加「按终止状态 pass false」行，并在「证据 · 流程裁决 · 校验」写「按分数 pass true / 执行因复读熔断按硬失败否决 pass」+「分数与门槛都不能覆盖」。
+- **RUBRIC 分支不再把终止原因说成未保存**：`16081`（RUBRIC、12 轮、总分 61.7 ≥ 快照阈值 60、`status=MAX_TURNS_EXCEEDED`）原写「没有保存当时的判定依据（规则 / 终止原因）」，但 `termination_status` 就在记录里。现终止执行改写「落库总分不低于该执行快照的阈值 60；本次执行以轮次超限结束，后端按终止类硬失败否决 pass，规则明细未留存。」；`16143`（RUBRIC、总分 64.1 ≥ 阈值、非终止）仍保留「判定依据（规则）未保存」的原句。
+- **未知轮次不套终止措辞**：`turn.verdict === 'unknown'` 的轮次（如真实 `14875` 三档全未判定）仍按「无法据此判定」展示，终止否决只落在有明确结论的轮次 / 执行级，避免把「没判」说成「判了未通过」。
+- **验证**：真实 `5173` `14876` 判分页为「本轮部分命中：总分 94.0 / 100；达线，但执行因复读熔断按硬失败判『未通过』。」+ 门槛检查「本轮没有规则或契约门槛；执行因复读熔断按硬失败判『未通过』。」，抽屉「本轮」段公式为「pass = 硬门槛全过 且综合分 ≥ 60，且执行未因终止状态否决；本轮不满足。」、判定段「分数已达标 · 执行因复读熔断按硬失败判未通过」「按终止状态 pass false」，证据校验行同上；`14875`（`MAX_TURNS_EXCEEDED`）判定口径写「本次执行终止于轮次超限」；`16081` 走新的终止说明、`14944`（RUBRIC 总分 53.4 低于阈值）只陈述分数与结论、`16143` 保留规则未保存句；`14898`（真有失败门槛）仍写「达线但硬门槛未全过」，mock `900003` / `900001` / `900006` / `900009` 无回归；全页无 `NaN` / `undefined` / `[object Object]`。`npm run typecheck` / `npm run build`（7.95s / 8.03s）通过。
