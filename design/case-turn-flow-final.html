@@ -2399,10 +2399,12 @@
     }).join('');
 
     const weak = sel.dims.filter(d => d[1] / d[2] < 0.8).map(d => d[0] + ' ' + d[1] + '/' + d[2]);
+    // 单轮结论跟轮次状态走：总分达线但硬门槛未过是「部分命中」，不能写成「未通过」
+    const selWarn = !sel.pass && sel.judge >= PASS_LINE;
     const concl = ts.length === 1
-      ? '本轮' + (sel.pass ? '通过' : '未通过') + '：总分 <b>' + sel.judge + ' / 100</b>' +
+      ? '本轮' + (sel.pass ? '通过' : selWarn ? '部分命中' : '未通过') + '：总分 <b>' + sel.judge + ' / 100</b>' +
         (weak.length ? '；' + weak.join('、') + ' 低于 80%' : '') + '。' +
-        (sel.pass ? '硬门槛与总分均达标。' : 'pass 需硬门槛全过 且 总分 ≥ ' + PASS_LINE + '。')
+        (sel.pass ? '硬门槛与总分均达标。' : selWarn ? '总分达线，但硬门槛未全过，pass 需硬门槛全过 且 总分 ≥ ' + PASS_LINE + '。' : 'pass 需硬门槛全过 且 总分 ≥ ' + PASS_LINE + '。')
       : '共 ' + ts.length + ' 轮，' + passCnt + ' 轮通过，总分 <b>' + overall.toFixed(1) + ' / 100</b>。' +
         '最低项为 <b>T' + low.i + ' ' + low.judge + ' 分</b>' +
         ((low.tags.length) ? '（' + low.tags.join('、') + '）' : '') + '；' +
