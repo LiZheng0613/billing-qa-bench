@@ -240,9 +240,14 @@ const scoreKpi = computed(() => {
       hint: sortScore ? `仅参考 · 排序分 ${sortScore} · 四项闸门决定 pass` : '仅参考 · 四项闸门决定 pass',
     }
   }
-  if (mode === 'RUBRIC') return { label: '综合评分', hint: '旧评分模式（RUBRIC）执行级综合分' }
+  if (mode === 'RUBRIC') {
+    return judgeScore.value === null
+      ? { label: '综合评分', hint: '旧评分模式（RUBRIC）；本次执行未留存综合分' }
+      : { label: '综合评分', hint: '旧评分模式（RUBRIC）执行级综合分' }
+  }
   const raw = props.detail?.judge_result
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    if (judgeScore.value === null) return { label: '综合评分', hint: '有裁判记录，但本次执行未留存评分' }
     return { label: '裁判综合分', hint: 'LLM 裁判综合评分' }
   }
   // 异常 / 终止执行可能在裁判前就落库，没有 judge_result 时不能把空槽说成 LLM 评分
@@ -757,7 +762,7 @@ async function copyTraceUid(): Promise<void> {
               </p>
               <p class="text-lg font-semibold tabular-nums text-indigo-600">
                 {{ formatScore(judgeScore) }}
-                <span class="text-xs font-normal text-slate-500">/ 100</span>
+                <span v-if="judgeScore !== null" class="text-xs font-normal text-slate-500">/ 100</span>
               </p>
               <p class="truncate text-[10px] text-slate-500" :title="scoreKpi.hint">
                 {{ scoreKpi.hint }}
