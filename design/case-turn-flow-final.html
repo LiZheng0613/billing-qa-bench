@@ -55,6 +55,7 @@
   .stat .si.green{background:var(--green-soft);color:var(--green)}
   .stat .si.brand{background:var(--brand-soft);color:var(--brand)}
   .stat .si.amber{background:var(--amber-soft);color:var(--amber)}
+  .stat .si.rose{background:var(--rose-soft);color:var(--rose)}
   .stat .si.slate{background:#f1f5f9;color:#475569}
   .stat .sv{font-size:15px;font-weight:600;letter-spacing:-.01em;line-height:1.15}
   .stat .sv small{font-size:10px;font-weight:500;color:var(--muted);margin-left:2px}
@@ -2147,13 +2148,18 @@
     if (!sc || !tn) return;
     const overall = ts.reduce((s, t) => s + t.judge, 0) / ts.length;
     const pass = ts.filter(t => t.pass).length;
+    const turnVerdict = ts.length === 1
+      ? (ts[0].judge >= PASS_LINE ? '部分命中' : '未通过')
+      : (pass === 0 ? '未通过' : '部分通过');
     sc.innerHTML = overall.toFixed(1) + ' <small>/ 100</small>';
-    tn.innerHTML = (pass === ts.length ? '通过' : ts.length === 1 ? '未通过' : '部分通过') + ' <small>/ ' + ts.length + ' 轮</small>';
+    tn.innerHTML = (pass === ts.length ? '通过' : turnVerdict) + ' <small>/ ' + ts.length + ' 轮</small>';
     if (sub) sub.textContent = pass + ' 轮达标 · ' + (ts.length - pass) + ' 轮待改进';
     const ic = document.getElementById('kpiTurnsIcon');
     if (ic) {
-      ic.className = 'si ' + (pass === ts.length ? 'green' : 'amber');
-      ic.innerHTML = '<svg class="ic"><use href="#i-' + (pass === ts.length ? 'check' : 'alert') + '"/></svg>';
+      const tone = pass === ts.length ? 'green' : turnVerdict === '未通过' ? 'rose' : 'amber';
+      const icon = pass === ts.length ? 'check' : turnVerdict === '未通过' ? 'x' : 'alert';
+      ic.className = 'si ' + tone;
+      ic.innerHTML = '<svg class="ic"><use href="#i-' + icon + '"/></svg>';
     }
   }
 
@@ -2339,7 +2345,7 @@
     const cTotal = ts.reduce((n,t) => n + ct(t)[1], 0);
     const passCnt = ts.filter(t => t.pass).length;
     const allPass = passCnt === ts.length;
-    const verdict = allPass ? (overall >= 90 ? '优秀' : '通过') : (ts.length === 1 ? (ts[0].judge >= PASS_LINE ? '部分命中' : '未通过') : '部分通过');
+    const verdict = allPass ? (overall >= 90 ? '优秀' : '通过') : (ts.length === 1 ? (ts[0].judge >= PASS_LINE ? '部分命中' : '未通过') : (passCnt === 0 ? '未通过' : '部分通过'));
     const sessTotal = ts.reduce((n,t) => n + t.sessTags.length, 0);
     const tagTotal = ts.reduce((n,t) => n + t.tags.length, 0) + sessTotal;
     const low = ts.reduce((a, t) => t.judge < a.judge ? t : a, ts[0]);
@@ -2400,7 +2406,7 @@
       : '共 ' + ts.length + ' 轮，' + passCnt + ' 轮通过，总分 <b>' + overall.toFixed(1) + ' / 100</b>。' +
         '最低项为 <b>T' + low.i + ' ' + low.judge + ' 分</b>' +
         ((low.tags.length) ? '（' + low.tags.join('、') + '）' : '') + '；' +
-        (allPass ? '硬门槛全部通过，按总分定档。' : '硬门槛未全部通过，结论为「部分通过」。');
+        (allPass ? '硬门槛全部通过，按总分定档。' : '硬门槛未全部通过，结论为「' + verdict + '」。');
 
     const gates = [];
     ts.forEach(t => t.rules.forEach(r => {
@@ -3144,7 +3150,7 @@
             dstat('归因总数', ss.tagCount + ' 条', ss.tagCount > 0) +
           '</div>' +
           '<div class="dkv" style="margin-top:8px">' +
-            kv('判定结论', ss.pass === turns.length ? '通过' : '部分通过') +
+            kv('判定结论', ss.pass === turns.length ? '通过' : ss.pass === 0 ? '未通过' : '部分通过') +
             kv('总分', ss.total + ' / ' + (turns.length * 100)) +
             kv('四维均分', ss.dims.join(' / ')) +
             kv('会话 ID', 'sess_9f2c8a71d4e6b3') +
