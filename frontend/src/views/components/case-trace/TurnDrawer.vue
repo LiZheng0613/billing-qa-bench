@@ -460,7 +460,7 @@ const selfTriggerValue = computed(() => {
             </div>
             <div class="dsub">
               <template v-if="model.gradingMode === 'ANSWER_CONTRACT'">
-                pass = 契约门槛全过 且契约分达标；当前契约事实 {{ contractStat.text }}<template
+                pass = 安全 / 行为 / 事实 / 附加 四项契约闸门全过；当前契约事实 {{ contractStat.text }}<template
                   v-if="contractStat.text === '—'"
                 >（执行记录未提供事实明细）</template><template v-else>（{{ contractStat.warn ? '未全过' : '全过' }}）</template>，质量分仅参考，不参与本轮 pass。
               </template>
@@ -577,7 +577,7 @@ const selfTriggerValue = computed(() => {
                   {{ verdict.label }}
                 </span>
                 <span class="djv-score">
-                  <b>{{ fmtScore(turn.score ?? model.totalScore) }}</b><em>/ 100</em>
+                  <b>{{ fmtScore(turn.score ?? model.totalScore) }}</b><em v-if="(turn.score ?? model.totalScore) !== null">/ 100</em>
                   <i>{{
                     turn.score !== null
                       ? model.gradingMode === 'ANSWER_CONTRACT'
@@ -1097,8 +1097,14 @@ const selfTriggerValue = computed(() => {
                 <div class="ln">
                   <span class="k">校验</span>
                   <span class="v">
-                    按分数 pass {{ turn.score !== null && turn.score >= passLine }} / 按硬门槛 pass {{ turn.gateOk }}
-                    <em>pass = 硬门槛全过 且综合分 ≥ {{ passLine }}，两者不一致时以硬门槛为准</em>
+                    <template v-if="model.gradingMode === 'ANSWER_CONTRACT'">
+                      本轮 pass {{ turn.verdict === 'unknown' ? '—' : turn.pass }} · 质量分 {{ fmtScore(turn.score) }}（仅参考）
+                      <em>契约模式的 pass 只看四项闸门与终止状态，质量分高低不改变 pass</em>
+                    </template>
+                    <template v-else>
+                      按分数 pass {{ turn.score !== null && turn.score >= passLine }} / 按硬门槛 pass {{ turn.gateOk }}
+                      <em>pass = 硬门槛全过 且综合分 ≥ {{ passLine }}，两者不一致时以硬门槛为准</em>
+                    </template>
                   </span>
                 </div>
               </div>
@@ -1228,7 +1234,7 @@ const selfTriggerValue = computed(() => {
             <div class="dgrid">
               <div class="dstat">
                 <div class="dl">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分参考' : '执行级综合分' }}</div>
-                <div class="dv">{{ fmtScore(model.judges.length ? model.judges[0].total_score : sessionAvg) }}<small v-if="sessionAvg !== null"> / 100</small></div>
+                <div class="dv">{{ fmtScore(model.judges.length ? model.judges[0].total_score : sessionAvg) }}<small v-if="(model.judges.length ? model.judges[0].total_score : sessionAvg) !== null"> / 100</small></div>
               </div>
               <div class="dstat" :class="{ warn: model.session.passCount < turns.length }">
                 <div class="dl">通过</div>
@@ -1244,12 +1250,12 @@ const selfTriggerValue = computed(() => {
               </div>
             </div>
             <div class="dkv" style="margin-top: 8px">
-              <div class="kv"><span class="k">判定口径</span><span class="v">{{ sessionVerdictLabel }}</span></div>
-              <div class="kv"><span class="k">总分</span><span class="v">{{ sessionScoreTotal || '—' }}</span></div>
+              <div class="kv"><span class="k">执行级结论</span><span class="v">{{ sessionVerdictLabel }}</span></div>
+              <div class="kv"><span class="k">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分合计' : '总分' }}</span><span class="v">{{ sessionScoreTotal || '—' }}</span></div>
               <div class="kv"><span class="k">四维均分</span><span class="v">{{ sessionDimText || '—' }}</span></div>
               <div class="kv"><span class="k">会话 ID</span><span class="v">{{ model.session.sessionIds.length ? model.session.sessionIds.join(' / ') : '未记录' }}</span></div>
               <div class="kv"><span class="k">会话一致性</span><span class="v">{{ model.session.consistentSession ? '同一会话' : '多会话（逐轮新会话）' }}</span></div>
-              <div class="kv"><span class="k">pass 阈值</span><span class="v">{{ passLine }} · {{ passLineSource }}</span></div>
+              <div class="kv"><span class="k">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分参考线' : 'pass 阈值' }}</span><span class="v">{{ passLine }} · {{ passLineSource }}</span></div>
             </div>
             <div v-if="sessionTagsAll.length" class="jtagrow" style="margin-top: 8px">
               <span class="jscope" :title="SCOPE_META.session.hint">会话级归因</span>
@@ -1280,7 +1286,7 @@ const selfTriggerValue = computed(() => {
               <div class="kv"><span class="k">结束时间</span><span class="v">{{ detail?.finished_at ? detail.finished_at.replace('T', ' ').slice(0, 19) : '—' }}</span></div>
               <div class="kv"><span class="k">模型</span><span class="v">{{ agentModelLabel || '执行记录未保存' }}</span></div>
               <div class="kv"><span class="k">裁判模型</span><span class="v">{{ judgeModel }}</span></div>
-              <div class="kv"><span class="k">pass 阈值</span><span class="v">{{ passLine }} · {{ passLineSource }}</span></div>
+              <div class="kv"><span class="k">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分参考线' : 'pass 阈值' }}</span><span class="v">{{ passLine }} · {{ passLineSource }}</span></div>
             </div>
           </section>
 

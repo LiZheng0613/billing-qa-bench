@@ -223,8 +223,23 @@ const judgeScore = computed<number | null>(() => {
 // 页头综合分口径：RUBRIC 历史执行只落库 total_score，没有裁判 JSON，
 // 不能沿用「LLM 裁判综合评分」这种把来源说死的话术。
 const scoreKpi = computed(() => {
-  const mode = props.detail?.grading_mode
-  if (mode === 'ANSWER_CONTRACT') return { label: '排序分', hint: '质量分参考' }
+  const detail = props.detail
+  const mode = detail?.grading_mode
+  if (mode === 'ANSWER_CONTRACT') {
+    // 大数字是 judge_result.quality.total_score（质量分），不是 ExecutionRecord.total_score
+    // （契约评分卡总分，任务列表按它排序），两者在 900005/900006 上分别是 94 与 100/70。
+    const quality = (detail?.judge_result as Record<string, unknown> | null)?.quality as
+      | Record<string, unknown>
+      | undefined
+    if (typeof quality?.total_score !== 'number') {
+      return { label: '契约排序分', hint: '评分卡总分；本次执行未留存质量分' }
+    }
+    const sortScore = typeof detail?.total_score === 'number' ? formatScore(detail.total_score) : null
+    return {
+      label: '质量分参考',
+      hint: sortScore ? `仅参考 · 排序分 ${sortScore} · 四项闸门决定 pass` : '仅参考 · 四项闸门决定 pass',
+    }
+  }
   if (mode === 'RUBRIC') return { label: '综合评分', hint: '旧评分模式（RUBRIC）执行级综合分' }
   const raw = props.detail?.judge_result
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -744,7 +759,7 @@ async function copyTraceUid(): Promise<void> {
                 {{ formatScore(judgeScore) }}
                 <span class="text-xs font-normal text-slate-500">/ 100</span>
               </p>
-              <p class="truncate text-[10px] text-slate-500">
+              <p class="truncate text-[10px] text-slate-500" :title="scoreKpi.hint">
                 {{ scoreKpi.hint }}
               </p>
             </div>
@@ -1101,11 +1116,16 @@ async function copyTraceUid(): Promise<void> {
                   <span class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">规则 {{ ruleChecks.length }} 条</span>
                   <span class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">facts {{ contractFacts.length }}</span>
                   <span class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">契约闸门 {{ contractGates.length }}</span>
-                  <span class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600" :title="`来源：${PASS_LINE_SOURCE_LABEL[model.passLineSource]}`">pass 阈值 {{ model.passLine }}（{{ PASS_LINE_SOURCE_LABEL[model.passLineSource] }}）</span>
+                  <span
+                    class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600"
+                    :title="detail.grading_mode === 'ANSWER_CONTRACT'
+                      ? `来源：${PASS_LINE_SOURCE_LABEL[model.passLineSource]}；契约模式 pass 只看四项闸门，该阈值仅作质量分参考`
+                      : `来源：${PASS_LINE_SOURCE_LABEL[model.passLineSource]}`"
+                  >{{ detail.grading_mode === 'ANSWER_CONTRACT' ? '质量分参考线' : 'pass 阈值' }} {{ model.passLine }}（{{ PASS_LINE_SOURCE_LABEL[model.passLineSource] }}）</span>
                 </div>
                 <p class="mt-2 text-[10px] leading-relaxed text-slate-500">
                   {{ detail.grading_mode === 'ANSWER_CONTRACT'
-                    ? '契约模式：最终答案正确性优先，工具调用轨迹仅用于失败诊断。'
+                    ? '契约模式：最终答案正确性优先，pass 由四项契约闸门与终止状态决定，质量分仅作参考；工具调用轨迹仅用于失败诊断。'
                     : detail.grading_mode === 'RUBRIC'
                       ? '旧评分模式（RUBRIC）：规则 + LLM 评分，落库时只保留执行级综合分与最终结论，没有逐轮四维与裁判理由。'
                       : 'LEGACY 模式：规则 + LLM 裁判四维加权，硬门槛与总分同时满足才通过。' }}

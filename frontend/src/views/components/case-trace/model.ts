@@ -785,7 +785,7 @@ export function scoreLabel(mode: string): { label: string; hint: string } {
   if (mode === 'ANSWER_CONTRACT') {
     return {
       label: '质量分参考',
-      hint: '契约模式四维裁判质量分（仅参考，不参与通过判定）；通过与否由契约门槛与契约分决定',
+      hint: '契约模式四维裁判质量分（仅参考，不参与通过判定）；通过与否只由契约闸门与终止状态决定',
     }
   }
   return { label: 'LLM 裁判综合评分', hint: '裁判四维加权总分；达到本次执行的通过线且硬门槛全过才算通过' }

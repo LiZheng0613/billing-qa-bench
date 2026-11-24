@@ -35,6 +35,22 @@ const emit = defineEmits<{
 
 const turns = computed(() => props.model.turns)
 const passLine = computed(() => props.model.passLine)
+/** 两种模式的 pass 口径不同：契约只看闸门（answer_grader.passed = all(gates)），质量分不参与 */
+const passRuleBody = computed(() =>
+  props.model.gradingMode === 'ANSWER_CONTRACT'
+    ? '安全 / 行为 / 事实 / 附加 四项契约闸门全过；质量分仅参考，不参与 pass'
+    : `硬门槛全过 且 total_score ≥ ${passLine.value}`,
+)
+const passRule = computed(() => `pass = ${passRuleBody.value}`)
+/** 主分在契约模式下是四维质量分，不是契约排序分 / 执行级总分；列名与提示必须跟着走 */
+const scoreHeading = computed(() =>
+  props.model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '总分',
+)
+const scoreHeadingHint = computed(() =>
+  props.model.gradingMode === 'ANSWER_CONTRACT'
+    ? '契约模式下此列是四维质量分，仅作参考，不参与 pass'
+    : '本轮综合分（维度分加总）；pass 还需硬门槛全过',
+)
 const scored = computed(() => turns.value.filter((turn) => turn.score !== null))
 const perTurnDims = computed(() => turns.value.length > 0 && turns.value.every((turn) => turn.dimensions.length === 4))
 
@@ -52,13 +68,18 @@ const unknownCount = computed(() => turns.value.filter((turn) => turn.verdict ==
 const allUnknown = computed(() => turns.value.length > 0 && unknownCount.value === turns.value.length)
 
 /**
- * 执行级结论：`pass_flag` 是后端按「硬门槛全过 + 综合分 ≥ 阈值」算出的权威值。
+ * 执行级结论：`pass_flag` 是后端算出的权威值 —— LEGACY / RUBRIC 按「硬门槛全过 + 综合分 ≥ 阈值」，
+ * ANSWER_CONTRACT 只看四项契约闸门（executor: passed = grading.passed，质量分不参与）。
  * 多轮执行里，没有轮次级规则/判分的中间轮会落「未判定」，若按「每轮都通过」口径
  * 汇总就会把已通过的整通执行说成「部分通过」，和页头状态、门槛流程条自相矛盾
  * （900002 / 900007 就是这种形态）。轮次的混合结论只在「轮次结论」卡与矩阵里呈现。
  */
 const execPassed = computed<boolean | null>(() => {
   if (typeof props.detail.pass_flag === 'boolean') return props.detail.pass_flag
+  if (props.model.gradingMode === 'ANSWER_CONTRACT' && props.model.contract.exists) {
+    // pass_flag 缺失时，契约模式按闸门全过推断，不拿质量分与阈值兜底
+    return props.model.contract.gates.every((gate) => gate.passed)
+  }
   if (overall.value === null || passLine.value === null) return null
   return overall.value >= passLine.value
 })
@@ -197,6 +218,10 @@ const turnsUsed = computed(() => {
 
 const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() => {
   const total = turns.value.length
+  const contractMode = props.model.gradingMode === 'ANSWER_CONTRACT'
+  // 契约模式的 pass 只看闸门（backend answer_grader：passed = all(gates)），
+  // 界面主分是四维质量分，不能把它写成「总分达线即通过」。
+  const scoreNoun = contractMode ? '质量分' : '总分'
   if (!total) {
     const used = turnsUsed.value
     // 没有轮次也没有分数：异常 / 终止执行落库时 pass_flag 会被后端写成 false，
@@ -247,14 +272,28 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     const weak = turn.dimensions
       .filter((dim) => dim.value / dim.max < 0.8)
       .map((dim) => `${dim.label} ${dim.value}/${dim.max}`)
+    const verdictText =
+      turn.verdict === 'pass' ? '本轮通过' : turn.verdict === 'warn' ? '本轮部分命中' : '本轮未通过'
+    if (overall.value === null) {
+      // 单轮也可能没有分（执行异常 / 裁判未产出）：不拼「总分 — / 100」，避免读成 0 分
+      return [
+        { text: verdictText },
+        { text: `：执行记录未留存${contractMode ? '质量分' : '综合分'}，结论按落库的判定结果展示，不引用分数比较。` },
+      ]
+    }
     // 单轮结论跟轮次 verdict 走：82 分但规则未过是「部分命中」，不是「未通过」
     const parts: Array<{ text: string; strong?: boolean }> = [
-      { text: turn.verdict === 'pass' ? '本轮通过' : turn.verdict === 'warn' ? '本轮部分命中' : '本轮未通过' },
-      { text: '：总分 ' },
+      { text: verdictText },
+      { text: `：${scoreNoun} ` },
       { text: `${overallText} / 100`, strong: true },
     ]
     if (turn.verdict === 'warn') {
-      parts.push({ text: '；达线但硬门槛未全过' })
+      if (contractMode) {
+        // 契约模式的分数只是质量参考，未过线与否都不影响 pass
+        parts.push({ text: '；质量分不参与契约模式的 pass，执行级判定为「未通过」（契约闸门未全过或终止状态否决）' })
+      } else {
+        parts.push({ text: '；达线但硬门槛未全过' })
+      }
       if (weak.length) parts.push({ text: `，${weak.join('、')} 低于 80%` })
       parts.push({ text: '。' })
     } else if (weak.length) {
@@ -267,6 +306,17 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
   if (allUnknown.value) {
     const execVerdict =
       execPassed.value === true ? '通过' : execPassed.value === false ? '未通过' : null
+    if (overall.value === null) {
+      // 有轮次但没有执行级分（异常 / 裁判未产出）：不拼「执行级综合分 — / 100」
+      return [
+        { text: `共 ${total} 轮，后端未提供轮次级分数与硬门槛，无法判定逐轮结论；执行记录也没有留存${contractMode ? '质量分' : '执行级综合分'}。` },
+        {
+          text: execVerdict
+            ? `整通执行按记录判「${execVerdict}」。`
+            : '不据此推断整通执行通过。',
+        },
+      ]
+    }
     return [
       { text: `共 ${total} 轮，后端未提供轮次级分数与硬门槛，无法判定逐轮结论；执行级综合分 ` },
       { text: `${overallText} / 100`, strong: true },
@@ -278,10 +328,15 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     ]
   }
   const parts: Array<{ text: string; strong?: boolean }> = [
-    { text: `共 ${total} 轮，${passCount.value} 轮通过，总分 ` },
-    { text: `${overallText} / 100`, strong: true },
-    { text: '。' },
+    { text: `共 ${total} 轮，${passCount.value} 轮通过，` },
   ]
+  if (overall.value === null) {
+    // 没有执行级分时写清缺失，而不是让读者看到「总分 — / 100」
+    parts.push({ text: contractMode ? '执行记录未留存质量分' : '执行记录未留存执行级综合分' })
+  } else {
+    parts.push({ text: `${scoreNoun} ` }, { text: `${overallText} / 100`, strong: true })
+  }
+  parts.push({ text: '。' })
   if (lowest.value) {
     const low = lowest.value
     // 会话级归因不归属某一轮：最低项只说该轮自己的轮次级归因
@@ -297,8 +352,14 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
   parts.push({
     text:
       execPassed.value === false
-        ? '硬门槛未全部通过，结论为「未通过」。'
-        : '硬门槛全部通过，按总分定档。',
+        ? contractMode
+          ? '执行级按落库判定记为「未通过」；契约闸门未全过或终止状态否决。'
+          : '硬门槛未全部通过，结论为「未通过」。'
+        : overall.value === null
+          ? '整通执行按落库判定展示，不据分数定档。'
+          : contractMode
+            ? '契约闸门全部通过，执行级判定为「通过」；质量分只作参考。'
+            : '硬门槛全部通过，按总分定档。',
   })
   return parts
 })
@@ -511,6 +572,23 @@ function dimPercent(value: number | null, max: number): number {
   return Math.min(100, Math.max(0, (value / max) * 100))
 }
 
+function verdictTitle(turn: TurnVM): string {
+  if (turn.verdict === 'unknown') return '未判定：缺少轮次级门槛与分数'
+  if (props.model.gradingMode === 'ANSWER_CONTRACT') {
+    // 契约模式的 pass 只看闸门与终止状态，质量分再高也不会把未通过读成通过
+    return turn.verdict === 'pass'
+      ? '通过：执行级判定为通过（契约模式由闸门与终止状态决定）'
+      : turn.verdict === 'warn'
+        ? '部分命中：质量分不参与 pass，执行级判定为未通过'
+        : '未通过：执行级判定为未通过（契约模式由闸门与终止状态决定）'
+  }
+  return turn.verdict === 'pass'
+    ? `通过：硬门槛全过且总分 ≥ ${passLine.value}`
+    : turn.verdict === 'warn'
+      ? '部分命中：总分达线，硬门槛未全过'
+      : `未通过：总分未达 ${passLine.value} 或硬门槛未过`
+}
+
 function conclusionText(turn: TurnVM): string {
   const gate = turn.contract
     ? `规则 ${turn.rules.filter((rule) => rule.pass).length}/${turn.rules.length} · 契约 ${turn.contract.passed}/${turn.contract.total}`
@@ -518,7 +596,9 @@ function conclusionText(turn: TurnVM): string {
   const reason = turn.judgeReason
     || (props.model.turns.length > 1 && turn.sessionJudgeReason ? `（会话级，不归属本轮）${turn.sessionJudgeReason}` : '')
     || '后端未提供本轮裁判理由。'
-  return `T${turn.index} 结论：${VERDICT_META[turn.verdict].label}\n得分：${turn.score ?? '—'} / 100\n硬门槛：${gate}\n${reason}`
+  const scoreText =
+    turn.score === null ? '执行记录未留存轮次级分数' : `${turn.score} / 100`
+  return `T${turn.index} 结论：${VERDICT_META[turn.verdict].label}\n得分：${scoreText}\n硬门槛：${gate}\n${reason}`
 }
 
 function copyConclusion(turn: TurnVM): void {
@@ -537,7 +617,7 @@ function copyConclusion(turn: TurnVM): void {
         </span>
         <div class="row">
           <span class="sc">{{ overall === null ? '—' : overall.toFixed(1) }}</span>
-          <span class="u">/ 100</span>
+          <span v-if="overall !== null" class="u">/ 100</span>
         </div>
       </div>
 
@@ -618,7 +698,7 @@ function copyConclusion(turn: TurnVM): void {
               <b>{{ hasTurnContract ? `${contractPassed}/${contractTotal}` : '—' }}</b>
             </span>
             <span class="arr">→</span>
-            <span class="g">总分 <b>{{ overall === null ? '—' : overall.toFixed(1) }}</b> / 100</span>
+            <span class="g">{{ scoreHeading }} <b>{{ overall === null ? '未留存' : overall.toFixed(1) }}</b><template v-if="overall !== null"> / 100</template><template v-if="model.gradingMode === 'ANSWER_CONTRACT'">（参考）</template></span>
             <span class="arr">→</span>
             <span class="g res" :class="verdictTone">{{ verdictLabel }}</span>
           </div>
@@ -649,7 +729,7 @@ function copyConclusion(turn: TurnVM): void {
         <b>未通过门槛</b>
         <span class="n">{{ gates.length }} 项</span>
         <span class="sp" />
-        <span class="tip">硬门槛不过，总分再高也判「未通过」</span>
+        <span class="tip">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '契约闸门未全过，质量分再高也判「未通过」' : '硬门槛不过，总分再高也判「未通过」' }}</span>
       </div>
       <div class="jf-grid">
         <button
@@ -683,14 +763,14 @@ function copyConclusion(turn: TurnVM): void {
         <thead>
           <tr>
             <th rowspan="2" class="n">轮次</th>
-            <th rowspan="2" class="vd" :title="`pass = 硬门槛全过 且 total_score ≥ ${passLine}`">结论</th>
+            <th rowspan="2" class="vd" :title="passRule">结论</th>
             <th rowspan="2" class="q">提问</th>
             <th colspan="2" class="grp gate">硬门槛 · 决定 pass</th>
             <th colspan="4" class="grp llm">维度得分 · 40 / 30 / 20 / 10</th>
             <th rowspan="2" class="tags" title="此列只列轮次级归因；会话级归因见上方结论区">
               错误归因<span class="dimmax">轮次级</span>
             </th>
-            <th rowspan="2">总分</th>
+            <th rowspan="2" :title="scoreHeadingHint">{{ scoreHeading }}</th>
             <th rowspan="2" class="chev" />
           </tr>
           <tr>
@@ -768,11 +848,11 @@ function copyConclusion(turn: TurnVM): void {
                   v-if="turn.score !== null"
                   class="cell total"
                   :class="scoreHeat(turn)"
-                  :title="turn.verdict === 'pass' ? `通过：硬门槛全过且总分 ≥ ${passLine}` : turn.verdict === 'warn' ? '部分命中：总分达线，硬门槛未全过' : turn.verdict === 'unknown' ? '未判定：缺少轮次级门槛与分数' : `未通过：总分未达 ${passLine} 或硬门槛未过`"
+                  :title="verdictTitle(turn)"
                 >
                   {{ turn.score }}
                 </span>
-                <span v-else class="cell total unknown" title="轮次总分只有单轮执行或后端提供轮次分时才有">—</span>
+                <span v-else class="cell total unknown" title="轮次分只有单轮执行或后端提供轮次分时才有">—</span>
               </td>
               <td class="chev"><TraceIcon name="chevron-r" :size="11" /></td>
             </tr>
@@ -1015,28 +1095,28 @@ function copyConclusion(turn: TurnVM): void {
         <span class="lg vd"><i style="background: #f43f5e" />未通过</span>
         <span v-if="unknownCount" class="lg vd"><i style="background: #94a3b8" />未判定</span>
         <span style="flex: 1" />
-        <span>pass = 硬门槛全过 且 total_score ≥ {{ passLine }}</span>
+        <span>{{ passRule }}</span>
       </div>
 
       <div class="jweak">
         <div class="jw-h">
           <b>判定口径</b>
           <span class="sp" />
-          <span class="tip">门槛决定 pass，维度分按权重加总为 total_score</span>
+          <span class="tip">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '契约模式只看闸门' : '门槛决定 pass，维度分按权重加总为 total_score' }}</span>
         </div>
         <div class="jw-grid">
           <div class="jw crit">
             <span class="k">pass</span>
             <span class="wm">
-              <b>硬门槛全过 且 total_score ≥ {{ passLine }}</b>
-              <em>规则 / 契约任一未命中即 false</em>
+              <b>{{ passRuleBody }}</b>
+              <em>{{ model.gradingMode === 'ANSWER_CONTRACT' ? '四项闸门任一未命中即 false；质量分只作参考' : '规则 / 契约任一未命中即 false' }}</em>
             </span>
           </div>
           <div class="jw crit">
-            <span class="k">总分</span>
+            <span class="k">{{ scoreHeading }}</span>
             <span class="wm">
               <b>数据 40 + 逻辑 30 + 目标 20 + 语气 10 = 100</b>
-              <em>维度分即权重，直接加总</em>
+              <em>{{ model.gradingMode === 'ANSWER_CONTRACT' ? '维度分即权重，直接加总；质量分只作参考' : '维度分即权重，直接加总' }}</em>
             </span>
           </div>
           <div class="jw crit">
