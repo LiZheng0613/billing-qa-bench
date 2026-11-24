@@ -86,9 +86,11 @@ let searchTimer: number | null = null
 let requestSeq = 0
 let followUpTimer: number | null = null
 let liveReloadTimer: number | null = null
+let lastLoadAt = 0
 
 async function load(silent = false): Promise<boolean> {
   const seq = ++requestSeq
+  lastLoadAt = Date.now()
   if (!silent) loading.value = true
   try {
     const data = await api.tasks.list({
@@ -154,7 +156,12 @@ function applyProgress(event: TaskProgressEvent): void {
 }
 
 // 列表更新完全由 WebSocket 事件驱动；连接建立后补一次对账。
-useTaskEventStream(applyProgress, { onOpen: () => void load(true) })
+// onMounted 刚 load 过的 1.2s 内不重复拉取（防止挂载 + 连接建立双重加载）。
+useTaskEventStream(applyProgress, {
+  onOpen: () => {
+    if (Date.now() - lastLoadAt > 1200) void load(true)
+  },
+})
 
 function syncQuery(): void {
   const query: Record<string, string> = {}

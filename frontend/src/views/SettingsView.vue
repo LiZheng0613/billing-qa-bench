@@ -36,6 +36,7 @@ import {
 } from '../utils/format'
 import { useToastStore } from '../stores/toast'
 import { useAuthStore } from '../stores/auth'
+import { fetchAllPages } from '../utils/pagination'
 import SelectButton from '../components/SelectButton.vue'
 
 const toast = useToastStore()
@@ -511,16 +512,9 @@ function caseDebugQuery(item: TestCase): string {
 }
 
 async function loadAllCasesForDebug(): Promise<TestCase[]> {
-  // 分页拉取全量用例（后端单页上限 200），不按环境过滤，任意用例均可用于调试
-  const all: TestCase[] = []
-  let page = 1
-  for (;;) {
-    const result = await api.cases.list({ page, page_size: 200 })
-    all.push(...result.items)
-    if (all.length >= result.total) break
-    page += 1
-  }
-  return all
+  // 分页拉取全量用例（后端单页上限 200），不按环境过滤，任意用例均可用于调试；
+  // 剩余页分批并行（fetchAllPages）。
+  return fetchAllPages((page) => api.cases.list({ page, page_size: 200 }), 200)
 }
 
 async function openDebug(item: Environment): Promise<void> {

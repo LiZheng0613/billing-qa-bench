@@ -18,7 +18,7 @@ import type {
   TestCase,
 } from '../types'
 import { errorMessage } from '../utils/errors'
-import { readPageSize, savePageSize } from '../utils/pagination'
+import { fetchAllPages, readPageSize, savePageSize } from '../utils/pagination'
 import {
   caseTypeLabel,
   formatDateTime,
@@ -379,22 +379,19 @@ function togglePageSelection(): void {
 async function selectAllFiltered(): Promise<void> {
   try {
     const batchSize = 200
-    const ids: number[] = []
-    let current = 1
-    while (true) {
-      const data = await api.cases.list({
-        page: current,
-        page_size: batchSize,
-        keyword: keyword.value.trim() || undefined,
-        case_type: caseType.value || undefined,
-        status: status.value || undefined,
-      })
-      ids.push(
-        ...data.items.filter((item) => item.status === 'ACTIVE').map((item) => item.id),
-      )
-      if (current * batchSize >= data.total) break
-      current += 1
+    const query = {
+      keyword: keyword.value.trim() || undefined,
+      case_type: caseType.value || undefined,
+      status: status.value || undefined,
     }
+    // 剩余页分批并行拉取（原先 while 循环逐页串行）。
+    const all = await fetchAllPages(
+      (page) => api.cases.list({ page, page_size: batchSize, ...query }),
+      batchSize,
+    )
+    const ids = all
+      .filter((item) => item.status === 'ACTIVE')
+      .map((item) => item.id)
     selectedIds.value = Array.from(new Set([...selectedIds.value, ...ids]))
     toast.success(`已选中 ${ids.length} 条筛选结果（仅启用用例可执行）`)
   } catch (exc) {

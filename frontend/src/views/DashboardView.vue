@@ -78,6 +78,13 @@ const latestEval = ref<GraderEval | null>(null)
 let refreshTimer: number | null = null
 let autoTimer: number | null = null
 let lastLoadAt = 0
+// 字典板块（环境/数据源/能力列表）上次全量拉取时间：定时刷新默认跳过它们，
+// 但超过该间隔后强制兜底一次，保证前台长挂机用户也能看到探活告警更新。
+let lastDictLoadAt = 0
+const DICT_REFRESH_MS = 5 * 60_000
+// 上一轮 load 是否仍在途：自动刷新（定时器/回前台）在未完成时跳过本轮，
+// 避免慢响应堆叠与乱序覆盖；手动刷新不受限。
+let loadInFlight = false
 
 const canTask = computed(() => auth.can('task:read'))
 const canExecution = computed(() => auth.can('execution:read'))
@@ -822,15 +829,28 @@ function reportError(exc: unknown): void {
   toast.error(errorMessage(exc))
 }
 
-async function load(silent = false): Promise<boolean> {
+async function load(silent = false, dynamicOnly = false): Promise<boolean> {
+  if (silent && loadInFlight) return true
   lastLoadAt = Date.now()
   if (!silent) loading.value = true
+  // 字典板块的兜底判定：定时刷新（dynamicOnly）默认跳过，但距上次全量
+  // 拉取超过 5 分钟时仍执行，避免环境/数据源探活告警在长挂机时永不更新。
+  const refreshDicts = !dynamicOnly || Date.now() - lastDictLoadAt > DICT_REFRESH_MS
+  if (refreshDicts) lastDictLoadAt = Date.now()
+  loadInFlight = true
   try {
     // 按当前用户权限裁剪请求：无权限的板块直接不请求（避免 403 刷屏）；
     // 各板块独立容错，单个接口失败不再拖垮整个大盘。
+    // dynamicOnly=true 时跳过字典类板块（环境/数据源/能力列表）：
+    // 这些是准静态数据，20s 定时轮询不需要反复全量拉取。
     const jobs: Array<Promise<void>> = []
-    const guard = (perm: string, apply: () => Promise<void>): void => {
+    const guard = (
+      perm: string,
+      apply: () => Promise<void>,
+      options: { skipOnAutoRefresh?: boolean } = {},
+    ): void => {
       if (!auth.can(perm)) return
+      if (options.skipOnAutoRefresh && !refreshDicts) return
       jobs.push(apply())
     }
 
@@ -865,10 +885,14 @@ async function load(silent = false): Promise<boolean> {
       failedExecutions.value = failedPage.items
       executionTotal.value = execPage.total
     })
-    guard('environment:read', async () => {
-      const envPage = await api.environments.list({ page_size: 100 })
-      environments.value = envPage.items
-    })
+    guard(
+      'environment:read',
+      async () => {
+        const envPage = await api.environments.list({ page_size: 100 })
+        environments.value = envPage.items
+      },
+      { skipOnAutoRefresh: true },
+    )
     guard('prompt:read', async () => {
       promptTotal.value = (await api.prompts.list({ page: 1, page_size: 1 })).total
     })
@@ -886,19 +910,23 @@ async function load(silent = false): Promise<boolean> {
     guard('caliber:read', async () => {
       caliberTotal.value = (await api.calibers.list({ page: 1, page_size: 1 })).total
     })
-    guard('capability:read', async () => {
-      const [sourcePage, capabilityPage] = await Promise.all([
-        api.dataSources.list({ page: 1, page_size: 100 }),
-        api.capabilities.list({ page: 1, page_size: 100 }),
-      ])
-      dataSources.value = sourcePage.items
-      sourceTotal.value = sourcePage.total
-      sourceActive.value = sourcePage.items.filter((item) => item.is_active).length
-      sourceProbeFailed.value = sourcePage.items.filter(
-        (item) => item.is_active && item.last_probe_status && item.last_probe_status !== 'OK',
-      ).length
-      capabilityTotal.value = capabilityPage.total
-    })
+    guard(
+      'capability:read',
+      async () => {
+        const [sourcePage, capabilityPage] = await Promise.all([
+          api.dataSources.list({ page: 1, page_size: 100 }),
+          api.capabilities.list({ page: 1, page_size: 100 }),
+        ])
+        dataSources.value = sourcePage.items
+        sourceTotal.value = sourcePage.total
+        sourceActive.value = sourcePage.items.filter((item) => item.is_active).length
+        sourceProbeFailed.value = sourcePage.items.filter(
+          (item) => item.is_active && item.last_probe_status && item.last_probe_status !== 'OK',
+        ).length
+        capabilityTotal.value = capabilityPage.total
+      },
+      { skipOnAutoRefresh: true },
+    )
     guard('grader:run', async () => {
       const evalPage = await api.grader.evals({ page: 1, page_size: 1 })
       latestEval.value = evalPage.items[0] ?? null
@@ -914,6 +942,7 @@ async function load(silent = false): Promise<boolean> {
     nowMs.value = Date.now()
     return failed.length === 0
   } finally {
+    loadInFlight = false
     if (!silent) loading.value = false
   }
 }
@@ -973,16 +1002,30 @@ function onTaskCreated(): void {
   void load(true)
 }
 
-onMounted(() => {
-  void load()
-  autoTimer = window.setInterval(() => {
+function onVisibilityChange(): void {
+  // 回到前台：时间戳立即校正，并补一次全量刷新（含字典类板块）。
+  if (document.visibilityState === 'visible') {
     nowMs.value = Date.now()
     void load(true)
+    if (viewMode.value === 'environments') void loadEnvironmentSummary(true)
+  }
+}
+
+onMounted(() => {
+  void load()
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  autoTimer = window.setInterval(() => {
+    // 后台标签页暂停轮询（回到前台由 visibilitychange 立即补全量），
+    // 避免挂机用户在不可见状态下持续产生每 20s 十几个请求。
+    if (document.visibilityState !== 'visible') return
+    nowMs.value = Date.now()
+    void load(true, true)
     if (viewMode.value === 'environments') void loadEnvironmentSummary(true)
   }, 20_000)
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (refreshTimer !== null) window.clearTimeout(refreshTimer)
   if (autoTimer !== null) window.clearInterval(autoTimer)
 })

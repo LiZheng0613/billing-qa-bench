@@ -79,6 +79,7 @@ const selectedRunId = ref<number | null>(null)
 
 let socket: WebSocket | null = null
 let reconnectTimer: number | null = null
+let reconnectAttempts = 0
 let candidateRefreshTimer: number | null = null
 let unmounted = false
 let detailSeq = 0
@@ -246,10 +247,11 @@ async function loadRuns(preferLatest = false): Promise<boolean> {
   }
 }
 
-async function loadTaskDetail(id: number): Promise<void> {
+async function loadTaskDetail(id: number, prefetched?: BatchTask): Promise<void> {
   const seq = ++detailSeq
   const [detail, taskMetrics, executionPageData, candidates] = await Promise.all([
-    api.tasks.get(id),
+    // loadRoot 已为普通任务取过详情时直接复用，避免同一 id 请求两次。
+    prefetched ?? api.tasks.get(id),
     api.tasks.metrics(id),
     api.tasks.executions(id, executionQuery()),
     // 可重试候选仅用于批量勾选；老版本后端没有该接口时不阻塞详情加载。
@@ -287,7 +289,7 @@ async function loadRoot(): Promise<void> {
       runsSummary.value = null
       runsTotal.value = 0
       selectedRunId.value = null
-      await loadTaskDetail(id)
+      await loadTaskDetail(id, detail)
     }
   } catch (exc) {
     plan.value = null
@@ -395,6 +397,7 @@ function connectSocket(id: number): void {
     socket = ws
     ws.onopen = () => {
       live.value = true
+      reconnectAttempts = 0
     }
     ws.onmessage = (message) => {
       try {
@@ -427,11 +430,14 @@ function scheduleReconnect(): void {
   if (unmounted || reconnectTimer !== null) return
   const current = task.value
   if (!current || !['RUNNING', 'PENDING'].includes(current.status)) return
+  // 指数退避：与全局事件流同口径，避免后端重启期间固定 3s 重连风暴。
+  const delay = Math.min(1_000 * 2 ** reconnectAttempts, 30_000)
+  reconnectAttempts += 1
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = null
     const next = task.value
     if (next && !unmounted) connectSocket(next.id)
-  }, 3000)
+  }, delay)
 }
 
 function disconnectSocket(): void {
@@ -439,6 +445,7 @@ function disconnectSocket(): void {
     window.clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  reconnectAttempts = 0
   if (candidateRefreshTimer !== null) {
     window.clearTimeout(candidateRefreshTimer)
     candidateRefreshTimer = null

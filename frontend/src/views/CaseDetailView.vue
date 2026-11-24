@@ -80,6 +80,8 @@ const models = ref<ModelConfig[]>([])
 const loading = ref(true)
 const loadError = ref('')
 const saving = ref(false)
+// 刷新序号：快速切换用例时丢弃过期响应，避免旧数据覆盖新用例。
+let refreshSeq = 0
 
 const drawerOpen = ref(false)
 const copying = ref(false)
@@ -334,18 +336,25 @@ async function refresh(): Promise<void> {
     loadError.value = '用例不存在或已删除'
     return
   }
+  const seq = ++refreshSeq
   loading.value = true
   loadError.value = ''
   try {
-    item.value = await api.cases.get(caseId.value)
-    const [trendResult, executionResult, revisionResult] = await Promise.allSettled([
-      api.cases.trend(caseId.value),
-      api.cases.executions(caseId.value, {
-        page: executionPage.value,
-        page_size: executionPageSize.value,
-      }),
-      api.cases.revisions(caseId.value),
-    ])
+    // 四路数据都只依赖路由参数，并行发起（原先 get 之后的三个请求
+    // 被不必要地串行挡了一跳）。
+    const [detailResult, trendResult, executionResult, revisionResult] =
+      await Promise.allSettled([
+        api.cases.get(caseId.value),
+        api.cases.trend(caseId.value),
+        api.cases.executions(caseId.value, {
+          page: executionPage.value,
+          page_size: executionPageSize.value,
+        }),
+        api.cases.revisions(caseId.value),
+      ])
+    if (seq !== refreshSeq) return
+    if (detailResult.status === 'rejected') throw detailResult.reason
+    item.value = detailResult.value
     trend.value = trendResult.status === 'fulfilled' ? trendResult.value : null
     if (executionResult.status === 'fulfilled') {
       executions.value = executionResult.value.items
@@ -357,6 +366,7 @@ async function refresh(): Promise<void> {
     revisions.value = revisionResult.status === 'fulfilled' ? revisionResult.value : []
     applyRouteAction()
   } catch (exc) {
+    if (seq !== refreshSeq) return
     item.value = null
     executions.value = []
     revisions.value = []
@@ -364,7 +374,7 @@ async function refresh(): Promise<void> {
     loadError.value = errorMessage(exc)
     toast.error(loadError.value)
   } finally {
-    loading.value = false
+    if (seq === refreshSeq) loading.value = false
   }
 }
 

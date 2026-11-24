@@ -6,6 +6,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import ScheduleField from '../../components/ScheduleField.vue'
 import type { BatchTask, Environment, TestCase } from '../../types'
 import { errorMessage } from '../../utils/errors'
+import { fetchAllPages } from '../../utils/pagination'
 import { caseTypeLabel } from '../../utils/format'
 import { matchesAnyKeyword } from '../../utils/search'
 import {
@@ -75,15 +76,7 @@ const filteredCases = computed(() =>
 )
 
 async function loadAllCases(): Promise<TestCase[]> {
-  const pageSize = 200
-  const first = await api.cases.list({ page_size: pageSize, page: 1 })
-  const all = [...first.items]
-  const totalPages = Math.ceil(first.total / pageSize)
-  for (let page = 2; page <= totalPages; page += 1) {
-    const next = await api.cases.list({ page_size: pageSize, page })
-    all.push(...next.items)
-  }
-  return all
+  return fetchAllPages((page) => api.cases.list({ page_size: 200, page }), 200)
 }
 
 async function loadOptions(): Promise<void> {

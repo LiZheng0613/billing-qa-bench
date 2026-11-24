@@ -19,13 +19,21 @@ const openHandlers = new Set<OpenHandler>()
 let socket: WebSocket | null = null
 let reconnectTimer: number | null = null
 let connecting = false
+// 指数退避重连：1s 起步、每次翻倍、30s 封顶，连接成功后归零。
+// 固定 3s 无限重连会在后端重启/网络抖动时形成重连风暴，
+// 且每次连上都会触发订阅页的全量数据 reload，恰好在服务端最脆弱的时刻加压。
+const RECONNECT_BASE_MS = 1_000
+const RECONNECT_MAX_MS = 30_000
+let reconnectAttempts = 0
 
 function scheduleReconnect(): void {
   if (reconnectTimer !== null || handlers.size === 0) return
+  const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS)
+  reconnectAttempts += 1
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = null
     connect()
-  }, 3000)
+  }, delay)
 }
 
 function connect(): void {
@@ -36,6 +44,7 @@ function connect(): void {
     socket = ws
     ws.onopen = () => {
       connecting = false
+      reconnectAttempts = 0
       openHandlers.forEach((handler) => handler())
     }
     ws.onmessage = (message) => {
@@ -70,6 +79,7 @@ function closeIfIdle(): void {
     window.clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  reconnectAttempts = 0
   if (socket) {
     socket.onclose = null
     socket.onerror = null

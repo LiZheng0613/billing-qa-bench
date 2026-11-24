@@ -52,25 +52,36 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // 并发去重：初始挂载（App.vue）与首个路由守卫可能在同一时刻各触发一次
+  // fetchProfile，复用在途 Promise 只发一个 /auth/me 请求。
+  let profileInFlight: Promise<void> | null = null
+
   async function fetchProfile(): Promise<void> {
     if (!token.value) return
-    try {
-      const profile = await api.me()
-      user.value = {
-        id: profile.id,
-        username: profile.username,
-        display_name: profile.display_name,
-        roles: profile.roles,
-        permissions: profile.permissions,
-        must_change_password: profile.must_change_password,
+    if (profileInFlight) return profileInFlight
+    const task = (async () => {
+      try {
+        const profile = await api.me()
+        user.value = {
+          id: profile.id,
+          username: profile.username,
+          display_name: profile.display_name,
+          roles: profile.roles,
+          permissions: profile.permissions,
+          must_change_password: profile.must_change_password,
+        }
+        username.value = profile.username
+        localStorage.setItem(USER_KEY, profile.username)
+        loaded.value = true
+      } catch (exc) {
+        if (exc instanceof ApiError && exc.status === 401) logout()
+        throw exc
+      } finally {
+        profileInFlight = null
       }
-      username.value = profile.username
-      localStorage.setItem(USER_KEY, profile.username)
-      loaded.value = true
-    } catch (exc) {
-      if (exc instanceof ApiError && exc.status === 401) logout()
-      throw exc
-    }
+    })()
+    profileInFlight = task
+    return task
   }
 
   function applyProfile(profile: UserProfile): void {

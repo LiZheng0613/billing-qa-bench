@@ -19,7 +19,9 @@ function handleExpired(): void {
 
 onMounted(() => {
   window.addEventListener('auth:expired', handleExpired)
-  if (auth.token) void auth.fetchProfile()
+  // 与首个路由守卫的 fetchProfile 并发触发：实际去重由 store 内的
+  // 在途 Promise 复用保证（同一时刻只发一个 /auth/me）。
+  if (auth.token && !auth.loaded) void auth.fetchProfile()
 })
 
 onBeforeUnmount(() => {
