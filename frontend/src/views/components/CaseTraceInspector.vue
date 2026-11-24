@@ -126,12 +126,15 @@ const TABS: Array<{ key: TabKey; label: string; icon: string }> = [
 const activeTab = tab
 
 const visibleTabs = computed(() =>
-  TABS.filter((item) => item.key !== 'selfcheck' || Boolean(model.value.selfCheck)),
+  // 通过的用例连页签都不出现；失败用例保留入口，没有 self_check 记录时给「未触发」空态
+  TABS.filter(
+    (item) => item.key !== 'selfcheck' || Boolean(model.value.selfCheck) || !model.value.executionPassed,
+  ),
 )
 
 /**
- * 页签必须落在当前可见集合里：自检页签只在真发生过追问时出现，
- * 旧链接（?tab=selfcheck）指向没有自检的执行时若不放回对话轮次，
+ * 页签必须落在当前可见集合里：自检页签在通过用例上不出现，
+ * 旧链接（?tab=selfcheck）指向这种执行时若不放回对话轮次，
  * 页面会既没有高亮页签、又渲染出「未开启自检」的空态（通过的用例还会漏出自检字样）。
  */
 watch(
@@ -255,7 +258,19 @@ const passHeadline = computed(() => {
   if (model.value.turns.length === 1) {
     return model.value.turns[0].verdict === 'warn' ? '部分命中' : '未通过'
   }
+  // 多轮：没有任何一轮通过时不能说「部分通过」（900001 是 0 通过 / 1 未通过 / 2 未判定）
+  if (model.value.session.passCount === 0) {
+    return model.value.session.failCount > 0 ? '未通过' : '部分命中'
+  }
   return '部分通过'
+})
+
+/** 轮次结论着色跟结论走：未通过用玫红，部分通过/部分命中用琥珀，未判定用灰 */
+const passTone = computed<'pass' | 'warn' | 'fail' | 'unknown'>(() => {
+  if (!model.value.turns.length) return 'unknown'
+  if (allPass.value) return 'pass'
+  if (noneJudged.value) return 'unknown'
+  return passHeadline.value === '未通过' ? 'fail' : 'warn'
 })
 
 // ---- 判分页：执行级维度（契约模式取质量分维度） ----
@@ -634,23 +649,30 @@ async function copyTraceUid(): Promise<void> {
           <div class="flex items-start gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
             <span
               class="mt-0.5 flex h-7 w-7 flex-none items-center justify-center rounded-full"
-              :class="
-                allPass
-                  ? 'bg-emerald-50 text-emerald-600'
-                  : noneJudged
-                    ? 'bg-slate-100 text-slate-500'
-                    : 'bg-amber-50 text-amber-600'
-              "
+              :class="{
+                'bg-emerald-50 text-emerald-600': passTone === 'pass',
+                'bg-amber-50 text-amber-600': passTone === 'warn',
+                'bg-rose-50 text-rose-600': passTone === 'fail',
+                'bg-slate-100 text-slate-500': passTone === 'unknown',
+              }"
             >
-              <TraceIcon :name="allPass ? 'check' : noneJudged ? 'info' : 'alert'" :size="13" />
+              <TraceIcon
+                :name="passTone === 'pass' ? 'check' : passTone === 'warn' ? 'alert' : passTone === 'fail' ? 'x' : 'info'"
+                :size="13"
+              />
             </span>
             <div class="min-w-0">
               <p class="text-[10px] uppercase tracking-wider text-slate-500">轮次结论</p>
               <p class="text-lg font-semibold tabular-nums text-slate-900">
                 {{ passHeadline }}
-                <span class="text-xs font-normal text-slate-500">/ {{ model.turns.length }} 轮</span>
+                <span v-if="model.turns.length" class="text-xs font-normal text-slate-500">
+                  / {{ model.turns.length }} 轮
+                </span>
               </p>
-              <p v-if="noneJudged" class="truncate text-[10px] text-slate-500">
+              <p v-if="!model.turns.length" class="truncate text-[10px] text-slate-500">
+                执行记录只保留执行级结论，没有逐轮明细
+              </p>
+              <p v-else-if="noneJudged" class="truncate text-[10px] text-slate-500">
                 {{ model.turns.length }} 轮均未判定 · 无轮次级分数与门槛
               </p>
               <p v-else class="truncate text-[10px] text-slate-500">
@@ -709,15 +731,29 @@ async function copyTraceUid(): Promise<void> {
           <div class="flex items-start gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
             <span
               class="mt-0.5 flex h-7 w-7 flex-none items-center justify-center rounded-full"
-              :class="sessionConsistent ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'"
+              :class="
+                !model.turns.length
+                  ? 'bg-slate-100 text-slate-500'
+                  : sessionConsistent
+                    ? 'bg-emerald-50 text-emerald-600'
+                    : 'bg-amber-50 text-amber-600'
+              "
             >
-              <TraceIcon :name="sessionConsistent ? 'shield' : 'alert'" :size="13" />
+              <TraceIcon :name="!model.turns.length ? 'info' : sessionConsistent ? 'shield' : 'alert'" :size="13" />
             </span>
             <div class="min-w-0">
               <p class="text-[10px] uppercase tracking-wider text-slate-500">会话一致性</p>
-              <p class="text-lg font-semibold text-slate-900">{{ sessionConsistent ? 'PERSIST' : '不一致' }}</p>
+              <p class="text-lg font-semibold text-slate-900">
+                {{ !model.turns.length ? '—' : sessionConsistent ? 'PERSIST' : '不一致' }}
+              </p>
               <p class="truncate text-[10px] text-slate-500">
-                {{ sessionConsistent ? '各轮会话一致' : `${model.session.sessionIds.length} 个会话 ID` }}
+                {{
+                  !model.turns.length
+                    ? '无逐轮记录，无法判断'
+                    : sessionConsistent
+                      ? '各轮会话一致'
+                      : `${model.session.sessionIds.length} 个会话 ID`
+                }}
               </p>
             </div>
           </div>
@@ -751,7 +787,7 @@ async function copyTraceUid(): Promise<void> {
       <div class="flex-1 overflow-y-auto px-4 py-4">
         <!-- ============================ 对话轮次 ============================ -->
         <template v-if="activeTab === 'turns'">
-          <div class="mb-3 flex flex-wrap items-center gap-2">
+          <div v-if="model.turns.length" class="mb-3 flex flex-wrap items-center gap-2">
             <div class="inline-flex rounded-lg border border-line bg-slate-50 p-0.5">
               <button
                 type="button"
@@ -834,15 +870,18 @@ async function copyTraceUid(): Promise<void> {
               <span v-if="!model.session.consistentSession" class="text-amber-700">
                 检测到 {{ model.session.sessionIds.length }} 个会话值，上下文可能未延续
               </span>
-              <span>共 {{ model.session.turns }} 轮</span>
-              <span class="text-emerald-700">通过 {{ model.session.passCount }}</span>
-              <span v-if="model.session.warnCount" class="text-amber-700">
-                部分命中 {{ model.session.warnCount }}
-              </span>
-              <span class="text-rose-700">未通过 {{ model.session.failCount }}</span>
-              <span v-if="model.session.unknownCount" class="text-slate-500">
-                未判定 {{ model.session.unknownCount }}
-              </span>
+              <span v-if="model.session.turns">共 {{ model.session.turns }} 轮</span>
+              <template v-if="model.session.turns">
+                <span class="text-emerald-700">通过 {{ model.session.passCount }}</span>
+                <span v-if="model.session.warnCount" class="text-amber-700">
+                  部分命中 {{ model.session.warnCount }}
+                </span>
+                <span class="text-rose-700">未通过 {{ model.session.failCount }}</span>
+                <span v-if="model.session.unknownCount" class="text-slate-500">
+                  未判定 {{ model.session.unknownCount }}
+                </span>
+              </template>
+              <span v-else class="text-slate-500">没有逐轮明细</span>
               <span v-if="model.session.totalTokens" class="text-slate-500">
                 {{ model.session.totalTokens }} tokens
               </span>
@@ -873,7 +912,11 @@ async function copyTraceUid(): Promise<void> {
             v-if="!model.turns.length"
             compact
             title="没有对话轮次"
-            description="该执行未产生有效对话。"
+            :description="
+              detail.grading_mode === 'RUBRIC'
+                ? '该执行由旧评分模式（RUBRIC）落库，只保留执行级分数与结论，没有逐轮明细。'
+                : '该执行未产生有效对话。'
+            "
           />
           <div v-else-if="!filteredTurns.length" class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-500">
             当前筛选条件下没有轮次，可清空搜索或切回「全部」。
@@ -937,7 +980,7 @@ async function copyTraceUid(): Promise<void> {
             v-else
             compact
             title="没有追问自检记录"
-            description="任务未开启「失败追问自检」，或该用例未触发追问。"
+            description="本次执行没有 self_check 记录（任务未开启或本次未触发）；页面不补造自检内容。"
           />
         </template>
 
@@ -1224,12 +1267,15 @@ async function copyTraceUid(): Promise<void> {
           </div>
 
           <div v-else class="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-            所有轮次的 <code class="font-mono">tool_calls</code> 都为空，页面不补造调用步骤。
+            <template v-if="model.turns.length">所有轮次的 <code class="font-mono">tool_calls</code> 都为空，页面不补造调用步骤。</template>
+            <template v-else>本次执行没有逐轮记录，页面不补造调用步骤。</template>
           </div>
 
           <div class="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-500">
             <TraceIcon name="code" :size="12" />
-            <span>原始报文按轮次留存，可在对话轮次的「证据」入口或此处打开。</span>
+            <span v-if="detail.raw_request_response.length">原始报文按轮次留存，可在对话轮次的「证据」入口或此处打开。</span>
+            <span v-else-if="detail.grading_mode === 'RUBRIC'">旧评分模式（RUBRIC）没有留存原始报文。</span>
+            <span v-else>本次执行没有保存原始报文。</span>
             <span class="flex-1" />
             <button
               v-if="chainFocusTurn !== null"

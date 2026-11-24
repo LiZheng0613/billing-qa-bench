@@ -86,7 +86,10 @@ const dimCards = computed(() =>
         label: dim.label,
         max: dim.max,
         value: avg,
-        note: `最低 T${turns.value[minIndex]?.index ?? '—'} · ${values[minIndex] ?? 0}/${dim.max}`,
+        note:
+          turns.value.length === 1
+            ? `占满分 ${Math.round((avg / dim.max) * 100)}%`
+            : `最低 T${turns.value[minIndex]?.index ?? '—'} · ${values[minIndex] ?? 0}/${dim.max}`,
         source: 'turn' as const,
       }
     }
