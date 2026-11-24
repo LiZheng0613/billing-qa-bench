@@ -214,13 +214,17 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     // 旧 RUBRIC 执行（当前库 1226 条）只有执行级分数与结论，说清缺什么，不拿「没有轮次」一句带过
     if (props.model.gradingMode === 'RUBRIC') {
       const scoreText = props.score.toFixed(1)
-      return [
-        {
-          text: used
-            ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${scoreText} 与通过结论，没有逐轮明细、裁判理由与四维得分。`
-            : `本次执行由旧评分模式（RUBRIC）落库：只保留执行级综合分 ${scoreText} 与通过结论，没有轮次明细、裁判理由与四维得分。`,
-        },
-      ]
+      const base = used
+        ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${scoreText} 与最终结论，没有逐轮明细、裁判理由与四维得分。`
+        : `本次执行由旧评分模式（RUBRIC）落库：只保留执行级综合分 ${scoreText} 与最终结论，没有轮次明细、裁判理由与四维得分。`
+      // 真实库有 137 条 RUBRIC 失败记录总分 ≥ 快照阈值（如 16143：64.1 / 阈值 60），
+      // 快照页又直接展示阈值；历史记录没保存当时的判定依据，页面只能说明差异、不反推原因。
+      const threshold = props.model.passLineSource === 'default' ? null : props.model.passLine
+      const divergence =
+        threshold !== null && execPassed.value === false && props.score >= threshold
+          ? `落库总分不低于该执行快照的阈值 ${threshold}，但历史记录没有保存当时的判定依据（规则 / 终止原因），页面按落库结论记为「未通过」，不反推原因。`
+          : ''
+      return [{ text: divergence ? `${base}${divergence}` : base }]
     }
     return [
       {

@@ -257,7 +257,7 @@ const turnEmptyCopy = computed(() => {
     return {
       title,
       description: used
-        ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${score} 与通过结论，没有逐轮明细。`
+        ? `本次执行共 ${used} 轮，旧评分模式（RUBRIC）只保留执行级综合分 ${score} 与最终结论，没有逐轮明细。`
         : `该执行由旧评分模式（RUBRIC）落库，只保留执行级综合分 ${score} 与结论，没有逐轮明细。`,
     }
   }
@@ -1107,7 +1107,7 @@ async function copyTraceUid(): Promise<void> {
                   {{ detail.grading_mode === 'ANSWER_CONTRACT'
                     ? '契约模式：最终答案正确性优先，工具调用轨迹仅用于失败诊断。'
                     : detail.grading_mode === 'RUBRIC'
-                      ? '旧评分模式（RUBRIC）：规则 + LLM 评分，落库时只保留执行级综合分与通过结论，没有逐轮四维与裁判理由。'
+                      ? '旧评分模式（RUBRIC）：规则 + LLM 评分，落库时只保留执行级综合分与最终结论，没有逐轮四维与裁判理由。'
                       : 'LEGACY 模式：规则 + LLM 裁判四维加权，硬门槛与总分同时满足才通过。' }}
                 </p>
               </div>
