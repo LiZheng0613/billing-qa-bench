@@ -47,21 +47,38 @@ const overall = computed<number | null>(() => {
 
 const passCount = computed(() => turns.value.filter((turn) => turn.verdict === 'pass').length)
 const unknownCount = computed(() => turns.value.filter((turn) => turn.verdict === 'unknown').length)
-const allPass = computed(() => turns.value.length > 0 && passCount.value === turns.value.length)
 const allUnknown = computed(() => turns.value.length > 0 && unknownCount.value === turns.value.length)
+
+/**
+ * 执行级结论：`pass_flag` 是后端按「硬门槛全过 + 综合分 ≥ 阈值」算出的权威值。
+ * 多轮执行里，没有轮次级规则/判分的中间轮会落「未判定」，若按「每轮都通过」口径
+ * 汇总就会把已通过的整通执行说成「部分通过」，和页头状态、门槛流程条自相矛盾
+ * （900002 / 900007 就是这种形态）。轮次的混合结论只在「轮次结论」卡与矩阵里呈现。
+ */
+const execPassed = computed<boolean | null>(() => {
+  if (typeof props.detail.pass_flag === 'boolean') return props.detail.pass_flag
+  if (overall.value === null || passLine.value === null) return null
+  return overall.value >= passLine.value
+})
 
 const verdictLabel = computed(() => {
   // 没有轮次（旧 RUBRIC 执行 / 执行期报错）时按执行级结论说话，不套「部分通过」
-  if (turns.value.length === 0) return props.detail.pass_flag === true ? '通过' : '未通过'
+  if (turns.value.length === 0) {
+    if (execPassed.value === null) return '未判定'
+    return execPassed.value ? '通过' : '未通过'
+  }
   if (allUnknown.value) return '未判定'
-  if (props.model.turns.length === 1) return allPass.value ? '通过' : '未通过'
-  return allPass.value ? '通过' : '部分通过'
+  if (execPassed.value === null) return '未判定'
+  return execPassed.value ? '通过' : '未通过'
 })
 const verdictTone = computed<Verdict>(() => {
-  if (turns.value.length === 0) return props.detail.pass_flag === true ? 'pass' : 'fail'
+  if (turns.value.length === 0) {
+    if (execPassed.value === null) return 'unknown'
+    return execPassed.value ? 'pass' : 'fail'
+  }
   if (allUnknown.value) return 'unknown'
-  if (allPass.value) return 'pass'
-  return props.model.turns.length === 1 ? 'fail' : 'warn'
+  if (execPassed.value === null) return 'unknown'
+  return execPassed.value ? 'pass' : 'fail'
 })
 
 /** 维度均值：逐轮有分时按轮平均，否则退回执行级四维并标注口径 */
@@ -211,9 +228,10 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     parts.push({ text: `${unknownCount.value} 轮缺少轮次级门槛与分数，标记为未判定；` })
   }
   parts.push({
-    text: allPass.value
-      ? '硬门槛全部通过，按总分定档。'
-      : '硬门槛未全部通过，结论为「部分通过」。',
+    text:
+      execPassed.value === false
+        ? '硬门槛未全部通过，结论为「未通过」。'
+        : '硬门槛全部通过，按总分定档。',
   })
   return parts
 })
@@ -510,14 +528,14 @@ function copyConclusion(turn: TurnVM): void {
           </div>
 
           <div v-if="turns.length" class="gate-flow">
-            <span class="g" :class="{ bad: !allPass }">
+            <span class="g" :class="{ bad: execPassed === false && !allUnknown }">
               硬门槛 规则 <b>{{ rulePassed }}/{{ ruleTotal }}</b> · 契约
               <b>{{ hasTurnContract ? `${contractPassed}/${contractTotal}` : '—' }}</b>
             </span>
             <span class="arr">→</span>
             <span class="g">总分 <b>{{ overall === null ? '—' : overall.toFixed(1) }}</b> / 100</span>
             <span class="arr">→</span>
-            <span class="g res" :class="verdictTone === 'pass' ? 'ok' : ''">{{ verdictLabel }}</span>
+            <span class="g res" :class="verdictTone">{{ verdictLabel }}</span>
           </div>
         </div>
       </div>
@@ -1055,7 +1073,9 @@ function copyConclusion(turn: TurnVM): void {
 .gate-flow .g.bad { border-color: var(--amber-edge); background: var(--amber-soft); color: var(--amber); }
 .gate-flow .g.bad b { color: var(--amber); }
 .gate-flow .res { border-color: var(--amber-edge); background: var(--amber-soft); color: var(--amber); font-weight: 600; }
-.gate-flow .res.ok { border-color: var(--green-edge); background: var(--green-soft); color: #047857; }
+.gate-flow .res.pass { border-color: var(--green-edge); background: var(--green-soft); color: #047857; }
+.gate-flow .res.fail { border-color: var(--rose-edge); background: var(--rose-soft); color: var(--rose); }
+.gate-flow .res.unknown { border-color: var(--line); background: #f8fafc; color: #64748b; }
 .gate-flow .arr { color: #cbd5e1; font-size: 9px; }
 
 /* ---------- 未通过门槛 ---------- */
