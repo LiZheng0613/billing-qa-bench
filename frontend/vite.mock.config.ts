@@ -1,8 +1,8 @@
 /**
- * 演示专用 vite 配置：代理指向本地 mock 后端（8001），
+ * 演示专用 vite 配置：代理指向本地 mock 后端（8877），
  * 与真实后端（8000）/常规 dev server（5173）互不影响。
  * 用法：npx vite --config vite.mock.config.ts
- * 临时演示资产，不入库。
+ * 5174 被占用时 strictPort=false 会顺延到 5175。
  */
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
