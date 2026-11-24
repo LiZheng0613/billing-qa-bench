@@ -140,6 +140,7 @@ const previousTurn = computed(() => {
 
 const selfCheckTurn = computed(() => props.model.selfCheckTurn)
 const selfRecord = computed(() => props.model.selfCheck)
+const selfSkipReason = computed(() => props.model.selfCheckSkipReason)
 // 通过的用例不展示任何自检相关内容；未通过的执行即使无记录也保留诚实空态
 const executionPassed = computed(() => props.model.executionPassed)
 
@@ -953,7 +954,7 @@ const selfTriggerValue = computed(() => {
             </section>
 
             <section v-if="selfRecord || !executionPassed" class="dsec">
-              <h5>追问自检 <span class="sp" /><span class="cnt">{{ turn.selfCheck ? '已触发' : selfRecord ? (selfCheckTurn ? '其他轮触发' : '执行级记录') : '未触发' }}</span></h5>
+              <h5>追问自检 <span class="sp" /><span class="cnt">{{ turn.selfCheck ? '已触发' : selfRecord ? (selfCheckTurn ? '其他轮触发' : '执行级记录') : selfSkipReason ? '未触发 · SKIPPED' : '未触发' }}</span></h5>
               <template v-if="turn.selfCheck && selfRecord">
                 <CopyBox title="实际发送 · 自检 Prompt" kind="text" :value="selfRecord.prompt" :empty="'自检记录未保存 Prompt'" :max-height="'28vh'" />
                 <CopyBox title="自检返回" :value="selfRecord.response_raw" :empty="'自检记录未保存原始返回'" :max-height="'28vh'" />
@@ -981,7 +982,9 @@ const selfTriggerValue = computed(() => {
                   <span class="go">›</span>
                 </button>
               </div>
-              <div v-else class="dempty">本次执行没有追问自检记录。</div>
+              <div v-else class="dempty">
+                {{ selfSkipReason ? `本次执行未触发追问自检：${selfSkipReason}（self_check = SKIPPED）。` : '本次执行没有追问自检记录。' }}
+              </div>
             </section>
           </div>
 
@@ -1146,7 +1149,7 @@ const selfTriggerValue = computed(() => {
             <h5>
               追问自检
               <span class="sp" />
-              <span class="cnt">{{ selfRecord ? (turn.selfCheck ? `已触发 · 派生轮次 S1` : selfCheckTurn ? `由 T${selfCheckTurn.index} 触发 · 本轮未触发` : '执行级记录 · 未记录触发轮次') : '未记录' }}</span>
+              <span class="cnt">{{ selfRecord ? (turn.selfCheck ? `已触发 · 派生轮次 S1` : selfCheckTurn ? `由 T${selfCheckTurn.index} 触发 · 本轮未触发` : '执行级记录 · 未记录触发轮次') : selfSkipReason ? '未触发 · SKIPPED' : '未记录' }}</span>
             </h5>
             <template v-if="selfRecord">
               <div class="dverdict" :class="selfRecord.status === 'DONE' ? 'warn' : ''">
@@ -1187,7 +1190,13 @@ const selfTriggerValue = computed(() => {
                 派生轮次由失败自动发起，用于复核原因，不改变本轮 pass / 综合分；只有 DONE / SKIPPED / ERROR 三态。
               </div>
             </template>
-            <div v-else class="dempty">本次执行没有追问自检记录（self_check 为空）。</div>
+            <div v-else class="dempty">
+              {{
+                selfSkipReason
+                  ? `本次执行未触发追问自检：${selfSkipReason}（self_check = SKIPPED）。`
+                  : '本次执行没有追问自检记录（self_check 为空）。'
+              }}
+            </div>
           </section>
 
           <section v-if="selfRecord && (turn.selfCheck || !selfCheckTurn)" class="dsec">

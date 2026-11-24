@@ -197,6 +197,8 @@ export interface TraceModel {
   turns: TurnVM[]
   session: SessionStats
   selfCheck: SelfCheckResult | null
+  /** 失败执行里 self_check = SKIPPED 的后端跳过原因；通过用例恒为 null，界面不展示自检内容 */
+  selfCheckSkipReason: string | null
   selfCheckTurn: TurnVM | null
   gradingMode: string
   /** 本次执行实际使用的通过线（passLineOf 读取链），组件不得再各自写死 */
@@ -585,7 +587,15 @@ export function buildTraceModel(detail: ExecutionDetail | null): TraceModel {
   const sessionVariables = variablesOf(detail?.case_snapshot)
   // 自检仅在真实发生（DONE/ERROR）时参与呈现；通过的用例落 SKIPPED（self_check.py:128），
   // 对话界面不应出现任何自检内容（S1 派生块、页签、抽屉上下文全部由此收口）
-  const selfCheck = selfCheckPerformed(detail?.self_check) ? (detail?.self_check ?? null) : null
+  // 通过用例即便历史数据里残留 self_check=DONE 也不展示；SKIPPED 是「未触发」，
+  // 失败执行需要把后端 skip_reason 带出来，不能笼统说「没有记录」。
+  const rawSelfCheck = detail?.self_check ?? null
+  const selfCheck =
+    detail?.pass_flag !== true && selfCheckPerformed(rawSelfCheck) ? rawSelfCheck : null
+  const selfCheckSkipReason =
+    detail?.pass_flag !== true && rawSelfCheck?.status === 'SKIPPED'
+      ? rawSelfCheck.skip_reason || '后端未记录跳过原因'
+      : null
   const triggerIndex = triggerTurnIndex(selfCheck)
   const lastIndex = turns.length ? turns[turns.length - 1].turn_index : 0
   const assignedTurnTags = new Set<string>()
@@ -741,6 +751,7 @@ export function buildTraceModel(detail: ExecutionDetail | null): TraceModel {
     turns: turnVMs,
     session,
     selfCheck,
+    selfCheckSkipReason,
     selfCheckTurn: turnVMs.find((turn) => turn.selfCheck) ?? null,
     gradingMode: detail?.grading_mode ?? 'LEGACY',
     passLine: passLine.value,

@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import EmptyState from '../../components/EmptyState.vue'
 import JsonViewer from '../../components/JsonViewer.vue'
 import StatusPill from '../../components/StatusPill.vue'
-import type { ExecutionDetail, SelfCheckResult } from '../../types'
+import type { ExecutionDetail } from '../../types'
 import {
   formatDateTime,
   formatMs,
@@ -14,7 +14,7 @@ import {
 } from '../../utils/format'
 import { copyText } from '../../utils/clipboard'
 import { useToastStore } from '../../stores/toast'
-import { buildTraceModel, PASS_LINE_SOURCE_LABEL, phaseBuckets, phaseMeta, selfCheckPerformed } from './case-trace/model'
+import { buildTraceModel, PASS_LINE_SOURCE_LABEL, phaseBuckets, phaseMeta } from './case-trace/model'
 import { useTraceView, type StatusFilter } from './case-trace/useTraceView'
 import TraceIcon from './case-trace/TraceIcon.vue'
 import TurnBubble from './case-trace/TurnBubble.vue'
@@ -513,12 +513,6 @@ const contractQualityDims = computed(() => {
   }))
 })
 
-/** 失败追问自检记录（任务未开启时为 null，页签隐藏） */
-// SKIPPED（通过的用例等未触发形态）不展示自检内容，与对话页同口径
-const selfCheck = computed<SelfCheckResult | null>(() =>
-  selfCheckPerformed(props.detail?.self_check) ? (props.detail?.self_check ?? null) : null,
-)
-
 const rootCauseText = computed(() => {
   const raw = props.detail?.root_cause
   if (!raw) return null
@@ -976,8 +970,8 @@ async function copyTraceUid(): Promise<void> {
         <!-- ============================ 追问自检（1:1 还原原型） ============================ -->
         <template v-if="activeTab === 'selfcheck'">
           <SelfCheckPanel
-            v-if="selfCheck"
-            :record="selfCheck"
+            v-if="model.selfCheck"
+            :record="model.selfCheck"
             :trigger="model.selfCheckTurn"
             :turn-count="model.turns.length"
             @locate="locateTurn"
@@ -985,8 +979,14 @@ async function copyTraceUid(): Promise<void> {
           <EmptyState
             v-else
             compact
-            title="没有追问自检记录"
-            description="本次执行没有 self_check 记录（任务未开启或本次未触发）；页面不补造自检内容。"
+            :title="model.selfCheckSkipReason ? '未触发追问自检' : '没有追问自检记录'"
+            :description="
+              model.selfCheckSkipReason
+                ? `执行记录：${model.selfCheckSkipReason}（self_check = SKIPPED）；页面不补造自检内容。`
+                : detail.status === 'ERROR' || detail.status === 'ABORTED'
+                  ? '执行以异常 / 终止结束，未进入追问自检；没有 self_check 记录。'
+                  : '本次执行没有 self_check 记录（任务未开启或本次未触发）；页面不补造自检内容。'
+            "
           />
         </template>
 
