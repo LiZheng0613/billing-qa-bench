@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>设计稿 03 · 对话轮次「宽答窄问」排版方案</title>
+<style>
+  :root{
+    --canvas:#f5f5f7; --line:#e8e8ed; --line-soft:#f0f0f4; --line-strong:#dcdfe6;
+    --ink:#111827; --ink-soft:#374151; --muted:#6b7280; --faint:#9ca3af;
+    --brand:#4f46e5; --brand-deep:#4338ca; --brand-soft:#eef2ff; --brand-edge:#e0e7ff;
+    --green:#059669; --green-soft:#ecfdf5; --green-edge:#a7f3d0;
+    --amber:#b45309; --amber-soft:#fffbeb; --amber-edge:#fde68a;
+    --rose:#be123c; --rose-soft:#fff1f2; --rose-edge:#fecdd3;
+    --sky:#0369a1; --sky-soft:#f0f9ff; --sky-edge:#bae6fd;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#cbd5e1 transparent}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{border-radius:999px;background:#cbd5e1;border:2px solid transparent;background-clip:content-box}
+  body{font-family:"Inter","PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:#eceef2;color:var(--ink);font-size:13px;-webkit-font-smoothing:antialiased;min-width:1460px}
+  .mono{font-family:"JetBrains Mono",Consolas,monospace}
+
+  .board{max-width:1460px;margin:0 auto;padding:28px 24px 56px}
+  .board-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:14px}
+  .board-head .kicker{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--brand)}
+  .board-head h1{font-size:21px;letter-spacing:-.02em;margin-top:4px}
+  .board-head p{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.65;max-width:760px}
+  .tag-soft{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:11px;color:var(--muted);white-space:nowrap}
+  .tag-soft b{color:var(--brand)}
+
+  /* ============ 问题诊断 ============ */
+  .diag{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:26px}
+  .diag-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px 16px}
+  .diag-card h4{font-size:11px;letter-spacing:.06em;color:var(--muted);font-weight:600;text-transform:uppercase}
+  .diag-card .bars{margin-top:11px;display:grid;gap:7px}
+  .diag-bar{display:grid;grid-template-columns:62px 1fr 52px;gap:9px;align-items:center;font-size:10.5px;color:var(--muted)}
+  .diag-track{height:9px;border-radius:999px;background:#f1f5f9;overflow:hidden;display:flex}
+  .diag-fill{height:100%;border-radius:999px}
+  .diag-note{margin-top:10px;font-size:11px;color:var(--muted);line-height:1.6}
+  .diag-note b{color:var(--rose)}
+  .diag-good b{color:var(--green)}
+
+  /* ============ 方案容器 ============ */
+  .variant{margin-bottom:34px}
+  .v-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:9px}
+  .v-index{width:24px;height:24px;border-radius:8px;background:var(--brand);color:#fff;display:grid;place-items:center;font-size:11px;font-weight:700}
+  .v-head h2{font-size:15px;letter-spacing:-.01em}
+  .v-head .v-sub{font-size:11px;color:var(--muted)}
+  .v-head .v-gap{flex:1}
+  .pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;border:1px solid var(--line);background:#fff;padding:3px 9px;font-size:10px;color:var(--muted)}
+  .pill.green{background:var(--green-soft);border-color:var(--green-edge);color:#047857}
+  .pill.amber{background:var(--amber-soft);border-color:var(--amber-edge);color:var(--amber)}
+  .pill.brand{background:var(--brand-soft);border-color:var(--brand-edge);color:var(--brand-deep)}
+
+  /* 屏幕框 */
+  .screen{background:var(--canvas);border:1px solid var(--line-strong);border-radius:20px;overflow:hidden;box-shadow:0 30px 60px -45px rgba(17,24,39,.45)}
+  .s-top{height:46px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 18px}
+  .s-top .dot{width:8px;height:8px;border-radius:999px;background:#e2e8f0}
+  .s-top .crumb{font-size:10.5px;color:var(--faint);display:flex;align-items:center;gap:6px}
+  .s-top .crumb b{color:var(--ink-soft);font-weight:500}
+  .s-top .sp{flex:1}
+  .s-top .chip{font-size:10px;color:var(--muted);border:1px solid var(--line);background:#fbfbfd;border-radius:999px;padding:3px 9px}
+
+  .panel{margin:14px 16px 16px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 1px 2px rgba(17,24,39,.04),0 18px 40px -36px rgba(17,24,39,.55);overflow:hidden}
+  .p-head{display:flex;align-items:center;gap:8px;padding:11px 16px;border-bottom:1px solid var(--line-soft)}
+  .p-head h3{font-size:12.5px;font-weight:600}
+  .p-head .cnt{font-size:10px;color:var(--muted);background:#f8fafc;border-radius:999px;padding:1px 7px}
+  .p-head .sp{flex:1}
+  .seg{display:inline-flex;border:1px solid var(--line);background:#f8fafc;border-radius:8px;padding:2px}
+  .seg span{font-size:10.5px;color:var(--muted);padding:3px 9px;border-radius:6px}
+  .seg span.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(17,24,39,.06);font-weight:500}
+  .seg span.on.brand{background:var(--brand-soft);color:var(--brand)}
+  .p-tools{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line-soft);background:#fcfcfe}
+  .p-tools .t{font-size:10.5px;color:var(--muted)}
+  .p-tools .sp{flex:1}
+  .p-tools .gbtn{font-size:10.5px;color:var(--muted);border:1px solid var(--line);background:#fff;border-radius:7px;padding:3px 9px}
+
+  /* 会话绑定条 */
+  .bind{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:12px 16px 0;padding:7px 10px;border:1px solid var(--brand-edge);background:rgba(238,242,255,.55);border-radius:10px;font-size:10px;color:var(--muted)}
+  .bind b{font-size:10.5px;color:var(--ink-soft);font-weight:600}
+  .bind .b{border:1px solid var(--line);background:#fff;border-radius:999px;padding:1px 7px;font-family:"JetBrains Mono",Consolas,monospace;font-size:9.5px;color:var(--muted)}
+  .bind .ok{border:1px solid var(--green-edge);background:var(--green-soft);color:#047857;border-radius:999px;padding:1px 7px;font-size:9.5px}
+
+  /* 轮次内容通用 */
+  .prose{font-size:12.5px;line-height:1.85;color:var(--ink-soft)}
+  .prose p+p{margin-top:7px}
+  .prose ul{list-style:none;margin:8px 0;display:grid;gap:5px}
+  .prose li{display:flex;gap:7px;align-items:baseline}
+  .prose li::before{content:"";width:4px;height:4px;border-radius:999px;background:var(--brand-edge);flex:none;transform:translateY(-2px)}
+  .prose li b{color:var(--ink);font-weight:600}
+  .prose .up{color:var(--green);font-weight:600}
+  .prose .dn{color:var(--rose);font-weight:600}
+  .kv{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .kv span{font-size:9.5px;color:var(--muted);border:1px solid var(--line);background:#fbfbfd;border-radius:6px;padding:2px 6px}
+  .kv span.mono{color:var(--sky)}
+  .tagline{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;border-radius:999px;padding:1px 7px;border:1px solid var(--line);color:var(--muted);background:#fff}
+  .tagline.green{background:var(--green-soft);border-color:var(--green-edge);color:#047857}
+  .tagline.brand{background:var(--brand-soft);border-color:var(--brand-edge);color:var(--brand-deep)}
+
+  .note{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .note div{background:#fff;border:1px solid var(--line);border-radius:11px;padding:9px 12px;font-size:11px;line-height:1.65;color:var(--muted)}
+  .note b{display:block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:3px}
+  .note .pro b{color:var(--green)}
+  .note .con b{color:var(--amber)}
+
+  /* ================= 方案 A：气泡流 ================= */
+  .flow-a{max-width:1000px;margin:0 auto;padding:16px 18px 22px;display:flex;flex-direction:column;gap:16px}
+  .a-turn{}
+  .a-meta{display:flex;align-items:center;gap:8px;font-size:9.5px;color:var(--faint);margin-bottom:10px}
+  .a-meta::before,.a-meta::after{content:"";height:1px;flex:1;background:linear-gradient(90deg,transparent,var(--line))}
+  .a-meta::after{background:linear-gradient(90deg,var(--line),transparent)}
+  .a-meta .t{width:18px;height:18px;border-radius:6px;background:var(--brand-soft);color:var(--brand);display:grid;place-items:center;font:600 9px/1 "JetBrains Mono",Consolas,monospace}
+  .a-user{display:flex;justify-content:flex-end}
+  .bubble-user{max-width:58%;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border-radius:16px 16px 5px 16px;padding:10px 14px;font-size:12.5px;line-height:1.7;box-shadow:0 12px 26px -20px rgba(79,70,229,.95)}
+  .a-ai{display:flex;gap:9px;align-items:flex-start;margin-top:9px}
+  .ava{width:26px;height:26px;flex:none;border-radius:9px;background:linear-gradient(135deg,#818cf8,#4f46e5);color:#fff;display:grid;place-items:center;font-size:10px;font-weight:600;box-shadow:0 6px 14px -10px rgba(79,70,229,.9)}
+  .bubble-ai{max-width:86%;background:#fff;border:1px solid var(--line);border-radius:5px 16px 16px 16px;padding:11px 15px;box-shadow:0 1px 2px rgba(17,24,39,.03)}
+  .bubble-ai .prose{max-width:66ch}
+  .a-foot{margin:8px 0 0 35px;display:flex;align-items:center;gap:9px;font-size:9.5px;color:var(--faint)}
+  .a-foot .sep{width:1px;height:9px;background:var(--line)}
+
+  /* ================= 方案 B：轮次轨道 ================= */
+  .flow-b{padding:16px 18px 8px}
+  .b-turn{display:grid;grid-template-columns:50px 1fr;min-height:0}
+  .b-rail{display:flex;flex-direction:column;align-items:center}
+  .b-node{width:26px;height:26px;border-radius:9px;background:#fff;border:1px solid var(--brand-edge);color:var(--brand);font:600 9.5px/1 "JetBrains Mono",Consolas,monospace;display:grid;place-items:center;flex:none;box-shadow:0 1px 2px rgba(17,24,39,.04)}
+  .b-line{width:2px;flex:1;background:linear-gradient(#e0e7ff,#eef2ff);margin:5px 0}
+  .b-body{padding:0 0 17px 2px;display:grid;gap:8px;min-width:0}
+  .b-q{display:flex;gap:8px;align-items:baseline;border-left:2px solid var(--brand-edge);padding:1px 0 1px 9px;font-size:12.5px;font-weight:500;color:var(--ink);line-height:1.65}
+  .b-q .lb{flex:none;font-size:9px;letter-spacing:.08em;font-weight:600;color:var(--brand);background:var(--brand-soft);border-radius:4px;padding:1.5px 5px;transform:translateY(-1px)}
+  .b-a{background:#fff;border:1px solid var(--line);border-radius:11px;padding:10px 14px;display:grid;grid-template-columns:minmax(0,1fr) 148px;column-gap:14px}
+  .b-a-head{grid-column:1/-1;display:flex;align-items:center;gap:7px;padding-bottom:7px;margin-bottom:8px;border-bottom:1px dashed var(--line);font-size:9.5px;color:var(--faint)}
+  .b-a-head .sp{flex:1}
+  .b-a .prose{max-width:72ch}
+  .b-a .kv{grid-column:1}
+  .b-side{border-left:1px dashed var(--line);padding-left:12px;display:grid;gap:5px;align-content:start;font-size:9.5px;color:var(--muted)}
+  .b-side .sm{display:flex;justify-content:space-between;gap:8px}
+  .b-side .sm b{font-family:"JetBrains Mono",Consolas,monospace;font-weight:500;color:var(--ink-soft);font-size:9px}
+  .b-side .act{color:var(--brand);margin-top:1px}
+
+  /* ================= 方案 C：目录主从 ================= */
+  .c-shell{display:grid;grid-template-columns:238px 1fr;border-top:1px solid var(--line-soft)}
+  .c-side{border-right:1px solid var(--line);background:#fbfbfd;padding:10px 8px;overflow:hidden}
+  .c-side .sh{display:flex;align-items:center;justify-content:space-between;font-size:9.5px;letter-spacing:.08em;color:var(--muted);padding:4px 8px 8px;text-transform:uppercase}
+  .c-item{display:grid;gap:5px;padding:8px 9px;border-radius:10px;border:1px solid transparent}
+  .c-item+.c-item{margin-top:3px}
+  .c-item.on{background:#fff;border-color:var(--brand-edge);box-shadow:0 1px 2px rgba(17,24,39,.05)}
+  .c-item .r1{display:flex;align-items:center;gap:6px;font-size:9.5px;color:var(--faint);font-family:"JetBrains Mono",Consolas,monospace}
+  .c-item .r1 .n{font-weight:700;color:var(--brand)}
+  .c-item .q{font-size:11px;line-height:1.55;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .c-item.on .q{color:var(--ink-soft)}
+  .c-item .r2{display:flex;gap:4px;align-items:center;font-size:9px;color:var(--faint)}
+  .c-item .dot{width:4px;height:4px;border-radius:999px;background:var(--green)}
+  .c-detail{display:grid;grid-template-columns:minmax(0,1fr) 196px;gap:16px;padding:14px 16px;align-items:start}
+  .c-col{min-width:0;display:flex;flex-direction:column}
+  .c-rail{border-left:1px solid var(--line-soft);padding-left:14px;display:grid;gap:10px;align-content:start}
+  .c-rail .rb{display:grid;gap:4px}
+  .c-rail .rb h5{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .c-rail .rm{display:flex;justify-content:space-between;font-size:10px;color:var(--muted)}
+  .c-rail .rm b{font-family:"JetBrains Mono",Consolas,monospace;font-weight:500;color:var(--ink-soft);font-size:9.5px}
+  .c-rail .rchk{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--ink-soft)}
+  .c-rail .rchk i{width:12px;height:12px;border-radius:999px;background:var(--green-soft);border:1px solid var(--green-edge);color:#047857;display:grid;place-items:center;font-size:8px;font-style:normal;flex:none}
+  .c-rail .rbtn{margin-top:2px;font-size:10px;color:var(--muted);border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 0;text-align:center}
+  .c-detail .dhead{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding-bottom:9px;border-bottom:1px solid var(--line-soft);margin-bottom:11px}
+  .c-detail .dhead .num{font:700 10px/1 "JetBrains Mono",Consolas,monospace;color:var(--brand);background:var(--brand-soft);border-radius:6px;padding:4px 6px}
+  .c-detail .dhead .sp{flex:1}
+  .c-q{background:#f8fafc;border:1px solid var(--line-soft);border-left:2px solid var(--brand);border-radius:6px 10px 10px 6px;padding:9px 12px;font-size:12.5px;font-weight:500;color:var(--ink);line-height:1.65}
+  .c-q .lb{display:block;font-size:9px;letter-spacing:.1em;color:var(--faint);font-weight:600;margin-bottom:3px}
+  .c-a{margin-top:12px}
+  .c-a .al{display:flex;align-items:center;gap:7px;font-size:9.5px;color:var(--faint);margin-bottom:6px}
+  .c-a .prose{max-width:70ch}
+  .c-more{margin-top:16px;border-top:1px solid var(--line-soft)}
+  .c-more div{display:flex;align-items:center;gap:6px;padding:7px 2px;font-size:10.5px;color:var(--muted);border-bottom:1px solid var(--line-soft)}
+  .c-more div .sp{flex:1}
+  .c-more div b{font-weight:500;color:var(--ink-soft)}
+  .c-more div .ok{color:#047857}
+  .c-more div .arw{color:#cbd5e1}
+  .c-turnbar{display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:10px;border-top:0}
+  .c-turnbar .sp{flex:1}
+  .c-turnbar .nb{font-size:10px;color:var(--muted);border:1px solid var(--line);border-radius:7px;padding:3px 9px;background:#fff}
+  .c-turnbar .nb.on{color:var(--brand);border-color:var(--brand-edge);background:var(--brand-soft)}
+
+  /* ================= 方案 D：非对称栅格 ================= */
+  .flow-d{padding:14px 16px 18px;display:grid;gap:11px}
+  .d-turn{display:grid;grid-template-columns:296px 1fr;gap:11px;padding:11px;border:1px solid var(--line);border-radius:12px;background:#fbfbfd}
+  .d-q{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 11px;display:flex;flex-direction:column}
+  .d-q .lb{display:flex;align-items:center;gap:5px;font-size:9px;letter-spacing:.1em;color:var(--faint);font-weight:600;margin-bottom:5px}
+  .d-q .lb .n{font-family:"JetBrains Mono",Consolas,monospace;color:var(--brand)}
+  .d-q .txt{font-size:12px;line-height:1.7;color:var(--ink);font-weight:500}
+  .d-meta{margin-top:8px;display:grid;gap:4px;font-size:9.5px;color:var(--muted)}
+  .d-vars{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+  .d-vars span{font-family:"JetBrains Mono",Consolas,monospace;font-size:9px;line-height:1.5;color:#0369a1;background:#f0f9ff;border:1px solid #bae6fd;border-radius:5px;padding:1px 5px}
+  .d-meta .mrow{display:flex;justify-content:space-between;gap:8px;border-top:1px dashed var(--line);padding-top:4px}
+  .d-meta .mrow b{font-weight:500;color:var(--ink-soft);font-family:"JetBrains Mono",Consolas,monospace;font-size:9.5px}
+  .d-a{background:#fff;border:1px solid var(--line);border-radius:9px;padding:10px 14px}
+  .d-a .ah{display:flex;align-items:center;gap:7px;font-size:9.5px;color:var(--faint);margin-bottom:7px;padding-bottom:6px;border-bottom:1px dashed var(--line)}
+  .d-a .ah .sp{flex:1}
+  .d-a .prose{max-width:72ch}
+  .scale{display:flex;align-items:center;gap:8px;margin:0 16px 12px;font-size:9.5px;color:var(--faint)}
+  .scale .bar{flex:1;height:6px;border-radius:999px;background:var(--line-soft);overflow:hidden;display:flex}
+  .scale .bar i{display:block;height:100%}
+  .scale .bar i.q{width:283px;background:#c7d2fe}
+  .scale .bar i.a{flex:1;background:#a5b4fc}
+  .scale .bar i.q2{width:50%;background:#e2e8f0}
+  .scale .bar i.a2{width:50%;background:#e2e8f0}
+</style>
+</head>
+<body>
+<div class="board">
+  <div class="board-head">
+    <div>
+      <p class="kicker">Design 03 · 用例执行详情 · 对话轮次</p>
+      <h1>「宽答窄问」四套排版方案</h1>
+      <p>现状：每轮固定 50 / 50 双栏，用户提问仅 1~2 行，客服回复常是长段落 / 列表 / 表格。左栏留白 70% 以上，右栏被挤成窄列、行高密集，视线来回跳。以下四套方案分别从「宽度随内容走」「去左右对撞」「左栏改导航」「最小改动」四个方向解决。</p>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:7px;align-items:flex-end">
+      <span class="tag-soft">基准：1280px 宽 · 6 轮会话</span>
+      <span class="tag-soft">色板 / 圆角 / 字号沿用现有 token</span>
+    </div>
+  </div>
+
+  <!-- 诊断 -->
+  <div class="diag">
+    <div class="diag-card">
+      <h4>现状：左右栏「内容填充率」</h4>
+      <div class="bars">
+        <div class="diag-bar"><span>左栏 · 提问</span><span class="diag-track"><i class="diag-fill" style="width:18%;background:#fca5a5"></i></span><span style="text-align:right">18%</span></div>
+        <div class="diag-bar"><span>右栏 · 回复</span><span class="diag-track"><i class="diag-fill" style="width:96%;background:#fdba74"></i></span><span style="text-align:right">96%</span></div>
+      </div>
+      <p class="diag-note">宽屏下左栏约 600px 只放 1~2 行文字，右栏 600px 承载 20+ 行内容，<b>密度相差 5 倍</b>。</p>
+    </div>
+    <div class="diag-card diag-good">
+      <h4>目标：让宽度跟随内容</h4>
+      <div class="bars">
+        <div class="diag-bar"><span>短问</span><span class="diag-track"><i class="diag-fill" style="width:46%;background:#a7f3d0"></i></span><span style="text-align:right">贴合</span></div>
+        <div class="diag-bar"><span>长答</span><span class="diag-track"><i class="diag-fill" style="width:88%;background:#6ee7b7"></i></span><span style="text-align:right">舒展</span></div>
+      </div>
+      <p class="diag-note">长文本单行控制在 <b style="color:#047857">64~76ch</b>，短问不被拉满，长答不被压窄，整体重心稳定。</p>
+    </div>
+  </div>
+
+  <!-- ============ 方案 A ============ -->
+  <section class="variant">
+    <div class="v-head">
+      <span class="v-index">A</span>
+      <h2>气泡流 · 宽度随内容自适应</h2>
+      <span class="v-sub">提问右收、回复左展，长答案吃掉整行宽度</span>
+      <span class="v-gap"></span>
+      <span class="pill brand">改动中</span>
+      <span class="pill green">左栏不再留白</span>
+    </div>
+    <div class="screen">
+      <div class="s-top">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="crumb">用例详情 <span>/</span> <b>TC-2418 华东区销售查询</b> <span>/</span> 执行 #run-2481</div>
+        <span class="sp"></span>
+        <span class="chip">通过 · 92 分</span>
+      </div>
+      <div class="panel">
+        <div class="p-head">
+          <h3>对话轮次</h3><span class="cnt">3</span>
+          <span class="sp"></span>
+          <div class="seg"><span class="on">对话流</span><span>对照模式</span></div>
+        </div>
+        <div class="p-tools">
+          <span class="t">共 3 轮</span>
+          <span class="t">·</span>
+          <span class="t">气泡宽度：提问 ≤58%，回复 ≤86%</span>
+          <span class="sp"></span>
+          <span class="gbtn">全部折叠</span>
+        </div>
+        <div class="bind">
+          <b>会话绑定</b>
+          <span class="b">SESSION_PERSIST</span>
+          <span class="b">sess_9f2c…a71</span>
+          <span class="ok">各轮会话一致</span>
+        </div>
+        <div class="flow-a">
+          <!-- T1 -->
+          <div class="a-turn">
+            <div class="a-meta"><span class="t">T1</span><span>模拟器输入</span><span>·</span><span>TTFT 412ms</span><span>·</span><span>Tokens 1,284</span></div>
+            <div class="a-user"><div class="bubble-user">帮我查一下上个月华东区的销售总额，要按品类拆一下。</div></div>
+            <div class="a-ai">
+              <div class="ava">客</div>
+              <div class="bubble-ai">
+                <div class="prose">
+                  <p>已为您统计 <b>2026 年 10 月华东区</b>的销售情况，总额 <b>1,284.6 万元</b>，同比增长 <span class="up">12.4%</span>。按品类拆分如下：</p>
+                  <ul>
+                    <li>家用电器 <b>486.2 万元</b>，占比 37.8%，环比 <span class="up">+18.6%</span></li>
+                    <li>数码 3C <b>352.4 万元</b>，占比 27.4%，环比 <span class="up">+6.2%</span></li>
+                    <li>家居日用 <b>281.7 万元</b>，占比 21.9%，环比 <span class="dn">-1.4%</span></li>
+                    <li>其他 <b>164.3 万元</b>，占比 12.9%</li>
+                  </ul>
+                  <p>增长主要来自南京、杭州两地的大促活动，其中南京贡献了家电品类 41% 的增量。</p>
+                </div>
+              </div>
+            </div>
+            <div class="a-foot"><span class="tagline green">✓ 规则通过</span><span>时延 1.24s</span><span class="sep"></span><span>展开原始报文</span></div>
+          </div>
+          <!-- T2 -->
+          <div class="a-turn">
+            <div class="a-meta"><span class="t">T2</span><span>模拟器输入</span><span>·</span><span>TTFT 386ms</span><span>·</span><span>Tokens 968</span></div>
+            <div class="a-user"><div class="bubble-user">那跟上上个月比呢？</div></div>
+            <div class="a-ai">
+              <div class="ava">客</div>
+              <div class="bubble-ai">
+                <div class="prose">
+                  <p>环比来看，10 月比 9 月整体增长 <span class="up">8.2%</span>，四个品类中三个上涨：</p>
+                  <ul>
+                    <li>家用电器 <span class="up">+18.6%</span>（增幅最大，大促拉动明显）</li>
+                    <li>数码 3C <span class="up">+6.2%</span></li>
+                    <li>家居日用 <span class="dn">-1.4%</span>（换季品类自然回落）</li>
+                  </ul>
+                  <p>如果您需要，我可以把 9 月与 10 月的日维度趋势拉出来对比。</p>
+                </div>
+                <div class="kv"><span class="mono">last_month = 2026-10</span><span class="mono">region = 华东</span></div>
+              </div>
+            </div>
+            <div class="a-foot"><span class="tagline green">✓ 规则通过</span><span>时延 1.02s</span><span class="sep"></span><span>展开原始报文</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="note">
+      <div class="pro"><b>优点</b>宽度完全由内容决定：两行提问不会被拉成一整行，长回复自动获得 86% 宽度，左右留白对称；实现只需改 flex + max-width。</div>
+      <div class="con"><b>代价</b>气泡语义偏「聊天」，评审语境下略轻；超长答案仍需 66ch 限宽，右侧会留出一点呼吸白。</div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 B ============ -->
+  <section class="variant">
+    <div class="v-head">
+      <span class="v-index">B</span>
+      <h2>轮次轨道 · 纵向单列阅读</h2>
+      <span class="v-sub">去掉左右对撞，左栏变 50px 时间轴</span>
+      <span class="v-gap"></span>
+      <span class="pill brand">改动中</span>
+      <span class="pill green">回复可用宽度 +41%</span>
+    </div>
+    <div class="screen">
+      <div class="s-top">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="crumb">用例详情 <span>/</span> <b>TC-2418 华东区销售查询</b> <span>/</span> 执行 #run-2481</div>
+        <span class="sp"></span>
+        <span class="chip">通过 · 92 分</span>
+      </div>
+      <div class="panel">
+        <div class="p-head">
+          <h3>对话轮次</h3><span class="cnt">3</span>
+          <span class="sp"></span>
+          <div class="seg"><span class="on">对话流</span><span>对照模式</span></div>
+        </div>
+        <div class="p-tools">
+          <span class="t">共 3 轮</span>
+          <span class="t">·</span>
+          <span class="t">单列行宽 74ch，左侧为轮次轨道</span>
+          <span class="sp"></span>
+          <span class="gbtn">全部折叠</span>
+        </div>
+        <div class="bind">
+          <b>会话绑定</b>
+          <span class="b">SESSION_PERSIST</span>
+          <span class="b">sess_9f2c…a71</span>
+          <span class="ok">各轮会话一致</span>
+        </div>
+        <div class="flow-b">
+          <!-- T1 -->
+          <div class="b-turn">
+            <div class="b-rail"><div class="b-node">T1</div><div class="b-line"></div></div>
+            <div class="b-body">
+              <div class="b-q"><span class="lb">问</span>帮我查一下上个月华东区的销售总额，要按品类拆一下。</div>
+              <div class="b-a">
+                <div class="b-a-head">
+                  <span class="tagline brand">客服回复</span>
+                  <span class="sp"></span>
+                  <span class="tagline">展开报文</span>
+                  <span class="tagline green">✓ 规则通过</span>
+                </div>
+                <div class="prose">
+                  <p>已为您统计 <b>2026 年 10 月华东区</b>的销售情况，总额 <b>1,284.6 万元</b>，同比增长 <span class="up">12.4%</span>。按品类拆分如下：</p>
+                  <ul>
+                    <li>家用电器 <b>486.2 万元</b>，占比 37.8%，环比 <span class="up">+18.6%</span></li>
+                    <li>数码 3C <b>352.4 万元</b>，占比 27.4%，环比 <span class="up">+6.2%</span></li>
+                    <li>家居日用 <b>281.7 万元</b>，占比 21.9%，环比 <span class="dn">-1.4%</span></li>
+                    <li>其他 <b>164.3 万元</b>，占比 12.9%</li>
+                  </ul>
+                  <p>增长主要来自南京、杭州两地的大促活动，其中南京贡献了家电品类 41% 的增量。</p>
+                </div>
+                <aside class="b-side">
+                  <div class="sm"><span>首 Token</span><b>412 ms</b></div>
+                  <div class="sm"><span>总时延</span><b>1.24 s</b></div>
+                  <div class="sm"><span>Tokens</span><b>1,284</b></div>
+                  <div class="sm"><span>回复字数</span><b>186</b></div>
+                  <div class="act">原始报文 ›</div>
+                </aside>
+              </div>
+            </div>
+          </div>
+          <!-- T2 -->
+          <div class="b-turn">
+            <div class="b-rail"><div class="b-node">T2</div><div class="b-line"></div></div>
+            <div class="b-body">
+              <div class="b-q"><span class="lb">问</span>那跟上上个月比呢？</div>
+              <div class="b-a">
+                <div class="b-a-head">
+                  <span class="tagline brand">客服回复</span>
+                  <span class="sp"></span>
+                  <span class="tagline">展开报文</span>
+                  <span class="tagline green">✓ 规则通过</span>
+                </div>
+                <div class="prose">
+                  <p>环比来看，10 月比 9 月整体增长 <span class="up">8.2%</span>，四个品类中三个上涨：</p>
+                  <ul>
+                    <li>家用电器 <span class="up">+18.6%</span>（增幅最大，大促拉动明显）</li>
+                    <li>数码 3C <span class="up">+6.2%</span></li>
+                    <li>家居日用 <span class="dn">-1.4%</span>（换季品类自然回落）</li>
+                  </ul>
+                  <p>如果您需要，我可以把 9 月与 10 月的日维度趋势拉出来对比。</p>
+                </div>
+                <aside class="b-side">
+                  <div class="sm"><span>首 Token</span><b>386 ms</b></div>
+                  <div class="sm"><span>总时延</span><b>1.02 s</b></div>
+                  <div class="sm"><span>Tokens</span><b>968</b></div>
+                  <div class="sm"><span>回复字数</span><b>142</b></div>
+                  <div class="act">原始报文 ›</div>
+                </aside>
+              </div>
+            </div>
+          </div>
+          <!-- T3 -->
+          <div class="b-turn">
+            <div class="b-rail"><div class="b-node">T3</div></div>
+            <div class="b-body" style="padding-bottom:14px">
+              <div class="b-q"><span class="lb">问</span>把华东区家电的明细导出来，我下午开会要用。</div>
+              <div class="b-a">
+                <div class="b-a-head">
+                  <span class="tagline brand">客服回复</span>
+                  <span class="sp"></span>
+                  <span class="tagline">展开报文</span>
+                  <span class="tagline">待导出</span>
+                </div>
+                <div class="prose">
+                  <p>已生成华东区家用电器明细，共 <b>1,842 条</b>，文件约 3.2 MB，包含订单号、城市、成交额与活动标签。下载链接 24 小时内有效。</p>
+                </div>
+                <div class="kv"><span class="mono">SELECT city, SUM(amount) FROM orders WHERE …</span></div>
+                <aside class="b-side">
+                  <div class="sm"><span>首 Token</span><b>508 ms</b></div>
+                  <div class="sm"><span>总时延</span><b>1.66 s</b></div>
+                  <div class="sm"><span>记录数</span><b>1,842</b></div>
+                  <div class="sm"><span>文件</span><b>3.2 MB</b></div>
+                  <div class="act">下载明细 ›</div>
+                </aside>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="note">
+      <div class="pro"><b>优点</b>彻底消除左右对撞；提问缩成带色条的引用行，回复获得整行；轮次顺序一眼可读，适合逐轮调 prompt。</div>
+      <div class="con"><b>代价</b>「问」的存在感被削弱，评审时不易快速比对问与答；仍需保留折叠 / 报文入口。</div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 C ============ -->
+  <section class="variant">
+    <div class="v-head">
+      <span class="v-index">C</span>
+      <h2>目录主从 · 左栏变成轮次导航</h2>
+      <span class="v-sub">浪费的左栏改为可点击轮次列表，右侧只放当前轮</span>
+      <span class="v-gap"></span>
+      <span class="pill brand">改动大</span>
+      <span class="pill green">长会话友好</span>
+    </div>
+    <div class="screen">
+      <div class="s-top">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="crumb">用例详情 <span>/</span> <b>TC-2418 华东区销售查询</b> <span>/</span> 执行 #run-2481</div>
+        <span class="sp"></span>
+        <span class="chip">通过 · 92 分</span>
+      </div>
+      <div class="panel">
+        <div class="p-head">
+          <h3>对话轮次</h3><span class="cnt">6</span>
+          <span class="sp"></span>
+          <div class="seg"><span class="on">对话流</span><span>对照模式</span></div>
+        </div>
+        <div class="c-shell">
+          <aside class="c-side">
+            <div class="sh"><span>轮次索引</span><span class="mono">3 / 6</span></div>
+            <div class="c-item on">
+              <div class="r1"><span class="n">T1</span><span>10:42:06</span></div>
+              <div class="q">帮我查一下上个月华东区的销售总额，要按品类拆一下。</div>
+              <div class="r2"><i class="dot"></i><span>通过</span><span>·</span><span>1.24s</span></div>
+            </div>
+            <div class="c-item">
+              <div class="r1"><span class="n">T2</span><span>10:42:21</span></div>
+              <div class="q">那跟上上个月比呢？</div>
+              <div class="r2"><i class="dot"></i><span>通过</span><span>·</span><span>1.02s</span></div>
+            </div>
+            <div class="c-item">
+              <div class="r1"><span class="n">T3</span><span>10:42:39</span></div>
+              <div class="q">把华东区家电的明细导出来，我下午开会要用。</div>
+              <div class="r2"><i class="dot"></i><span>通过</span><span>·</span><span>1.66s</span></div>
+            </div>
+            <div class="c-item">
+              <div class="r1"><span class="n">T4</span><span>10:43:02</span></div>
+              <div class="q">南京和杭州分别多少？</div>
+              <div class="r2"><i class="dot" style="background:#f59e0b"></i><span>部分命中</span><span>·</span><span>1.31s</span></div>
+            </div>
+            <div class="c-item">
+              <div class="r1"><span class="n">T5</span><span>10:43:18</span></div>
+              <div class="q">好，那按城市列个表给我。</div>
+              <div class="r2"><i class="dot"></i><span>通过</span><span>·</span><span>0.98s</span></div>
+            </div>
+            <div class="c-item">
+              <div class="r1"><span class="n">T6</span><span>10:43:40</span></div>
+              <div class="q">谢谢，先这样。</div>
+              <div class="r2"><i class="dot"></i><span>通过</span><span>·</span><span>0.41s</span></div>
+            </div>
+          </aside>
+          <div class="c-detail">
+            <div class="c-col">
+            <div class="dhead">
+              <span class="num">T1</span>
+              <span class="tagline brand">模拟器输入</span>
+              <span class="tagline green">✓ 规则通过</span>
+              <span>TTFT 412ms</span>
+              <span>·</span>
+              <span>时延 1.24s</span>
+              <span>·</span>
+              <span>Tokens 1,284</span>
+              <span class="sp"></span>
+              <span class="tagline">意图：销售汇总</span>
+            </div>
+            <div class="c-q"><span class="lb">用户提问</span>帮我查一下上个月华东区的销售总额，要按品类拆一下。</div>
+            <div class="c-a">
+              <div class="al"><span class="tagline brand">客服最终回复</span><span>单轮阅读宽度 70ch</span></div>
+              <div class="prose">
+                <p>已为您统计 <b>2026 年 10 月华东区</b>的销售情况，总额 <b>1,284.6 万元</b>，同比增长 <span class="up">12.4%</span>。按品类拆分如下：</p>
+                <ul>
+                  <li>家用电器 <b>486.2 万元</b>，占比 37.8%，环比 <span class="up">+18.6%</span></li>
+                  <li>数码 3C <b>352.4 万元</b>，占比 27.4%，环比 <span class="up">+6.2%</span></li>
+                  <li>家居日用 <b>281.7 万元</b>，占比 21.9%，环比 <span class="dn">-1.4%</span></li>
+                  <li>其他 <b>164.3 万元</b>，占比 12.9%</li>
+                </ul>
+                <p>增长主要来自南京、杭州两地的大促活动，其中南京贡献了家电品类 41% 的增量。</p>
+              </div>
+            </div>
+            <div class="c-more">
+              <div><span>本轮校验明细</span><span class="sp"></span><b class="ok">3 项通过</b><span class="arw">›</span></div>
+              <div><span>请求 / 响应原始报文</span><span class="sp"></span><b>JSON</b><span class="arw">›</span></div>
+              <div><span>模拟器渲染 Prompt</span><span class="sp"></span><b>已渲染</b><span class="arw">›</span></div>
+            </div>
+            <div class="c-turnbar">
+              <span class="nb">上一轮</span>
+              <span class="sp"></span>
+              <span class="nb on">T1 / 6</span>
+              <span class="sp"></span>
+              <span class="nb">下一轮 ›</span>
+            </div>
+            </div>
+            <aside class="c-rail">
+              <div class="rb">
+                <h5>本轮指标</h5>
+                <div class="rm"><span>首 Token</span><b>412 ms</b></div>
+                <div class="rm"><span>总时延</span><b>1.24 s</b></div>
+                <div class="rm"><span>Tokens</span><b>1,284</b></div>
+                <div class="rm"><span>回复字数</span><b>186</b></div>
+              </div>
+              <div class="rb">
+                <h5>规则校验</h5>
+                <div class="rchk"><i>✓</i><span>必须包含总额</span></div>
+                <div class="rchk"><i>✓</i><span>按品类拆分 ≥ 3</span></div>
+                <div class="rchk"><i>✓</i><span>金额单位一致</span></div>
+              </div>
+              <div class="rb">
+                <h5>会话</h5>
+                <div class="rm"><span>模式</span><b>PERSIST</b></div>
+                <div class="rm"><span>ID</span><b>sess_9f2c</b></div>
+              </div>
+              <div class="rb">
+                <h5>附件</h5>
+                <div class="rbtn">请求 / 响应报文</div>
+                <div class="rbtn">生成 SQL</div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="note">
+      <div class="pro"><b>优点</b>左栏从「空白」变成高价值导航，长会话（6 轮以上）可跳跃定位；右侧专注单轮，回复可拿满宽度。</div>
+      <div class="con"><b>代价</b>需要选中态、键盘上下切换与「展开全部」回退；跨轮对比要多一次点击。</div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 D ============ -->
+  <section class="variant">
+    <div class="v-head">
+      <span class="v-index">D</span>
+      <h2>非对称栅格 · 最小改动版</h2>
+      <span class="v-sub">保留双栏，左 296px 固定、右侧吃满剩余宽度</span>
+      <span class="v-gap"></span>
+      <span class="pill green">1 天可落地</span>
+      <span class="pill amber">仍为双栏</span>
+    </div>
+    <div class="screen">
+      <div class="s-top">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="crumb">用例详情 <span>/</span> <b>TC-2418 华东区销售查询</b> <span>/</span> 执行 #run-2481</div>
+        <span class="sp"></span>
+        <span class="chip">通过 · 92 分</span>
+      </div>
+      <div class="panel">
+        <div class="p-head">
+          <h3>对话轮次</h3><span class="cnt">3</span>
+          <span class="sp"></span>
+          <div class="seg"><span class="on">对话流</span><span>对照模式</span></div>
+        </div>
+        <div class="scale">
+          <span>宽度分配</span>
+          <span class="bar"><i class="q2"></i><i class="a2"></i></span>
+          <span>现状 1 : 1</span>
+          <span style="color:var(--brand)">→</span>
+          <span class="bar"><i class="q"></i><i class="a"></i></span>
+          <span style="color:var(--brand-deep)">目标 1 : 2.4</span>
+        </div>
+        <div class="bind">
+          <b>会话绑定</b>
+          <span class="b">SESSION_PERSIST</span>
+          <span class="b">sess_9f2c…a71</span>
+          <span class="ok">各轮会话一致</span>
+        </div>
+        <div class="flow-d">
+          <!-- T1 -->
+          <div class="d-turn">
+            <div class="d-q">
+              <div class="lb"><span class="n">T1</span><span>用户提问</span></div>
+              <div class="txt">帮我查一下上个月华东区的销售总额，要按品类拆一下。</div>
+              <div class="d-vars"><span>region=华东</span><span>month=2026-10</span><span>group_by=品类</span></div>
+              <div class="d-meta">
+                <div class="mrow"><span>意图</span><b>销售汇总</b></div>
+                <div class="mrow"><span>模拟器思考</span><b>需按品类聚合</b></div>
+                <div class="mrow"><span>TTFT / 时延</span><b>412ms / 1.24s</b></div>
+                <div class="mrow"><span>Tokens</span><b>1,284</b></div>
+              </div>
+            </div>
+            <div class="d-a">
+              <div class="ah">
+                <span class="tagline brand">客服最终回复</span>
+                <span class="sp"></span>
+                <span class="tagline green">✓ 规则通过</span>
+                <span>展开报文</span>
+              </div>
+              <div class="prose">
+                <p>已为您统计 <b>2026 年 10 月华东区</b>的销售情况，总额 <b>1,284.6 万元</b>，同比增长 <span class="up">12.4%</span>。按品类拆分如下：</p>
+                <ul>
+                  <li>家用电器 <b>486.2 万元</b>，占比 37.8%，环比 <span class="up">+18.6%</span></li>
+                  <li>数码 3C <b>352.4 万元</b>，占比 27.4%，环比 <span class="up">+6.2%</span></li>
+                  <li>家居日用 <b>281.7 万元</b>，占比 21.9%，环比 <span class="dn">-1.4%</span></li>
+                  <li>其他 <b>164.3 万元</b>，占比 12.9%</li>
+                </ul>
+                <p>增长主要来自南京、杭州两地的大促活动，其中南京贡献了家电品类 41% 的增量。</p>
+              </div>
+            </div>
+          </div>
+          <!-- T2 -->
+          <div class="d-turn">
+            <div class="d-q">
+              <div class="lb"><span class="n">T2</span><span>用户提问</span></div>
+              <div class="txt">那跟上上个月比呢？</div>
+              <div class="d-vars"><span>compare=MoM</span><span>base=2026-09</span></div>
+              <div class="d-meta">
+                <div class="mrow"><span>意图</span><b>环比对比</b></div>
+                <div class="mrow"><span>TTFT / 时延</span><b>386ms / 1.02s</b></div>
+                <div class="mrow"><span>Tokens</span><b>968</b></div>
+              </div>
+            </div>
+            <div class="d-a">
+              <div class="ah">
+                <span class="tagline brand">客服最终回复</span>
+                <span class="sp"></span>
+                <span class="tagline green">✓ 规则通过</span>
+                <span>展开报文</span>
+              </div>
+              <div class="prose">
+                <p>环比来看，10 月比 9 月整体增长 <span class="up">8.2%</span>，四个品类中三个上涨：</p>
+                <ul>
+                  <li>家用电器 <span class="up">+18.6%</span>（增幅最大，大促拉动明显）</li>
+                  <li>数码 3C <span class="up">+6.2%</span></li>
+                  <li>家居日用 <span class="dn">-1.4%</span>（换季品类自然回落）</li>
+                </ul>
+                <p>如果您需要，我可以把 9 月与 10 月的日维度趋势拉出来对比。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="note">
+      <div class="pro"><b>优点</b>只改 grid 模板 + 左栏补元信息，右侧宽度从 50% 提到约 70%；视觉与现有卡片体系完全一致，风险最低。</div>
+      <div class="con"><b>代价</b>超长回复仍会换行偏多；左右栏在极端短回复时又会出现右侧留白（可切回 1:1 或等比自适应）。</div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

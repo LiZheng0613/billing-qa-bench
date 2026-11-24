@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>设计稿 04 · 对话轮次排版 第二组方案</title>
+<style>
+  :root{
+    --canvas:#f5f5f7; --line:#e8e8ed; --line-soft:#f0f0f4; --line-strong:#dcdfe6;
+    --ink:#111827; --ink-soft:#374151; --muted:#6b7280; --faint:#9ca3af;
+    --brand:#4f46e5; --brand-deep:#4338ca; --brand-soft:#eef2ff; --brand-edge:#e0e7ff;
+    --green:#059669; --green-soft:#ecfdf5; --green-edge:#a7f3d0;
+    --amber:#b45309; --amber-soft:#fffbeb; --amber-edge:#fde68a;
+    --rose:#be123c; --rose-soft:#fff1f2; --rose-edge:#fecdd3;
+    --sky:#0369a1; --sky-soft:#f0f9ff; --sky-edge:#bae6fd;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#cbd5e1 transparent}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{border-radius:999px;background:#cbd5e1;border:2px solid transparent;background-clip:content-box}
+  body{font-family:"Inter","PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:#eceef2;color:var(--ink);font-size:13px;-webkit-font-smoothing:antialiased;min-width:1460px}
+  .mono{font-family:"JetBrains Mono",Consolas,monospace}
+
+  .board{max-width:1460px;margin:0 auto;padding:28px 24px 56px}
+  .board-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}
+  .kicker{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--brand)}
+  .board-head h1{font-size:21px;letter-spacing:-.02em;margin-top:4px}
+  .board-head p{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.65;max-width:800px}
+  .tag-soft{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:11px;color:var(--muted);white-space:nowrap}
+  .tag-soft b{color:var(--brand)}
+
+  .variant{margin-bottom:34px}
+  .v-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:9px}
+  .v-index{width:24px;height:24px;border-radius:8px;background:var(--brand);color:#fff;display:grid;place-items:center;font-size:11px;font-weight:700}
+  .v-head h2{font-size:15px;letter-spacing:-.01em}
+  .v-head .v-sub{font-size:11px;color:var(--muted)}
+  .v-head .v-gap{flex:1}
+  .pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;border:1px solid var(--line);background:#fff;padding:3px 9px;font-size:10px;color:var(--muted)}
+  .pill.green{background:var(--green-soft);border-color:var(--green-edge);color:#047857}
+  .pill.amber{background:var(--amber-soft);border-color:var(--amber-edge);color:var(--amber)}
+  .pill.brand{background:var(--brand-soft);border-color:var(--brand-edge);color:var(--brand-deep)}
+
+  .screen{background:var(--canvas);border:1px solid var(--line-strong);border-radius:20px;overflow:hidden;box-shadow:0 30px 60px -45px rgba(17,24,39,.45)}
+  .s-top{height:46px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 18px}
+  .s-top .dot{width:8px;height:8px;border-radius:999px;background:#e2e8f0}
+  .s-top .crumb{font-size:10.5px;color:var(--faint);display:flex;align-items:center;gap:6px}
+  .s-top .crumb b{color:var(--ink-soft);font-weight:500}
+  .s-top .sp{flex:1}
+  .s-top .chip{font-size:10px;color:var(--muted);border:1px solid var(--line);background:#fbfbfd;border-radius:999px;padding:3px 9px}
+
+  .panel{margin:14px 16px 16px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 1px 2px rgba(17,24,39,.04),0 18px 40px -36px rgba(17,24,39,.55);overflow:hidden}
+  .p-head{display:flex;align-items:center;gap:8px;padding:11px 16px;border-bottom:1px solid var(--line-soft)}
+  .p-head h3{font-size:12.5px;font-weight:600}
+  .p-head .cnt{font-size:10px;color:var(--muted);background:#f8fafc;border-radius:999px;padding:1px 7px}
+  .p-head .sp{flex:1}
+  .seg{display:inline-flex;border:1px solid var(--line);background:#f8fafc;border-radius:8px;padding:2px}
+  .seg span{font-size:10.5px;color:var(--muted);padding:3px 9px;border-radius:6px}
+  .seg span.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(17,24,39,.06);font-weight:500}
+  .p-tools{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line-soft);background:#fcfcfe}
+  .p-tools .t{font-size:10.5px;color:var(--muted)}
+  .p-tools .sp{flex:1}
+  .p-tools .gbtn{font-size:10.5px;color:var(--muted);border:1px solid var(--line);background:#fff;border-radius:7px;padding:3px 9px}
+
+  .bind{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:12px 16px 0;padding:7px 10px;border:1px solid var(--brand-edge);background:rgba(238,242,255,.55);border-radius:10px;font-size:10px;color:var(--muted)}
+  .bind b{font-size:10.5px;color:var(--ink-soft);font-weight:600}
+  .bind .b{border:1px solid var(--line);background:#fff;border-radius:999px;padding:1px 7px;font-family:"JetBrains Mono",Consolas,monospace;font-size:9.5px;color:var(--muted)}
+  .bind .ok{border:1px solid var(--green-edge);background:var(--green-soft);color:#047857;border-radius:999px;padding:1px 7px;font-size:9.5px}
+
+  .prose{font-size:12.5px;line-height:1.85;color:var(--ink-soft)}
+  .prose p+p{margin-top:7px}
+  .prose ul{list-style:none;margin:8px 0;display:grid;gap:5px}
+  .prose li{display:flex;gap:7px;align-items:baseline}
+  .prose li::before{content:"";width:4px;height:4px;border-radius:999px;background:var(--brand-edge);flex:none;transform:translateY(-2px)}
+  .prose li b{color:var(--ink);font-weight:600}
+  .prose .up{color:var(--green);font-weight:600}
+  .prose .dn{color:var(--rose);font-weight:600}
+  .tagline{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;border-radius:999px;padding:1px 7px;border:1px solid var(--line);color:var(--muted);background:#fff}
+  .tagline.green{background:var(--green-soft);border-color:var(--green-edge);color:#047857}
+  .tagline.brand{background:var(--brand-soft);border-color:var(--brand-edge);color:var(--brand-deep)}
+  .kv{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .kv span{font-size:9.5px;color:var(--muted);border:1px solid var(--line);background:#fbfbfd;border-radius:6px;padding:2px 6px}
+  .kv span.mono{color:var(--sky)}
+
+  .note{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .note div{background:#fff;border:1px solid var(--line);border-radius:11px;padding:9px 12px;font-size:11px;line-height:1.65;color:var(--muted)}
+  .note b{display:block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:3px}
+  .note .pro b{color:var(--green)}
+  .note .con b{color:var(--amber)}
+
+  /* ================= E 工单式全宽卡 ================= */
+  .tk-list{padding:14px 16px 18px;display:grid;gap:12px}
+  .tk-turn{border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}
+  .tk-head{display:flex;align-items:flex-start;gap:11px;padding:11px 14px;background:#fbfbfd;border-bottom:1px solid var(--line-soft)}
+  .tk-num{width:24px;height:24px;border-radius:8px;background:var(--brand-soft);color:var(--brand);font:700 10px/24px "JetBrains Mono",Consolas,monospace;text-align:center;flex:none}
+  .tk-qbox{flex:1;min-width:0}
+  .tk-lb{display:flex;align-items:center;gap:6px;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .tk-q{margin-top:4px;font-size:13px;line-height:1.6;font-weight:500;color:var(--ink)}
+  .tk-vars{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+  .tk-vars span{font-family:"JetBrains Mono",Consolas,monospace;font-size:9px;line-height:1.5;color:#0369a1;background:var(--sky-soft);border:1px solid var(--sky-edge);border-radius:5px;padding:1px 5px}
+  .tk-aside{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none}
+  .tk-aside .metrics{display:flex;gap:9px;font-size:9.5px;color:var(--faint)}
+  .tk-aside .metrics b{font-weight:500;color:var(--ink-soft);font-family:"JetBrains Mono",Consolas,monospace}
+  .tk-body{padding:13px 16px 11px}
+  .tk-body .prose{max-width:104ch}
+  .tk-body .prose ul.two{grid-template-columns:1fr 1fr;column-gap:30px}
+  .tk-body .prose p{max-width:104ch}
+  .tk-foot{display:flex;align-items:center;gap:9px;padding:8px 16px;border-top:1px dashed var(--line);font-size:9.5px;color:var(--faint)}
+  .tk-foot .sp{flex:1}
+  .tk-foot .act{color:var(--muted)}
+  .tk-foot .sep{width:1px;height:9px;background:var(--line)}
+
+  /* ================= F 摘要折叠列表 ================= */
+  .fl-toolbar{display:flex;align-items:center;gap:8px}
+  .fl-badge{font-size:9.5px;color:var(--brand);background:var(--brand-soft);border:1px solid var(--brand-edge);border-radius:999px;padding:1px 7px}
+  .fl-list{padding:8px 12px 14px}
+  .fl-row{border:1px solid transparent;border-radius:11px}
+  .fl-row+.fl-row{margin-top:2px}
+  .fl-row.open{background:#fff;border-color:var(--brand-edge);box-shadow:0 1px 3px rgba(17,24,39,.06);margin:6px 0}
+  .fl-row.open .fl-a{display:none}
+  .fl-row.open .fl-q{grid-column:2 / 4;white-space:normal;font-size:12.5px}
+  .fl-line{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(0,1.05fr) 132px;gap:12px;align-items:center;padding:9px 10px;border-bottom:1px solid var(--line-soft)}
+  .fl-row:last-child .fl-line{border-bottom:0}
+  .fl-idx{font:700 10px/1 "JetBrains Mono",Consolas,monospace;color:var(--brand);background:var(--brand-soft);border-radius:6px;padding:4px 0;text-align:center}
+  .fl-q{font-size:11.5px;line-height:1.5;color:var(--ink);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fl-a{font-size:11px;line-height:1.55;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .fl-meta{display:flex;align-items:center;justify-content:flex-end;gap:7px;font-size:9.5px;color:var(--faint)}
+  .fl-meta .t{font-family:"JetBrains Mono",Consolas,monospace}
+  .fl-expand{padding:4px 14px 14px 66px}
+  .fl-expand .prose{max-width:88ch}
+  .fl-expand .kv{margin-top:8px}
+  .fl-foot{display:flex;align-items:center;gap:8px;margin-top:9px;font-size:10px;color:var(--faint)}
+  .fl-foot .sp{flex:1}
+
+  /* ================= G 宽幅双列正文 ================= */
+  .g-list{padding:14px 16px 18px;display:grid;gap:14px}
+  .g-turn{border:1px solid var(--line);border-radius:14px;background:#fff;padding:12px 16px 11px}
+  .g-top{display:flex;align-items:center;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--line-soft);margin-bottom:11px}
+  .g-top .num{font:700 10px/1 "JetBrains Mono",Consolas,monospace;color:var(--brand);background:var(--brand-soft);border-radius:6px;padding:4px 6px}
+  .g-q{font-size:12.5px;font-weight:500;color:var(--ink);flex:1;min-width:0;line-height:1.5}
+  .g-q .lb{font-size:9px;letter-spacing:.1em;color:var(--brand);background:var(--brand-soft);border:1px solid var(--brand-edge);border-radius:4px;padding:1px 5px;margin-right:7px;vertical-align:1px;font-weight:600}
+  .g-metrics{display:flex;gap:9px;font-size:9.5px;color:var(--faint);flex:none}
+  .g-metrics b{font-weight:500;color:var(--ink-soft);font-family:"JetBrains Mono",Consolas,monospace}
+  .g-cols{columns:2;column-gap:34px;column-rule:1px solid var(--line-soft)}
+  .g-cols .prose{font-size:12.5px;line-height:1.9}
+  .g-cols ul{break-inside:avoid}
+  .g-cols p{break-inside:avoid}
+  .g-note{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);display:flex;align-items:center;gap:8px;font-size:9.5px;color:var(--faint)}
+  .g-note .sp{flex:1}
+  .g-note .hint{color:var(--brand);background:var(--brand-soft);border:1px solid var(--brand-edge);border-radius:999px;padding:1px 7px}
+
+  /* ================= H 结构化答案分块 ================= */
+  .b-list{padding:14px 16px 18px;display:grid;gap:14px}
+  .b-turn{border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}
+  .b-qrow{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line-soft);background:#fbfbfd}
+  .b-qrow .num{font:700 10px/1 "JetBrains Mono",Consolas,monospace;color:var(--brand);background:var(--brand-soft);border-radius:6px;padding:4px 6px;flex:none}
+  .b-qrow .q{font-size:12.5px;font-weight:500;color:var(--ink);line-height:1.5;flex:1;min-width:0}
+  .b-qrow .q .lb{font-size:9px;letter-spacing:.1em;color:var(--faint);font-weight:600;margin-right:6px}
+  .b-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:9px;padding:12px 14px}
+  .blk{border:1px solid var(--line-soft);background:#fbfbfd;border-radius:10px;padding:9px 11px;min-width:0}
+  .blk .bl{font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);font-weight:600;margin-bottom:5px;display:flex;align-items:center;gap:5px}
+  .blk .bl .dot{width:4px;height:4px;border-radius:999px;background:var(--brand-edge)}
+  .span12{grid-column:span 12}
+  .span8{grid-column:span 8}
+  .span7{grid-column:span 7}
+  .span5{grid-column:span 5}
+  .span4{grid-column:span 4}
+  .big{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
+  .big .num{font-size:24px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+  .big .unit{font-size:11px;color:var(--muted);font-weight:400;margin-left:2px}
+  .big .delta{font-size:11px;color:var(--green);background:var(--green-soft);border:1px solid var(--green-edge);border-radius:999px;padding:2px 8px;margin-bottom:3px}
+  .big .sub{font-size:11px;color:var(--muted);margin-left:auto;text-align:right;line-height:1.5}
+  .cat{display:grid;gap:6px}
+  .cat .row{display:grid;grid-template-columns:76px 1fr 74px 48px;gap:8px;align-items:center;font-size:10.5px;color:var(--muted)}
+  .cat .row b{color:var(--ink-soft);font-weight:500}
+  .cat .bar{height:6px;border-radius:999px;background:#eef2ff;overflow:hidden}
+  .cat .bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#a5b4fc,#6366f1)}
+  .cat .row .pct{text-align:right;font-family:"JetBrains Mono",Consolas,monospace;font-size:9.5px}
+  .cat .row .amt{text-align:right;font-family:"JetBrains Mono",Consolas,monospace;font-size:9.5px;color:var(--ink-soft)}
+  .attr{display:grid;gap:6px;font-size:10.5px;line-height:1.6;color:var(--ink-soft)}
+  .attr .a{display:flex;gap:6px}
+  .attr .a .ic{width:14px;height:14px;border-radius:999px;background:var(--green-soft);border:1px solid var(--green-edge);color:#047857;display:grid;place-items:center;font-size:8px;flex:none;margin-top:1px}
+  .attr .a .ic.bad{background:var(--rose-soft);border-color:var(--rose-edge);color:var(--rose)}
+  .sql{font-family:"JetBrains Mono",Consolas,monospace;font-size:10px;line-height:1.7;color:#0369a1;white-space:pre-wrap;word-break:break-all}
+  .bft{display:flex;align-items:center;gap:8px;padding:6px 14px 10px;font-size:9.5px;color:var(--faint)}
+  .bft .sp{flex:1}
+</style>
+</head>
+<body>
+<div class="board">
+  <div class="board-head">
+    <div>
+      <p class="kicker">Design 04 · 用例执行详情 · 对话轮次</p>
+      <h1>「宽答窄问」第二组：四种新结构</h1>
+      <p>上一版的 A（气泡流）与 B（轮次轨道）保留；本组从「答案不该被左右栏切割」出发，换四个角度：E 把一问一答收进工单式卡片、F 先给摘要再展开、G 让长答案在宽屏上分两栏、H 把答案拆成结构化信息块。</p>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:7px;align-items:flex-end">
+      <span class="tag-soft">基准：1280px 宽 · 3~6 轮</span>
+      <span class="tag-soft">仅替换对话流区，不动其它 Tab</span>
+    </div>
+  </div>
+
+  <!-- ============ E ============ -->
+  <section class="variant">
+    <div class="v-head">
+      <span class="v-index">E</span>
+      <h2>工单式全宽卡 · 问句做「抬头」</h2>
+      <span class="v-sub">一轮一张全宽卡，提问进卡头，答案整幅铺开</span>
+      <span class="v-gap"></span>
+      <span class="pill brand">改动中</span>
+      <span class="pill green">近似邮件 / 工单</span>
+    </div>
+    <div class="screen">
+      <div class="s-top">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="crumb">用例详情 <span>/</span> <b>TC-2418 华东区销售查询</b> <span>/</span> 执行 #run-2481</div>
+        <span class="sp"></span>
+        <span class="chip">通过 · 92 分</span>
+      </div>
+      <div class="panel">
+        <div class="p-head">
+          <h3>对话轮次</h3><span class="cnt">3</span>
+          <span class="sp"></span>
+          <div class="seg"><span class="on">对话流</span><span>对照模式</span></div>
+        </div>
+        <div class="p-tools">
+          <span class="t">共 3 轮</span><span class="t">·</span>
+          <span class="t">提问固定在卡头，回复正文限宽 104ch</span>
+          <span class="sp"></span>
+          <span class="gbtn">全部折叠</span>
+        </div>
+        <div class="bind">
+          <b>会话绑定</b><span class="b">SESSION_PERSIST</span><span class="b">sess_9f2c…a71</span><span class="ok">各轮会话一致</span>
+        </div>
+        <div class="tk-list">
+          <!-- T1 -->
+          <article class="tk-turn">
+            <div class="tk-head">
+              <div class="tk-num">T1</div>
+              <div class="tk-qbox">
+                <div class="tk-lb">用户提问 <span class="tagline brand">模拟器输入</span></div>
+                <div class="tk-q">帮我查一下上个月华东区的销售总额，要按品类拆一下。</div>
+                <div class="tk-vars"><span>region=华东</span><span>month=2026-10</span><span>group_by=品类</span></div>
+              </div>
+              <div class="tk-aside">
+                <span class="tagline green">✓ 规则通过</span>
+                <div class="metrics"><span>TTFT <b>412ms</b></span><span>时延 <b>1.24s</b></span><span>Tokens <b>1,284</b></span></div>
+              </div>
+            </div>
+            <div class="tk-body">
+              <div class="prose">
+                <p>已为您统计 <b>2026 年 10 月华东区</b>的销售情况，总额 <b>1,284.6 万元</b>，同比增长 <span class="up">12.4%</span>。按品类拆分如下：</p>
+                <ul class="two">
+                  <li>家用电器 <b>486.2 万元</b>，占比 37.8%，环比 <span class="up">+18.6%</span></li>
+                  <li>数码 3C <b>352.4 万元</b>，占比 27.4%，环比 <span class="up">+6.2%</span></li>
+                  <li>家居日用 <b>281.7 万元</b>，占比 21.9%，环比 <span class="dn">-1.4%</span></li>
+                  <li>其他 <b>164.3 万元</b>，占比 12.9%</li>
+                </ul>
+                <p>增长主要来自南京、杭州两地的大促活动，其中南京贡献了家电品类 41% 的增量。</p>
+              </div>
+            </div>
+            <div class="tk-foot">
+              <span>意图：销售汇总</span><span class="sep"></span><span>回复字数 186</span>
+              <span class="sp"></span>
+              <span class="act">生成 SQL</span><span class="sep"></span><span class="act">请求 / 响应报文</span><span class="sep"></span><span class="act">收起</span>
+            </div>
+          </article>
+          <!-- T2 -->
+          <article class="tk-turn">
+            <div class="tk-head">
+              <div class="tk-num">T2</div>
+              <div class="tk-qbox">
+                <div class="tk-lb">用户提问 <span class="tagline brand">模拟器输入</span></div>
+                <div class="tk-q">那跟上上个月比呢？</div>
+                <div class="tk-vars"><span>compare=MoM</span><span>base=2026-09</span></div>
+              </div>
+              <div class="tk-aside">
+                <span class="tagline green">✓ 规则通过</span>
+                <div class="metrics"><span>TTFT <b>386ms</b></span><span>时延 <b>1.02s</b></span><span>Tokens <b>968</b></span></div>
+              </div>
+            </div>
+            <div class="tk-body">
+              <div class="prose">
+                <p>环比来看，10 月比 9 月整体增长 <span class="up">8.2%</span>，四个品类中三个上涨：家用电器 <span class="up">+18.6%</span>（增幅最大，大促拉动明显）、数码 3C <span class="up">+6.2%</span>、家居日用 <span class="dn">-1.4%</span>（换季品类自然回落）。如果您需要，我可以把 9 月与 10 月的日维度趋势拉出来对比。</p>
+              </div>
+            </div>
+            <div class="tk-foot">
+              <span>意图：环比对比</span><span class="sep"></span><span>回复字数 142</span>
+              <span class="sp"></span>
+              <span class="act">请求 / 响应报文</span><span class="sep"></span><span class="act">收起</span>
+            </div>
+          </article>
+          <!-- T3 -->
+          <article class="tk-turn">
+            <div class="tk-head">
+              <div class="tk-num">T3</div>
+              <div class="tk-qbox">
+                <div class="tk-lb">用户提问 <span class="tagline brand">模拟器输入</span></div>
+                <div class="tk-q">把华东区家电的明细导出来，我下午开会要用。</div>
+              </div>
+              <div class="tk-aside">
+                <span class="tagline">待导出</span>
+                <div class="metrics"><span>TTFT <b>508ms</b></span><span>时延 <b>1.66s</b></span><span>Tokens <b>1,412</b></span></div>
+              </div>
+            </div>
+            <div class="tk-body">
+              <div class="prose">
+                <p>已生成华东区家用电器明细，共 <b>1,842 条</b>，约 3.2 MB，包含订单号、城市、成交额与活动标签，下载有效期 24 小时。</p>
+              </div>
+              <div class="kv"><span class="mono">SELECT city, SUM(amount) FROM orders WHERE region='华东' AND category='家电' GROUP BY city</span></div>
+            </div>
+            <div class="tk-foot">
+              <span>意图：明细导出</span><span class="sep"></span><span>记录 1,842</span>
+              <span class="sp"></span>
+              <span class="act">下载明细</span><span class="sep"></span><span class="act">收起</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+    <div class="note">
+      <div class="pro"><b>优点</b>问句高度压缩成卡头，答案拿到整幅宽度；一轮一卡、边界清晰，长答案不会再把卡片撑成窄柱，接近工单 / 邮件的心智模型。</div>
+      <div class="con"><b>代价</b>答案很长时单卡很高，滚动距离变长；卡头信息密度高，需要控制标签数量。</div>
+    </div>
+  </section>
+
+  <!-- ============ F ============ -->
+  <section class="variant">
+    <div class="v-head">
+      <span class="v-index">F</span>
+      <h2>摘要折叠 · 先扫再读</h2>
+      <span class="v-sub">默认每轮只占一行，展开才铺全文</span>
+      <span class="v-gap"></span>
+      <span class="pill green">6 轮一屏可见</span>
+      <span class="pill amber">需要展开交互</span>
+    </div>
+    <div class="screen">
+      <div class="s-top">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="crumb">用例详情 <span>/</span> <b>TC-2418 华东区销售查询</b> <span>/</span> 执行 #run-2481</div>
+        <span class="sp"></span>
+        <span class="chip">通过 · 92 分</span>
+      </div>
+      <div class="panel">
+        <div class="p-head">
+          <h3>对话轮次</h3><span class="cnt">6</span>
+          <span class="sp"></span>
+          <div class="seg"><span class="on">对话流</span><span>对照模式</span></div>
+        </div>
+        <div class="p-tools">
+          <span class="t">6 轮 · 1 轮已展开</span>
+          <span class="fl-badge">摘要模式</span>
+          <span class="t">长回复默认折叠为 2 行</span>
+          <span class="sp"></span>
+          <span class="gbtn">全部展开</span>
+        </div>
+        <div class="fl-list">
+          <!-- 展开的 T1 -->
+          <div class="fl-row open">
+            <div class="fl-line" style="border-bottom:0">
+              <div class="fl-idx">T1</div>
+              <div class="fl-q">帮我查一下上个月华东区的销售总额，要按品类拆一下。</div>
+              <div class="fl-a">已为您统计 2026 年 10 月华东区的销售情况，总额 1,284.6 万元，同比增长 12.4%…</div>
+              <div class="fl-meta"><span class="tagline green">✓ 通过</span><span class="t">1.24s</span><span style="color:var(--brand)">收起</span></div>
+            </div>
+            <div class="fl-expand">
+              <div class="prose">
+                <p>已为您统计 <b>2026 年 10 月华东区</b>的销售情况，总额 <b>1,284.6 万元</b>，同比增长 <span class="up">12.4%</span>。按品类拆分如下：</p>
+                <ul>
+                  <li>家用电器 <b>486.2 万元</b>，占比 37.8%，环比 <span class="up">+18.6%</span></li>
+                  <li>数码 3C <b>352.4 万元</b>，占比 27.4%，环比 <span class="up">+6.2%</span></li>
+                  <li>家居日用 <b>281.7 万元</b>，占比 21.9%，环比 <span class="dn">-1.4%</span></li>
+                  <li>其他 <b>164.3 万元</b>，占比 12.9%</li>
+                </ul>
+                <p>增长主要来自南京、杭州两地的大促活动，其中南京贡献了家电品类 41% 的增量。</p>
+              </div>
+              <div class="fl-foot">
+                <span>TTFT 412ms · 时延 1.24s · 回复 186 字</span>
+                <span class="sp"></span>
+                <span>生成 SQL</span><span>·</span><span>请求 / 响应报文</span>
+              </div>
+            </div>
+          </div>
+          <!-- 折叠行 -->
+          <div class="fl-row">
+            <div class="fl-line">
+              <div class="fl-idx">T2</div>
+              <div class="fl-q">那跟上上个月比呢？</div>
+              <div class="fl-a">环比来看，10 月比 9 月整体增长 8.2%，四个品类中三个上涨，家用电器增幅最大…</div>
+              <div class="fl-meta"><span class="tagline green">✓ 通过</span><span class="t">1.02s</span><span>展开</span></div>
+            </div>
+          </div>
+          <div class="fl-row">
+            <div class="fl-line">
+              <div class="fl-idx">T3</div>
+              <div class="fl-q">把华东区家电的明细导出来，我下午开会要用。</div>
+              <div class="fl-a">已生成华东区家用电器明细，共 1,842 条，文件约 3.2 MB，包含订单号、城市…</div>
+              <div class="fl-meta"><span class="tagline">待导出</span><span class="t">1.66s</span><span>展开</span></div>
+            </div>
+          </div>
+          <div class="fl-row">
+            <div class="fl-line">
+              <div class="fl-idx">T4</div>
+              <div class="fl-q">南京和杭州分别多少？</div>
+              <div class="fl-a">南京 312.4 万元（占华东 24.3%），杭州 268.9 万元（20.9%），两城合计贡献…</div>
+              <div class="fl-meta"><span class="tagline" style="background:var(--amber-soft);border-color:var(--amber-edge);color:var(--amber)">部分命中</span><span class="t">1.31s</span><span>展开</span></div>
+            </div>
+          </div>
+          <div class="fl-row">
+            <div class="fl-line">
+              <div class="fl-idx">T5</div>
+              <div class="fl-q">好，那按城市列个表给我。</div>
+              <div class="fl-a">已按城市汇总华东区 10 月销售额：上海 402.1 万、南京 312.4 万、杭州 268.9 万…</div>
+              <div class="fl-meta"><span class="tagline green">✓ 通过</span><span class="t">0.98s</span><span>展开</span></div>
+            </div>
+          </div>
+          <div class="fl-row">
+            <div class="fl-line">
+              <div class="fl-idx">T6</div>
+              <div class="fl-q">谢谢，先这样。</div>
+              <div class="fl-a">好的，数据已准备好，会议顺利。如需补充其它区域随时告诉我。</div>
+              <div class="fl-meta"><span class="tagline green">✓ 通过</span><span class="t">0.41s</span><span>展开</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="note">
+      <div class="pro"><b>优点</b>把「长答案」的体量收进 2 行摘要，6 轮一屏可扫；只有需要细读时才展开，批量用例的定位效率最高。</div>
+      <div class="con"><b>代价</b>默认看不到完整回复，评审时多一次点击；摘要截断位置需按句号 / 换行对齐，避免断句难看。</div>
+    </div>
+  </section>
+
+  <!-- ============ G ============ -->
+  <section class="variant">
+    <div class="v-head">
+      <span class="v-index">G</span>
+      <h2>宽幅双列正文 · 长答案横向展开</h2>
+      <span class="v-sub">宽屏下答案分两栏，行长短、高度减半</span>
+      <span class="v-gap"></span>
+      <span class="pill brand">改动小</span>
+      <span class="pill green">高度 -40%</span>
+    </div>
+    <div class="screen">
+      <div class="s-top">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="crumb">用例详情 <span>/</span> <b>TC-2418 华东区销售查询</b> <span>/</span> 执行 #run-2481</div>
+        <span class="sp"></span>
+        <span class="chip">通过 · 92 分</span>
+      </div>
+      <div class="panel">
+        <div class="p-head">
+          <h3>对话轮次</h3><span class="cnt">3</span>
+          <span class="sp"></span>
+          <div class="seg"><span class="on">对话流</span><span>对照模式</span></div>
+        </div>
+        <div class="p-tools">
+          <span class="t">共 3 轮</span><span class="t">·</span>
+          <span class="t">≥1100px 自动双列，&lt;1100px 回落单列</span>
+          <span class="sp"></span>
+          <span class="gbtn">全部折叠</span>
+        </div>
+        <div class="bind">
+          <b>会话绑定</b><span class="b">SESSION_PERSIST</span><span class="b">sess_9f2c…a71</span><span class="ok">各轮会话一致</span>
+        </div>
+        <div class="g-list">
+          <article class="g-turn">
+            <div class="g-top">
+              <span class="num">T1</span>
+              <div class="g-q"><span class="lb">用户</span>帮我查一下上个月华东区的销售总额，要按品类拆一下。</div>
+              <span class="tagline green">✓ 规则通过</span>
+              <div class="g-metrics"><span>TTFT <b>412ms</b></span><span>时延 <b>1.24s</b></span><span>Tokens <b>1,284</b></span></div>
+            </div>
+            <div class="g-cols">
+              <div class="prose">
+                <p>已为您统计 <b>2026 年 10 月华东区</b>的销售情况，总额 <b>1,284.6 万元</b>，同比增长 <span class="up">12.4%</span>。按品类拆分如下：</p>
+                <ul>
+                  <li>家用电器 <b>486.2 万元</b>，占比 37.8%，环比 <span class="up">+18.6%</span></li>
+                  <li>数码 3C <b>352.4 万元</b>，占比 27.4%，环比 <span class="up">+6.2%</span></li>
+                </ul>
+                <ul>
+                  <li>家居日用 <b>281.7 万元</b>，占比 21.9%，环比 <span class="dn">-1.4%</span></li>
+                  <li>其他 <b>164.3 万元</b>，占比 12.9%</li>
+                </ul>
+                <p>增长主要来自南京、杭州两地的大促活动，其中南京贡献了家电品类 41% 的增量。</p>
+              </div>
+            </div>
+            <div class="g-note">
+              <span class="hint">双列</span><span>行宽 66ch → 每列 62ch，阅读节奏接近报告</span>
+              <span class="sp"></span><span>意图：销售汇总</span><span>·</span><span>生成 SQL</span><span>·</span><span>请求 / 响应报文</span>
+            </div>
+          </article>
+
+          <article class="g-turn">
+            <div class="g-top">
+              <span class="num">T2</span>
+              <div class="g-q"><span class="lb">用户</span>那跟上上个月比呢？</div>
+              <span class="tagline green">✓ 规则通过</span>
+              <div class="g-metrics"><span>TTFT <b>386ms</b></span><span>时延 <b>1.02s</b></span><span>Tokens <b>968</b></span></div>
+            </div>
+            <div class="g-cols">
+              <div class="prose">
+                <p>环比来看，10 月比 9 月整体增长 <span class="up">8.2%</span>，四个品类中三个上涨：</p>
+                <ul>
+                  <li>家用电器 <span class="up">+18.6%</span>（增幅最大，大促拉动明显）</li>
+                  <li>数码 3C <span class="up">+6.2%</span></li>
+                </ul>
+                <ul>
+                  <li>家居日用 <span class="dn">-1.4%</span>（换季品类自然回落）</li>
+                </ul>
+                <p>如果您需要，我可以把 9 月与 10 月的日维度趋势拉出来对比。</p>
+              </div>
+            </div>
+            <div class="g-note">
+              <span class="hint">自动</span><span>内容不足一列时保持单列，不会强行拉宽</span>
+              <span class="sp"></span><span>意图：环比对比</span><span>·</span><span>请求 / 响应报文</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+    <div class="note">
+      <div class="pro"><b>优点</b>几乎不改变现有卡片结构，只给正文加 `columns:2`；长答案高度接近砍半，宽屏右侧不再空荡。</div>
+      <div class="con"><b>代价</b>跨栏阅读顺序需要适应；表格、SQL、列表等块状内容要单独 `break-inside:avoid`，窄屏必须回落单列。</div>
+    </div>
+  </section>
+
+  <!-- ============ H ============ -->
+  <section class="variant">
+    <div class="v-head">
+      <span class="v-index">H</span>
+      <h2>结构化答案 · 把正文拆成信息块</h2>
+      <span class="v-sub">结论 / 明细 / 归因 / SQL 各占一格</span>
+      <span class="v-gap"></span>
+      <span class="pill brand">改动大</span>
+      <span class="pill green">最像「分析结果」</span>
+    </div>
+    <div class="screen">
+      <div class="s-top">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="crumb">用例详情 <span>/</span> <b>TC-2418 华东区销售查询</b> <span>/</span> 执行 #run-2481</div>
+        <span class="sp"></span>
+        <span class="chip">通过 · 92 分</span>
+      </div>
+      <div class="panel">
+        <div class="p-head">
+          <h3>对话轮次</h3><span class="cnt">3</span>
+          <span class="sp"></span>
+          <div class="seg"><span class="on">对话流</span><span>对照模式</span></div>
+        </div>
+        <div class="p-tools">
+          <span class="t">共 3 轮</span><span class="t">·</span>
+          <span class="t">长回复按段落语义拆块，块宽随信息量分配</span>
+          <span class="sp"></span>
+          <span class="gbtn">全部折叠</span>
+        </div>
+        <div class="bind">
+          <b>会话绑定</b><span class="b">SESSION_PERSIST</span><span class="b">sess_9f2c…a71</span><span class="ok">各轮会话一致</span>
+        </div>
+        <div class="b-list">
+          <article class="b-turn">
+            <div class="b-qrow">
+              <span class="num">T1</span>
+              <div class="q"><span class="lb">用户提问</span>帮我查一下上个月华东区的销售总额，要按品类拆一下。</div>
+              <span class="tagline green">✓ 规则通过</span>
+              <span class="tagline">TTFT 412ms · 1.24s</span>
+            </div>
+            <div class="b-grid">
+              <div class="blk span12">
+                <div class="bl"><span class="dot"></span>结论</div>
+                <div class="big">
+                  <div class="num">1,284.6<span class="unit">万元</span></div>
+                  <span class="delta">同比 +12.4%</span>
+                  <div class="sub">2026 年 10 月 · 华东区<br />环比 +8.2% · 4 个品类</div>
+                </div>
+              </div>
+              <div class="blk span7">
+                <div class="bl"><span class="dot"></span>品类明细</div>
+                <div class="cat">
+                  <div class="row"><b>家用电器</b><div class="bar"><i style="width:100%"></i></div><span class="amt">486.2 万</span><span class="pct">37.8%</span></div>
+                  <div class="row"><b>数码 3C</b><div class="bar"><i style="width:72%"></i></div><span class="amt">352.4 万</span><span class="pct">27.4%</span></div>
+                  <div class="row"><b>家居日用</b><div class="bar"><i style="width:58%"></i></div><span class="amt">281.7 万</span><span class="pct">21.9%</span></div>
+                  <div class="row"><b>其他</b><div class="bar"><i style="width:34%"></i></div><span class="amt">164.3 万</span><span class="pct">12.9%</span></div>
+                </div>
+              </div>
+              <div class="blk span5">
+                <div class="bl"><span class="dot"></span>增长归因</div>
+                <div class="attr">
+                  <div class="a"><span class="ic">↑</span><div><b>南京</b> 贡献家电品类 41% 增量，大促期间客单价 +9.2%</div></div>
+                  <div class="a"><span class="ic">↑</span><div><b>杭州</b> 数码 3C 环比 +11.8%，新客占比 32%</div></div>
+                  <div class="a"><span class="ic bad">↓</span><div><b>家居日用</b> 换季自然回落，无需干预</div></div>
+                </div>
+              </div>
+              <div class="blk span12">
+                <div class="bl"><span class="dot"></span>生成 SQL</div>
+                <div class="sql">SELECT category, SUM(amount) AS amt, SUM(amount)/SUM(SUM(amount)) OVER () AS ratio
+FROM orders WHERE region='华东' AND month='2026-10' GROUP BY category ORDER BY amt DESC;</div>
+              </div>
+            </div>
+            <div class="bft">
+              <span>意图：销售汇总</span><span>·</span><span>回复字数 186</span>
+              <span class="sp"></span><span>收起原文</span><span>·</span><span>请求 / 响应报文</span><span>·</span><span>裁判评分 4.6</span>
+            </div>
+          </article>
+
+          <article class="b-turn">
+            <div class="b-qrow">
+              <span class="num">T2</span>
+              <div class="q"><span class="lb">用户提问</span>那跟上上个月比呢？</div>
+              <span class="tagline green">✓ 规则通过</span>
+              <span class="tagline">TTFT 386ms · 1.02s</span>
+            </div>
+            <div class="b-grid">
+              <div class="blk span5">
+                <div class="bl"><span class="dot"></span>结论</div>
+                <div class="big">
+                  <div class="num">+8.2<span class="unit">% 环比</span></div>
+                  <div class="sub">3 涨 1 跌<br />家电贡献最大</div>
+                </div>
+              </div>
+              <div class="blk span7">
+                <div class="bl"><span class="dot"></span>分品类环比</div>
+                <div class="cat">
+                  <div class="row"><b>家用电器</b><div class="bar"><i style="width:100%"></i></div><span class="amt">+18.6%</span><span class="pct">↑</span></div>
+                  <div class="row"><b>数码 3C</b><div class="bar"><i style="width:33%"></i></div><span class="amt">+6.2%</span><span class="pct">↑</span></div>
+                  <div class="row"><b>家居日用</b><div class="bar"><i style="width:8%;background:#fda4af"></i></div><span class="amt">-1.4%</span><span class="pct">↓</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="bft">
+              <span>意图：环比对比</span>
+              <span class="sp"></span><span>收起原文</span><span>·</span><span>请求 / 响应报文</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+    <div class="note">
+      <div class="pro"><b>优点</b>把一大段文字变成结论、图表、归因、SQL 四类块，宽度按信息量分配；一眼看到重点，也最适合后续接图表与表格。</div>
+      <div class="con"><b>代价</b>需要回复的段落级结构识别（或让模型输出分块），纯文本兜底要保留；实现成本最高。</div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>
