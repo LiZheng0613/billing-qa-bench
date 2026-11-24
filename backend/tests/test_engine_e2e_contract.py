@@ -147,10 +147,11 @@ async def test_contract_mode_passes_on_final_answer_and_persists_facts() -> None
             assert {row.fact_id for row in rows} == fact_ids
             assert all(row.passed for row in rows)
 
-            # 轨迹诊断：Mock 目标不回传 tool_calls，答案正确但无取数证据 → 幸运通过
+            # 轨迹诊断：Mock 目标回传一次取数调用，答案正确且有取数证据 → 不是幸运通过
             assert record.diagnostics is not None
-            assert record.diagnostics["tool_call_count"] == 0
-            assert record.lucky_pass is True
+            assert record.diagnostics["tool_call_count"] == 1
+            assert record.diagnostics["capabilities_used"] == ["bill_query"]
+            assert record.lucky_pass is False
             assert record.root_cause is None
 
             assert record.judge_result is not None

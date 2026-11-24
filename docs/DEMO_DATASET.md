@@ -27,7 +27,7 @@ python scripts/seed_environment_runs.py --env-code QA-MOCK   # 真实引擎补 5
 | 环境 | 报文形态 | 说明 |
 | --- | --- | --- |
 | `QA-MOCK-JSON` | 非流式 · Agent 报文 `POST /api/v1/agent/chat` | **61 条演示用例默认绑定**。Basic 鉴权 + 前置 `POST /api/v1/conversation` 取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso` 时间戳，与真实 Agent 对接流程一致，配置指导见 [`AGENT_INTEGRATION_GUIDE.md`](AGENT_INTEGRATION_GUIDE.md) |
-| `QA-MOCK` | SSE 流式 · `POST /api/v1/chat` | 保留用于流式能力演示；`seed_environment_runs.py` 会在其上生成 59 条真实调试执行，供环境对比页使用。SSE 报文不经过非流式抽取器，因此这些轮次没有 `session_id` / `intent` 等字段，页面按「未记录」展示 |
+| `QA-MOCK` | SSE 流式 · `POST /api/v1/chat` | 保留用于流式能力演示；`seed_environment_runs.py` 会在其上生成 59 条真实调试执行，供环境对比页使用。SSE 的 `metadata` 事件把会话与取数字段收在 `data` 下，与非流式共用同一套 `$.data.*` 抽取映射，`session_id` / `intent` / `generated_sql` / `api_params` / `raw_db_data` / `tool_calls` 均正常落库 |
 
 两个环境指向同一内置 Mock（`http://127.0.0.1:8002`），共用同一份电信计费数据，因此切换环境不改变答案口径，只改变报文形态。
 
@@ -90,7 +90,7 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 | `DEMO-CONTRACT-BALANCE-ZERO` | 单轮 · 答案契约 | 零余额 + 欠费 118 + 停机状态 | PASS |
 | `DEMO-CONTRACT-ARREARS` | 单轮 · 答案契约 | 欠费金额、账期集合与停机状态（禁止复机话术） | PASS |
 | `DEMO-CONTRACT-WRONG-AMOUNT` | 单轮 · 答案契约 | 错误金额 999.00 命中 MustNot | FAIL（事实闸门 + 安全红线） |
-| `DEMO-CONTRACT-LUCKY-PASS` | 单轮 · 答案契约 | 余额答案正确但无取数证据 | PASS（`lucky_pass` 仅诊断） |
+| `DEMO-CONTRACT-BALANCE-EVIDENCE` | 单轮 · 答案契约 | 余额答案正确，且带一条真实余额取数调用 | PASS（有取数证据，`lucky_pass` 恒为 false） |
 | `DEMO-CONTRACT-UNDERSPECIFIED` | 单轮 · 答案契约 | 未指定账期，允许带假设作答 | PASS |
 | `DEMO-CONTRACT-NO-NUMBER` | 单轮 · 答案契约 | 未提供号码，澄清槽位 | PASS |
 | `DEMO-CONTRACT-AMBIGUOUS` | 单轮 · 答案契约 | 指代不明，澄清或声明假设 | PASS |
@@ -153,7 +153,18 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 | `QA-MOCK-JSON` | 非流式 Agent 报文 | 117（3 个已完成任务） | 88.9% |
 | `QA-MOCK` | SSE 流式 | 59（单笔调试） | 88.1% |
 
-两个环境指向同一 Mock，答案口径一致，差异只来自报文形态与样本量：SSE 轮次没有 `session_id` / `intent` 等非流式抽取字段，页面按「未记录」展示；其余判分、契约、事实结果均由真实引擎写入。整库合计 176 条执行、200 条轮次、183 条裁判明细、213 条事实级判分（`fact_result`）、47 条 `self_check`。当前 `GradingMode` 只有 `LEGACY` / `ANSWER_CONTRACT`，因此没有 RUBRIC 记录。
+两个环境指向同一 Mock，答案口径一致，差异只来自报文形态与样本量。SSE 的 `metadata` 事件把会话与取数字段收在 `data` 下，与非流式共用同一套 `$.data.*` 抽取映射，因此两种报文形态的 `session_id` / `intent` / `generated_sql` / `api_params` / `raw_db_data` / `tool_calls` 都能正常落库。整库合计 176 条执行、200 条轮次、183 条裁判明细、213 条事实级判分（`fact_result`）、47 条 `self_check`。当前 `GradingMode` 只有 `LEGACY` / `ANSWER_CONTRACT`，因此没有 RUBRIC 记录。
+
+### 5.1 轮次取数调用（`tool_calls`）
+
+`mock_servers/target_api.py` 按意图回传每轮的工具调用，`turn_trace.tool_calls` 直接落库，页面「Agent 调用链」「SQL」「取数证据」展示的就是这份记录：
+
+- 取数类回答（`BILL` / `BALANCE` / `OFFER` / `USAGE` / `ARREARS` / `ROAMING` / `VAS` / `BROADBAND` / `INVOICE` / `POINTS` / `MULTI_INTENT`）各回传 **1 条** `db_query`，包含 `capability` / `query` / `args` / `rows` / `latency_ms` / `result`；能力码与用例 `plan_spec.required_capabilities` 同一套（`bill_query` / `balance_query` / `offer_query` / `usage_query` / `arrears_query`）。
+- 澄清与拒答（`CLARIFY` / `REFUSE`）回传空数组 `[]`，表示「确实没有取数」，不是「未记录」。
+- 每轮只回传 1 条：`max_tool_calls` 为 1 / 2 / 3，多步会让 `diagnostics.over_budget` 在多数契约用例上恒为 true，读起来像 Agent 一直超预算。
+- 本次重建后 200/200 轮 `tool_calls` 均为数组（170 轮 1 条、30 轮空数组），`lucky_pass` 0 条，`over_budget` 0 条。`response_raw.usage` 仍未补，页面按「Agent 用量未记录」展示。
+
+原先用于演示「幸运通过」的用例已更名为 `DEMO-CONTRACT-BALANCE-EVIDENCE`（`plan_spec` 要求 `balance_query`）：答案正确且带取数证据，`lucky_pass` 诊断保持 false；「幸运通过」逻辑本身仍在代码里，由 `backend/tests/test_grading_answer_grader.py` 覆盖。
 
 ## 6. 取数资产与 Mock 能力
 

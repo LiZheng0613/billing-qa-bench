@@ -288,6 +288,8 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 用例逐条清单与预期结果、Mock 数据口径、演示任务构成见 [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md)。
 
+> 轮次轨迹的 `tool_calls` 由 Mock 目标系统真实回传：取数类回答每轮 1 条 `db_query`（能力码、SQL、入参、行数、时延与结果摘要），澄清 / 拒答为空数组 `[]`；两种报文形态（SSE / 非流式）都能抽取。因此「Agent 调用链」「SQL」「取数证据」有真实步骤，`lucky_pass` 为 0，`diagnostics.over_budget` 为 0。
+
 > 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据；正式演示前依次执行 `python -m billing_qa.db.init_db --demo --reset`、`python scripts/seed_demo_history.py` 与 `python scripts/seed_environment_runs.py --env-code QA-MOCK` 即可恢复基线。
 >
 > 跑测试前更省事的做法是先备份再还原，库规模、时间戳与环境探活结果都能原样保留，不必重跑种子：

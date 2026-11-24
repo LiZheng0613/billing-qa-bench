@@ -621,6 +621,71 @@ def _sql_for(intent: str) -> str:
     return templates.get(intent, "")
 
 
+# 取数调用上报的能力编码：与用例 plan_spec.required_capabilities / 事实 evidence
+# （capability:bill_query）使用同一套编码，诊断里的 missing_capabilities 才不会误报。
+_CAPABILITY_BY_INTENT: dict[str, str] = {
+    "BILL": "bill_query",
+    "BALANCE": "balance_query",
+    "ARREARS": "arrears_query",
+    "USAGE": "usage_query",
+    "OFFER": "offer_query",
+    "MULTI_INTENT": "bill_query",
+    "VAS": "bill_query",
+    "ROAMING": "bill_query",
+    "INVOICE": "bill_query",
+    "BROADBAND": "bill_query",
+    "POINTS": "bill_query",
+    "BILLING_QUERY": "bill_query",
+}
+
+# 取数步骤时延（毫秒）：mock 侧固定值，保证重建后的演示数据可复现。
+_TOOL_LATENCY_MS = 236
+
+
+def _row_count(raw: Any) -> int:
+    """按落库的 raw_db_data 结构数取数行数（列表字段优先，标量结果算 1 行）。"""
+    if isinstance(raw, dict):
+        for key in ("items", "bills", "rows", "orders", "vas"):
+            value = raw.get(key)
+            if isinstance(value, list):
+                return len(value)
+        return 1
+    if isinstance(raw, list):
+        return len(raw)
+    return 0
+
+
+def _tool_calls_for(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """上报本轮真实发生过的取数调用（白盒 metadata 的 tool_calls）。
+
+    只上报实际执行到取数的步骤：澄清 / 拒绝 / 自检类回答没有查询底层数据，
+    返回空列表 —— 空列表表示「确实没有调用」，与「后端没上报」不是一回事。
+    规划、组织回复属于模型内部动作，不算工具调用，因此不列入。
+    """
+    sql = result.get("generated_sql")
+    raw = result.get("raw_db_data")
+    if not sql or raw is None:
+        return []
+    intent = str(result.get("intent") or "")
+    rows = _row_count(raw)
+    return [
+        {
+            "kind": "db_query",
+            "name": "执行取数查询",
+            "capability": _CAPABILITY_BY_INTENT.get(intent, "bill_query"),
+            "status": "SUCCESS",
+            "query": sql,
+            "args": result.get("api_params") or {},
+            "rows": rows,
+            "latency_ms": _TOOL_LATENCY_MS,
+            "result": {
+                "row_count": rows,
+                "query_type": raw.get("query_type") if isinstance(raw, dict) else None,
+            },
+        }
+    ]
+
+
 def _build_bill(sub: dict[str, Any], period: str, query: str) -> dict[str, Any]:
     total = float(sub["bill_total"])
     if "错误金额" in query:
@@ -1187,14 +1252,19 @@ def _chunks(text: str, size: int = 6) -> list[str]:
 
 
 async def _sse_stream(result: dict[str, Any]):
+    # 白盒元数据统一收在 data 下，与非流式 body 同构，环境按 $.data.* 抽取时
+    # 流式 / 非流式共用一套映射（否则流式只能抽出顶层零散字段）。
     metadata = {
         "type": "metadata",
-        "session_id": result["session_id"],
-        "intent": result["intent"],
-        "intent_label": _INTENT_LABELS.get(result["intent"], result["intent"]),
-        "generated_sql": result["generated_sql"],
-        "api_params": result["api_params"],
-        "raw_db_data": result["raw_db_data"],
+        "data": {
+            "session_id": result["session_id"],
+            "intent": result["intent"],
+            "intent_label": _INTENT_LABELS.get(result["intent"], result["intent"]),
+            "generated_sql": result["generated_sql"],
+            "api_params": result["api_params"],
+            "raw_db_data": result["raw_db_data"],
+            "tool_calls": result.get("tool_calls") or [],
+        },
     }
     yield f"event: metadata\ndata: {json.dumps(metadata, ensure_ascii=False)}\n\n"
     await asyncio.sleep(0.08)
@@ -1244,6 +1314,7 @@ async def chat(request: Request):
         result = _resolve_result(query, history, session_id, None)
     result = dict(result)
     result["session_id"] = session_id
+    result["tool_calls"] = _tool_calls_for(result)
     # 回显请求中的自定义参数（不含 query/history），便于离线断言变量注入是否生效
     result["received_params"] = {
         key: value for key, value in body.items() if key not in {"query", "history"}
@@ -1354,6 +1425,7 @@ async def agent_chat(request: Request) -> JSONResponse:
     _AGENT_TURNS[conversation_id] = turn_no
     result = dict(result)
     result["sessionid"] = session_id
+    result["tool_calls"] = _tool_calls_for(result)
     result["conversationId"] = conversation_id
     result["turn"] = turn_no
     result["first_round"] = first_round

@@ -98,6 +98,7 @@ def _environment_spec(code: str, *, is_stream: bool) -> dict[str, Any]:
                 "generated_sql": "$.data.generated_sql",
                 "api_params": "$.data.api_params",
                 "raw_db_data": "$.data.raw_db_data",
+                "tool_calls": "$.data.tool_calls",
             },
             "pre_hook": {
                 "enabled": False,
@@ -145,6 +146,10 @@ def _environment_spec(code: str, *, is_stream: bool) -> dict[str, Any]:
             "final_answer": "$.data.answer",
             "session_id": "$.data.sessionid",
             "intent": "$.data.intent",
+            "generated_sql": "$.data.generated_sql",
+            "api_params": "$.data.api_params",
+            "raw_db_data": "$.data.raw_db_data",
+            "tool_calls": "$.data.tool_calls",
         },
         "pre_hook": {
             "enabled": True,
@@ -1483,7 +1488,7 @@ def _build_cases(
             ),
             "plan_spec": _plan(["arrears_query"], max_tool_calls=2),
         },
-        # ================= 答案契约：红线与幸运通过 =================
+        # ================= 答案契约：错误金额与取数证据 =================
         {
             **contract_common,
             "code": "DEMO-CONTRACT-WRONG-AMOUNT",
@@ -1510,11 +1515,11 @@ def _build_cases(
         },
         {
             **contract_common,
-            "code": "DEMO-CONTRACT-LUCKY-PASS",
-            "name": "契约模式 · 余额查询（幸运通过诊断）",
-            "description": "答案事实正确但 Mock 目标不回传工具调用，轨迹诊断标记「幸运通过」，不影响正确性。",
+            "code": "DEMO-CONTRACT-BALANCE-EVIDENCE",
+            "name": "契约模式 · 余额查询（真实取数证据）",
+            "description": "答案事实正确且 Mock 目标回传一次余额取数调用，轨迹诊断有取数证据，不标记「幸运通过」。",
             "case_type": CaseType.SINGLE.value,
-            "tags": ["答案契约", "幸运通过", "轨迹诊断"],
+            "tags": ["答案契约", "取数证据", "轨迹诊断"],
             "priority": "P2",
             "query": "13500135000 的账户余额是多少？",
             "expected_answer": "可用余额 ¥1,200.00，冻结余额 ¥0.00，合计余额 ¥1,200.00。",
@@ -1530,7 +1535,7 @@ def _build_cases(
                     )
                 ]
             ),
-            "plan_spec": _plan([]),
+            "plan_spec": _plan(["balance_query"]),
         },
         # ================= 答案契约：非清晰输入 =================
         {
