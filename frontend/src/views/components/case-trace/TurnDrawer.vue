@@ -56,6 +56,12 @@ const SECTIONS: Array<{ key: DrawerSection; label: string; icon: string }> = [
 ]
 
 const verdict = computed(() => VERDICT_META[props.turn?.verdict ?? 'fail'])
+/** 判定卡标题：契约由规则闸门算，不是 LLM 裁判；LEGACY 只有裁判返回落库时才标 LLM */
+const judgeCardTitle = computed(() => {
+  if (props.model.gradingMode === 'ANSWER_CONTRACT') return '判定结论'
+  const raw = props.detail?.judge_result
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? 'LLM 裁判结论' : '判定结论'
+})
 const scoreInfo = computed(() => scoreLabel(props.model.gradingMode))
 /** 通过线来自执行记录（judge_result.threshold / answer_grading.pass_threshold）或用例快照，不再前端写死 */
 const passLine = computed(() => props.model.passLine)
@@ -108,11 +114,17 @@ const dimensionTotal = computed(() =>
 /** 四维合计的比对基准：有轮次分比轮次分，多轮回落到执行级综合分 */
 const dimsCompareScore = computed(() => props.turn?.score ?? props.model.totalScore)
 const slowest = computed(() => {
-  const steps = props.turn?.steps ?? []
+  // 后端没落时延的步骤不参与「最慢」评选，也不按 0ms 垫底
+  const steps = (props.turn?.steps ?? []).filter((step) => typeof step.ms === 'number')
   if (!steps.length) return null
-  return steps.reduce((acc, step) => (step.ms > acc.ms ? step : acc), steps[0])
+  return steps.reduce((acc, step) => ((step.ms ?? 0) > (acc.ms ?? 0) ? step : acc), steps[0])
 })
-const stepTotalMs = computed(() => (props.turn?.steps ?? []).reduce((sum, step) => sum + (step.ms ?? 0), 0))
+const stepTotalMs = computed<number | null>(() => {
+  const timed = (props.turn?.steps ?? [])
+    .map((step) => step.ms)
+    .filter((value): value is number => typeof value === 'number')
+  return timed.length ? timed.reduce((sum, value) => sum + value, 0) : null
+})
 const stepWarnCount = computed(() => (props.turn?.steps ?? []).filter((step) => step.status === 'warn').length)
 /** 异常步骤去重后的工具名，用于执行段的琥珀色提示，不编造未出现的工具 */
 const warnStepNames = computed(() => {
@@ -566,7 +578,7 @@ const selfTriggerValue = computed(() => {
             <div class="djudgecard" :class="`jv-${turn.verdict}`">
               <div class="djv-head">
                 <span class="djv-ic"><TraceIcon name="scale" :size="12" /></span>
-                <b class="djv-title">LLM 裁判结论</b>
+                <b class="djv-title">{{ judgeCardTitle }}</b>
                 <span class="djv-model">{{ judgeModel }}</span>
                 <span class="sp" />
                 <span class="stat-pill" :class="verdict.tone">
@@ -603,7 +615,7 @@ const selfTriggerValue = computed(() => {
                       契约门槛 {{ contractStat.text }}
                       <template v-if="contractStat.text !== '—'"> · {{ contractStat.warn ? '未全过' : '全过' }}</template>
                     </span>
-                    <span>质量分参考线 {{ passLine }}（仅参考）</span>
+                    <span>阈值 {{ passLine }}（随执行落库，不参与契约判定）</span>
                   </template>
                   <span v-else>阈值 {{ passLine }}（{{ passLineSource }}）</span>
                   <span
@@ -613,7 +625,7 @@ const selfTriggerValue = computed(() => {
                     分数已达标 · 硬门槛未全过
                   </span>
                   <span v-if="turn.score === null && turn.verdict !== 'unknown'" class="flag">本轮无独立分 · pass 仅依据{{ model.gradingMode === 'ANSWER_CONTRACT' ? '契约闸门' : '硬门槛' }}</span>
-                  <span v-else-if="turn.score === null" class="flag">本轮无独立分 · 数字为执行级汇总</span>
+                  <span v-else-if="turn.score === null" class="flag">本轮无独立分 · 数字为执行级{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '综合分' }}</span>
                 </div>
               </div>
 
@@ -631,7 +643,7 @@ const selfTriggerValue = computed(() => {
 
               <div v-if="drawerDims.length" class="djv-dims">
                 <div class="djv-dims-h">
-                  <b>四维得分</b>
+                  <b>{{ model.gradingMode === 'ANSWER_CONTRACT' ? '四维质量分' : '四维得分' }}</b>
                   <span class="sp" />
                   <span>{{ dimsFromExec ? '执行级口径 · 不拆轮次' : '轮次级口径' }}</span>
                 </div>
@@ -664,7 +676,7 @@ const selfTriggerValue = computed(() => {
                 </div>
               </div>
             </div>
-            <div v-else class="dempty">本轮没有配置规则检查项（<code>rule_check.checks</code> 为空），没有可展示的规则结果；界面不做推断。</div>
+            <div v-else class="dempty">本轮没有规则检查结果（rule_check 为空或未落库检查项），没有可展示的规则结果；界面不做推断。</div>
             <div v-if="isClarifyTurn" class="dsub">
               本轮意图为 CLARIFY：规则按「期望数值是否出现在回复里」校验，Agent 先反问、暂不给数值时会记为未命中，这不代表澄清动作本身有错。
             </div>
@@ -761,15 +773,15 @@ const selfTriggerValue = computed(() => {
           <section v-if="turn.score !== null || turn.dimensions.length" class="dsec">
             <h5>裁决返回校验 <span class="sp" /><span class="cnt">schema</span></h5>
             <div class="dkv">
-              <div class="kv"><span class="k">维度合计</span><span class="v">{{ fmtScore(dimensionTotal) }} / 100</span></div>
+              <div class="kv"><span class="k">维度合计</span><span class="v">{{ drawerDims.length ? `${fmtScore(dimensionTotal)} / 100` : '无四维分' }}</span></div>
               <div class="kv"><span class="k">合计 = {{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '综合分' }}</span><span class="v">{{ dimsCompareScore !== null && Math.abs(dimensionTotal - dimsCompareScore) < 0.05 ? '是' : (drawerDims.length ? '否' : '无四维分') }}</span></div>
               <template v-if="model.gradingMode === 'ANSWER_CONTRACT'">
-                <div class="kv"><span class="k">质量分达参考线</span><span class="v">{{ turn.score !== null && turn.score >= passLine ? 'true' : 'false' }}<em>仅参考，不参与 pass</em></span></div>
+                <div class="kv"><span class="k">质量分</span><span class="v">{{ turn.score === null ? '未提供轮次级质量分' : fmtScore(turn.score) }}<em>仅参考，不参与 pass（后端没有把它和阈值比较）</em></span></div>
                 <div class="kv"><span class="k">按契约闸门 pass</span><span class="v">{{ detail?.pass_flag === true ? 'true' : detail?.pass_flag === false ? 'false' : '未记录' }}<em>执行级判定，不由质量分推出</em></span></div>
               </template>
               <template v-else>
                 <div class="kv"><span class="k">按分数 pass</span><span class="v">{{ turn.score === null ? '未提供轮次分' : turn.score >= passLine ? 'true' : 'false' }}</span></div>
-                <div class="kv"><span class="k">按硬门槛 pass</span><span class="v">{{ turn.gateOk ? 'true' : 'false' }}</span></div>
+                <div class="kv"><span class="k">按硬门槛 pass</span><span class="v">{{ !turn.rules.length && !turn.contract ? '本轮无硬门槛' : turn.gateOk ? 'true' : 'false' }}</span></div>
               </template>
               <div class="kv"><span class="k">标签均在枚举内</span><span class="v">{{ tagsInEnum ? '是' : '否' }}</span></div>
             </div>
@@ -840,7 +852,7 @@ const selfTriggerValue = computed(() => {
               <div class="kv"><span class="k">输入来源</span><span class="v">{{ sourceLabel }}</span></div>
               <div class="kv"><span class="k">会话</span><span class="v">{{ turn.sessionId || '未记录' }}</span></div>
               <div class="kv"><span class="k">环境</span><span class="v">{{ envLabel }}</span></div>
-              <div class="kv"><span class="k">判分模式</span><span class="v">{{ model.gradingMode }}</span></div>
+              <div class="kv"><span class="k">判分模式</span><span class="v">{{ model.gradingMode === 'ANSWER_CONTRACT' ? 'ANSWER_CONTRACT · 契约模式' : model.gradingMode === 'RUBRIC' ? 'RUBRIC · 旧评分模式（历史数据）' : 'LEGACY · 规则 + LLM 裁判' }}</span></div>
             </div>
           </section>
 
@@ -848,10 +860,10 @@ const selfTriggerValue = computed(() => {
             <h5>调用链 <span class="sp" /><span class="cnt">{{ turn.steps.length }} 步 · {{ toolCount }} 种工具 · {{ fmtMs(stepTotalMs) }}</span></h5>
             <ChainList :steps="turn.steps" :turn-index="turn.index" />
             <div v-if="stepWarnCount" class="dnote2">
-              调用链有 {{ stepWarnCount }} 步异常（{{ warnStepNames }}）：在「口径校验」阶段展开即可看到原始入参 / 出参；异常步骤只做标记，不改变调用顺序。
+              调用链有 {{ stepWarnCount }} 步异常（{{ warnStepNames }}）：在下方调用链中展开异常步骤即可看到原始入参 / 出参；异常步骤只做标记，不改变调用顺序。
             </div>
             <div class="dsub">
-              按阶段分组、组内折叠；展开单步可看 arguments / result 原文并单独复制。阶段只做归类，不改变调用顺序。
+              按阶段分组、组内折叠；展开单步可看 arguments / result 原文（后端未拆分时给原始条目）并单独复制。阶段只做归类，不改变调用顺序。
             </div>
           </section>
 
@@ -900,7 +912,7 @@ const selfTriggerValue = computed(() => {
             <div class="dnote">
               <TraceIcon name="info" :size="11" />
               <span>
-                请求地址 {{ turn.request.method }} {{ turn.request.url || '（未记录 URL）' }}；敏感请求头在落库时已被脱敏。
+                请求地址 {{ turn.request.method ? `${turn.request.method} ` : '' }}{{ turn.request.url || '（未记录 URL）' }}；敏感请求头在落库时已被脱敏。
                 工具调用与判定过程分别见「Agent 调用链」「流程裁决」。
               </span>
             </div>
@@ -1103,7 +1115,14 @@ const selfTriggerValue = computed(() => {
                 </div>
                 <div class="ln">
                   <span class="k">返回</span>
-                  <span class="v">pass = {{ turn.pass }} · {{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '综合分' }} {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}</em></span>
+                  <span class="v">
+                    <template v-if="model.gradingMode === 'ANSWER_CONTRACT'">
+                      质量分 {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}；pass 不由裁判给出，按契约闸门计算</em>
+                    </template>
+                    <template v-else>
+                      pass = {{ turn.pass }} · 综合分 {{ fmtScore(turn.score) }} · 错误归因 {{ tags.length + sessionTags.length }} 条<em>{{ judgeConclusion }}</em>
+                    </template>
+                  </span>
                 </div>
                 <div class="ln">
                   <span class="k">校验</span>
@@ -1267,7 +1286,7 @@ const selfTriggerValue = computed(() => {
               <div class="kv"><span class="k">四维均分</span><span class="v">{{ sessionDimText || '—' }}</span></div>
               <div class="kv"><span class="k">会话 ID</span><span class="v">{{ model.session.sessionIds.length ? model.session.sessionIds.join(' / ') : '未记录' }}</span></div>
               <div class="kv"><span class="k">会话一致性</span><span class="v">{{ model.session.consistentSession ? '同一会话' : '多会话（逐轮新会话）' }}</span></div>
-              <div class="kv"><span class="k">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分参考线' : 'pass 阈值' }}</span><span class="v">{{ passLine }} · {{ passLineSource }}</span></div>
+              <div class="kv"><span class="k">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '阈值（不参与契约判定）' : 'pass 阈值' }}</span><span class="v">{{ passLine }} · {{ passLineSource }}</span></div>
             </div>
             <div v-if="sessionTagsAll.length" class="jtagrow" style="margin-top: 8px">
               <span class="jscope" :title="SCOPE_META.session.hint">会话级归因</span>
@@ -1298,7 +1317,7 @@ const selfTriggerValue = computed(() => {
               <div class="kv"><span class="k">结束时间</span><span class="v">{{ detail?.finished_at ? detail.finished_at.replace('T', ' ').slice(0, 19) : '—' }}</span></div>
               <div class="kv"><span class="k">模型</span><span class="v">{{ agentModelLabel || '执行记录未保存' }}</span></div>
               <div class="kv"><span class="k">裁判模型</span><span class="v">{{ judgeModel }}</span></div>
-              <div class="kv"><span class="k">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '质量分参考线' : 'pass 阈值' }}</span><span class="v">{{ passLine }} · {{ passLineSource }}</span></div>
+              <div class="kv"><span class="k">{{ model.gradingMode === 'ANSWER_CONTRACT' ? '阈值（不参与契约判定）' : 'pass 阈值' }}</span><span class="v">{{ passLine }} · {{ passLineSource }}</span></div>
             </div>
           </section>
 

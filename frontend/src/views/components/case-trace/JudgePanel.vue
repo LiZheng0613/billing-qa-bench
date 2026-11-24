@@ -46,6 +46,14 @@ const passRule = computed(() => `pass = ${passRuleBody.value}`)
 const scoreHeading = computed(() =>
   props.model.gradingMode === 'ANSWER_CONTRACT' ? '质量分' : '总分',
 )
+/** 矩阵表头同样跟着模式走：契约是「闸门」，LEGACY 是「门槛」 */
+const contractMode = computed(() => props.model.gradingMode === 'ANSWER_CONTRACT')
+const matrixTitle = computed(() =>
+  contractMode.value ? '按轮次 · 闸门 + 质量分维度' : '按轮次 · 门槛 + 维度得分',
+)
+const dimGroupLabel = computed(() =>
+  contractMode.value ? '质量分维度 · 40 / 30 / 20 / 10' : '维度得分 · 40 / 30 / 20 / 10',
+)
 const scoreHeadingHint = computed(() =>
   props.model.gradingMode === 'ANSWER_CONTRACT'
     ? '契约模式下此列是四维质量分，仅作参考，不参与 pass'
@@ -68,7 +76,8 @@ const unknownCount = computed(() => turns.value.filter((turn) => turn.verdict ==
 const allUnknown = computed(() => turns.value.length > 0 && unknownCount.value === turns.value.length)
 
 /**
- * 执行级结论：`pass_flag` 是后端算出的权威值 —— LEGACY / RUBRIC 按「硬门槛全过 + 综合分 ≥ 阈值」，
+ * 执行级结论：`pass_flag` 是后端算出的权威值 —— LEGACY 按「硬门槛全过 + 综合分 ≥ 阈值」；
+ * RUBRIC 是历史模式，当时的判定依据没有落库，只沿用落库的 `pass_flag`；
  * ANSWER_CONTRACT 只看四项契约闸门（executor: passed = grading.passed，质量分不参与）。
  * 多轮执行里，没有轮次级规则/判分的中间轮会落「未判定」，若按「每轮都通过」口径
  * 汇总就会把已通过的整通执行说成「部分通过」，和页头状态、门槛流程条自相矛盾
@@ -351,7 +360,11 @@ const conclusionParts = computed<Array<{ text: string; strong?: boolean }>>(() =
     parts.push({ text: '；' })
   }
   if (unknownCount.value) {
-    parts.push({ text: `${unknownCount.value} 轮缺少轮次级门槛与分数，标记为未判定；` })
+    parts.push({
+      text: contractMode
+        ? `${unknownCount.value} 轮缺少轮次级质量分与契约事实，标记为未判定；`
+        : `${unknownCount.value} 轮缺少轮次级门槛与分数，标记为未判定；`,
+    })
   }
   parts.push({
     text:
@@ -777,7 +790,7 @@ function copyConclusion(turn: TurnVM): void {
     <!-- ===== 判分矩阵 ===== -->
     <div v-if="turns.length" class="jmatrix">
       <div class="jm-h">
-        <b>按轮次 · 门槛 + 维度得分</b>
+        <b>{{ matrixTitle }}</b>
         <span>{{ turns.length }} 轮</span>
         <span class="sp" />
         <span class="hint">{{ turns.length === 1 ? '本轮判定依据已展开' : '点击任意行展开该轮判定依据' }}</span>
@@ -790,7 +803,7 @@ function copyConclusion(turn: TurnVM): void {
             <th rowspan="2" class="vd" :title="passRule">结论</th>
             <th rowspan="2" class="q">提问</th>
             <th colspan="2" class="grp gate">硬门槛 · 决定 pass</th>
-            <th colspan="4" class="grp llm">维度得分 · 40 / 30 / 20 / 10</th>
+            <th colspan="4" class="grp llm">{{ dimGroupLabel }}</th>
             <th rowspan="2" class="tags" title="此列只列轮次级归因；会话级归因见上方结论区">
               错误归因<span class="dimmax">轮次级</span>
             </th>
@@ -920,7 +933,7 @@ function copyConclusion(turn: TurnVM): void {
                       <div class="jx-sec-h">
                         <TraceIcon name="grid" :size="11" />
                         <b>各项打分</b>
-                        <span class="note">{{ turn.dimensions.length ? '四维 · 轮次级' : '四维 · 执行级口径' }}</span>
+                        <span class="note">{{ contractMode ? '质量分四维' : '四维' }} · {{ turn.dimensions.length ? '轮次级' : '执行级口径' }}</span>
                       </div>
                       <div v-if="turn.dimensions.length" class="jd-dims-rows">
                         <div v-for="dim in turn.dimensions" :key="dim.key" class="jd-dim">
@@ -935,7 +948,7 @@ function copyConclusion(turn: TurnVM): void {
                         </div>
                       </div>
                       <p v-else class="jd-dims-empty">
-                        后端只落库执行级四维（见上方「维度得分」），未提供本轮拆分。
+                        后端只落库执行级{{ contractMode ? '四维质量分（见上方「质量分维度」）' : '四维（见上方「维度得分」）' }}，未提供本轮拆分。
                       </p>
                     </div>
 
