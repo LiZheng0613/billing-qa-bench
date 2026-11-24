@@ -91,7 +91,7 @@ const timeLabel = computed(() => `${props.turn.at ? props.turn.at.slice(11, 19) 
             <span class="met">
               {{ timeLabel }}
               <span class="dot">·</span>
-              {{ stepCount }} 步
+              {{ turn.stepsRecorded ? `${stepCount} 步` : '调用链未记录' }}
             </span>
           </div>
 

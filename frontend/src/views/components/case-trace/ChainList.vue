@@ -12,10 +12,12 @@ const props = withDefaults(
   defineProps<{
     steps: TurnStepVM[]
     turnIndex: number
+    /** 后端是否落了 tool_calls：false 表示字段缺失 / null，与「空数组」区分 */
+    recorded?: boolean
     /** 证据页用紧凑行，执行段用明细行 */
     compact?: boolean
   }>(),
-  { compact: false },
+  { compact: false, recorded: undefined },
 )
 
 const closedGroups = ref<Set<string>>(new Set())
@@ -127,7 +129,13 @@ function toggleStep(index: number): void {
   <div class="clist">
     <div v-if="!steps.length" class="cempty">
       <TraceIcon name="route" :size="14" />
-      <p>本轮没有记录到工具调用。执行记录里 <code>tool_calls</code> 为空时，界面不会补造调用步骤。</p>
+      <p v-if="recorded === false">
+        执行记录里本轮 <code>tool_calls</code> 未落库（为 null），界面不补造调用步骤。
+      </p>
+      <p v-else-if="recorded">
+        后端记录本轮没有工具调用（<code>tool_calls</code> 为空数组），界面不补造调用步骤。
+      </p>
+      <p v-else>本轮没有可展示的工具调用记录，界面不补造调用步骤。</p>
     </div>
 
     <template v-else>

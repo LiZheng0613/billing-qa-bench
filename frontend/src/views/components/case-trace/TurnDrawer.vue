@@ -517,7 +517,7 @@ const selfTriggerValue = computed(() => {
           <span class="dot">·</span>
           <span>时延 {{ fmtMs(turn.latency) }}</span>
           <span class="dot">·</span>
-          <span>{{ turn.steps.length }} 步</span>
+          <span>{{ turn.stepsRecorded ? `${turn.steps.length} 步` : '调用链未记录' }}</span>
           <template v-if="turn.agentTokens !== null">
             <span class="dot">·</span>
             <span>tokens {{ turn.agentTokens }}</span>
@@ -967,14 +967,14 @@ const selfTriggerValue = computed(() => {
             <div class="dgrid">
               <div class="dstat"><div class="dl">首 Token</div><div class="dv">{{ fmtMs(turn.ttft) }}</div></div>
               <div class="dstat"><div class="dl">总时延</div><div class="dv">{{ fmtMs(turn.latency) }}</div></div>
-              <div class="dstat"><div class="dl">调用步数</div><div class="dv">{{ turn.steps.length }} 步</div></div>
+              <div class="dstat"><div class="dl">调用步数</div><div class="dv">{{ turn.stepsRecorded ? `${turn.steps.length} 步` : '—' }}</div></div>
               <div class="dstat"><div class="dl">最慢一步</div><div class="dv">{{ slowest ? fmtMs(slowest.ms) : '—' }}</div></div>
             </div>
             <div class="dgrid">
               <div class="dstat"><div class="dl">输入 tokens</div><div class="dv">{{ tokenText(turn.agentPromptTokens) }}</div></div>
               <div class="dstat"><div class="dl">输出 tokens</div><div class="dv">{{ tokenText(turn.agentCompletionTokens) }}</div></div>
               <div class="dstat"><div class="dl">合计 tokens</div><div class="dv">{{ tokenText(turn.agentTokens) }}</div></div>
-              <div class="dstat"><div class="dl">工具种类</div><div class="dv">{{ toolCount }} 个</div></div>
+              <div class="dstat"><div class="dl">工具种类</div><div class="dv">{{ turn.stepsRecorded ? `${toolCount} 个` : '—' }}</div></div>
             </div>
             <div class="dnote">
               <TraceIcon name="info" :size="11" />
@@ -985,6 +985,9 @@ const selfTriggerValue = computed(() => {
                 <template v-else>取自本轮响应体的 usage。</template>
                 <template v-if="turn.simulatorTokens !== null">
                   模拟器（生成用户话术）另用 {{ turn.simulatorTokens }} tokens，不计入 Agent 用量。
+                </template>
+                <template v-if="!turn.stepsRecorded">
+                  本轮执行记录未保存 <code>tool_calls</code>（为 null），调用步数与工具种类按「未记录」展示，不按 0 计。
                 </template>
               </span>
             </div>
@@ -1005,12 +1008,12 @@ const selfTriggerValue = computed(() => {
           </section>
 
           <section class="dsec">
-            <h5>调用链 <span class="sp" /><span class="cnt">{{ turn.steps.length }} 步 · {{ toolCount }} 种工具 · {{ fmtMs(stepTotalMs) }}</span></h5>
-            <ChainList :steps="turn.steps" :turn-index="turn.index" />
+            <h5>调用链 <span class="sp" /><span class="cnt">{{ turn.stepsRecorded ? `${turn.steps.length} 步 · ${toolCount} 种工具 · ${fmtMs(stepTotalMs)}` : '执行记录未保存 tool_calls' }}</span></h5>
+            <ChainList :steps="turn.steps" :turn-index="turn.index" :recorded="turn.stepsRecorded" />
             <div v-if="stepWarnCount" class="dnote2">
               调用链有 {{ stepWarnCount }} 步异常（{{ warnStepNames }}）：在下方调用链中展开异常步骤即可看到原始入参 / 出参；异常步骤只做标记，不改变调用顺序。
             </div>
-            <div class="dsub">
+            <div v-if="turn.stepsRecorded" class="dsub">
               按阶段分组、组内折叠；展开单步可看 arguments / result 原文（后端未拆分时给原始条目）并单独复制。阶段只做归类，不改变调用顺序。
             </div>
           </section>
@@ -1211,16 +1214,16 @@ const selfTriggerValue = computed(() => {
               <span>Agent 调用链</span>
               <span class="badge">按调用顺序</span>
               <span class="sp" />
-              <span class="badge">{{ turn.steps.length }} 步 · {{ fmtMs(stepTotalMs) }}</span>
+              <span class="badge">{{ turn.stepsRecorded ? `${turn.steps.length} 步 · ${fmtMs(stepTotalMs)}` : '未记录 tool_calls' }}</span>
             </div>
             <div class="dgrid">
-              <div class="dstat"><div class="dl">步数</div><div class="dv">{{ turn.steps.length }}</div></div>
-              <div class="dstat"><div class="dl">工具种类</div><div class="dv">{{ toolCount }}</div></div>
-              <div class="dstat" :class="{ warn: stepWarnCount > 0 }"><div class="dl">异常步骤</div><div class="dv">{{ stepWarnCount }}</div></div>
+              <div class="dstat"><div class="dl">步数</div><div class="dv">{{ turn.stepsRecorded ? turn.steps.length : '—' }}</div></div>
+              <div class="dstat"><div class="dl">工具种类</div><div class="dv">{{ turn.stepsRecorded ? toolCount : '—' }}</div></div>
+              <div class="dstat" :class="{ warn: stepWarnCount > 0 }"><div class="dl">异常步骤</div><div class="dv">{{ turn.stepsRecorded ? stepWarnCount : '—' }}</div></div>
               <div class="dstat"><div class="dl">总耗时</div><div class="dv">{{ fmtMs(stepTotalMs) }}</div></div>
             </div>
-            <ChainList :steps="turn.steps" :turn-index="turn.index" compact />
-            <div class="dsub">
+            <ChainList :steps="turn.steps" :turn-index="turn.index" :recorded="turn.stepsRecorded" compact />
+            <div v-if="turn.stepsRecorded" class="dsub">
               每条记录可展开 tool call 的 arguments / result 原始报文并单独复制；分组折叠避免几十步撑破面板。
             </div>
           </div>

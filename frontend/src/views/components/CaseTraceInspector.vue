@@ -464,6 +464,20 @@ const chainWarnSteps = computed(() => chainSteps.value.filter((item) => item.ste
 
 const chainWarnTurns = computed(() => [...new Set(chainWarnSteps.value.map((item) => item.turn))])
 
+/** 有多少轮后端真的落了 tool_calls；用来区分「空数组」与「字段未落库」 */
+const chainRecordedTurns = computed(() => model.value.turns.filter((turn) => turn.stepsRecorded).length)
+
+const chainEmptyText = computed(() => {
+  const total = model.value.turns.length
+  if (chainRecordedTurns.value === total) {
+    return '所有轮次的 tool_calls 都是空数组，后端记录本轮没有工具调用；页面不补造调用步骤。'
+  }
+  if (chainRecordedTurns.value === 0) {
+    return '所有轮次的 tool_calls 都未落库（为 null），页面不补造调用步骤。'
+  }
+  return '部分轮次的 tool_calls 未落库、其余为空数组，页面不补造调用步骤。'
+})
+
 const chainAvgSteps = computed(() => {
   const used = model.value.turns.filter((turn) => turn.steps.length).length
   return used ? chainSteps.value.length / used : 0
@@ -1528,7 +1542,7 @@ async function copyTraceUid(): Promise<void> {
           </div>
 
           <div v-else class="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-            <template v-if="model.turns.length">所有轮次的 <code class="font-mono">tool_calls</code> 都为空，页面不补造调用步骤。</template>
+            <template v-if="model.turns.length">{{ chainEmptyText }}</template>
             <template v-else-if="turnsUsed">本次执行共 {{ turnsUsed }} 轮，但没有留存逐轮调用记录，页面不补造调用步骤。</template>
             <template v-else>本次执行没有产生对话轮次，页面不补造调用步骤。</template>
           </div>

@@ -176,6 +176,8 @@ export interface TurnVM {
   /** 轮次级契约门槛（后端目前按整通判定，缺失时显示 —） */
   contract: { passed: number; total: number } | null
   steps: TurnStepVM[]
+  /** 后端是否落了本轮 tool_calls：null / 缺失为 false，空数组为 true（空数组才是「确实没有调用」） */
+  stepsRecorded: boolean
   tags: string[]
   sessionTags: string[]
   dimensions: Array<{ key: string; label: string; value: number; max: number }>
@@ -759,6 +761,7 @@ export function buildTraceModel(detail: ExecutionDetail | null): TraceModel {
       factsScope: turnFacts.length ? 'turn' : isLast && facts.length ? 'execution' : 'none',
       contract,
       steps,
+      stepsRecorded: Array.isArray(turn.tool_calls),
       tags: turnTags,
       sessionTags,
       dimensions: turnDims.length ? turnDims : single ? dimensions : [],
