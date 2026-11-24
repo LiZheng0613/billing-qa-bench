@@ -150,7 +150,7 @@ batch_test/
 │   │       └── io/            # 导入导出：用例 JSON、执行结果 Excel、用例 Excel（历史兼容）
 │   ├── migrations/            # Alembic 迁移脚本
 │   ├── mock_servers/          # 内置 Mock：LLM(8001)、被测客服系统(8002) 与取数执行器(8003)
-│   ├── scripts/               # api_smoke.py / e2e_smoke.py / seed_demo_history.py / seed_environment_demo.py / migrate_mysql_to_postgres.py
+│   ├── scripts/               # api_smoke.py / e2e_smoke.py / seed_demo_history.py / seed_environment_runs.py / migrate_mysql_to_postgres.py
 │   ├── tests/                 # 508 项 pytest
 │   ├── alembic.ini
 │   ├── pyproject.toml
@@ -221,7 +221,7 @@ python -m uvicorn billing_qa.main:app --host 127.0.0.1 --port 8000
 
 - `--reset` 会删除 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` / `grader_eval` / `capability` / `data_source` / `sys_audit_log` 中的全部数据，并清理 `test-*` / `xzc` 等测试模型与 `DEMO-ENV-*` 环境对比演示环境，保留其余环境、模型、Prompt、内置角色与管理员，再重新写入演示用例、业务口径、候选池、取数能力、取证记录与演示审计。
 - 需要演示大盘、趋势、Run 对比、续做与定时计划时，再执行 `python scripts/seed_demo_history.py`：脚本会真实调用 Mock 服务生成 3 条已完成的批量任务（全量回归 / 单轮与契约专项 / 动态多轮专项）、1 条中断后可续做的任务、1 条每日定时任务，以及对应的执行记录、轮次轨迹、裁判明细与失败追问自检，并把时间戳回填到近 3 天。脚本幂等，重复执行只重建 `DEMO-TASK-*`。
-- 需要演示「按执行环境对比」时，再执行 `python scripts/seed_environment_demo.py`：脚本幂等重建 `DEMO-ENV-BASE` / `DEMO-ENV-PROMPT-V2` / `DEMO-ENV-TOOL-V3` 三个调优环境及近 30 天共 1214 条执行记录（通过率约 58% / 74% / 86%）；`--purge` 只清理这批演示环境与执行记录。
+- 需要演示「按执行环境对比」时，再执行 `python scripts/seed_environment_runs.py --env-code QA-MOCK`：脚本用真实引擎在 SSE 环境上生成 59 条调试执行，与环境对比页默认的 117 条批量执行一起构成近 7 天数据；重跑会追加记录，演示前重置即可恢复基线。
 
 > 表结构只有一条链路：`init_db` 内部调用 `billing_qa.db.migrations.upgrade_schema()`，即 `alembic upgrade head`（空库会按迁移脚本从零建表），不再使用 `create_all` 或 `alembic stamp`。后续结构变更仍是 `alembic revision --autogenerate` + `alembic upgrade head`。
 
@@ -281,14 +281,14 @@ Vite 已配置 `/api` 与 `/health` 反向代理到 `http://127.0.0.1:8000`，�
 
 | 资产 | 内容 |
 | --- | --- |
-| 环境 | `QA-MOCK-JSON`：Agent 报文（Basic 鉴权 + 前置取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso`），**61 条演示用例默认绑定**；`QA-MOCK`：SSE 流式演示环境；`DEMO-ENV-BASE` / `DEMO-ENV-PROMPT-V2` / `DEMO-ENV-TOOL-V3`：三套调优方案的环境对比数据（近 30 天，通过率约 58% / 74% / 86%，`seed_environment_demo.py` 生成） |
+| 环境 | `QA-MOCK-JSON`：Agent 报文（Basic 鉴权 + 前置取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso`），**61 条演示用例默认绑定**；`QA-MOCK`：SSE 流式演示环境，`seed_environment_runs.py` 在其上生成 59 条调试执行用于环境对比 |
 | 用例 | 61 条（59 `ACTIVE` + 1 `DRAFT` + 1 `DISABLED`；27 条答案契约 + 32 条 4 维评分），全部带 `userid` / `custid` 请求变量（`userid` 取自话术中的号码，数字按字符串保存） |
-| 业务资产 | 6 个模型、4 套 Prompt（7 个版本）、14 条业务口径、8 条候选（NEW / TRIAGED / PROMOTED / REJECTED）、2 个数据源、14 条取数能力、12 条取证记录、1 条判分器自检、5 个演示账号 |
-| 历史数据 | 5 条批量任务（3 完成 + 1 中断可续做 + 1 每日定时）+ 117 条执行明细、轮次轨迹、裁判明细与失败追问自检（`seed_demo_history.py` 生成）；另有 1214 条环境对比执行记录（`seed_environment_demo.py` 生成） |
+| 业务资产 | 4 个模型、4 套 Prompt（7 个版本）、14 条业务口径、8 条候选（NEW / TRIAGED / PROMOTED / REJECTED）、2 个数据源、14 条取数能力、12 条取证记录、1 条判分器自检、5 个演示账号 |
+| 历史数据 | 5 条批量任务（3 完成 + 1 中断可续做 + 1 每日定时）+ 117 条批量执行明细（`seed_demo_history.py` 生成）+ 59 条 SSE 环境调试执行（`seed_environment_runs.py` 生成），合计 176 条执行、200 条轮次轨迹、183 条裁判明细、47 条追问自检 |
 
 用例逐条清单与预期结果、Mock 数据口径、演示任务构成见 [`docs/DEMO_DATASET.md`](docs/DEMO_DATASET.md)。
 
-> 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据；正式演示前依次执行 `python -m billing_qa.db.init_db --demo --reset`、`python scripts/seed_demo_history.py` 与 `python scripts/seed_environment_demo.py` 即可恢复基线。
+> 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据；正式演示前依次执行 `python -m billing_qa.db.init_db --demo --reset`、`python scripts/seed_demo_history.py` 与 `python scripts/seed_environment_runs.py --env-code QA-MOCK` 即可恢复基线。
 
 ---
 
@@ -643,7 +643,7 @@ npm run test:e2e    # 「AI 帮我填」主链路回归
 | 用例保存后版本未变 | 仅字段实际变更才会生成新版本；如需强制留痕可在变更说明中记录 |
 | 导入失败 | 页面入口仅支持 `.json`；先用页面「导入 JSON」走 dry-run 预览，逐条错误会列在弹窗中（格式见 [`docs/CASE_JSON_FORMAT.md`](docs/CASE_JSON_FORMAT.md)） |
 | 删除环境 / 模型返回 409 | 资产仍被用例或任务引用（模型另受「启用中的模拟器 / 编写模型不可删」保护）；先解除引用或停用后再删除，详见 §6.1 |
-| 演示库出现 `PYTEST-*` / `BATCH20*` 用例或任务 | 运行测试脚本留下的临时数据；执行 `python -m billing_qa.db.init_db --demo --reset`、`python scripts/seed_demo_history.py` 与 `python scripts/seed_environment_demo.py` 恢复演示基线 |
+| 演示库出现 `PYTEST-*` / `BATCH20*` 用例或任务 | 运行测试脚本留下的临时数据；执行 `python -m billing_qa.db.init_db --demo --reset`、`python scripts/seed_demo_history.py` 与 `python scripts/seed_environment_runs.py --env-code QA-MOCK` 恢复演示基线 |
 
 ---
 

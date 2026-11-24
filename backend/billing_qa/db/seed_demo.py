@@ -208,7 +208,9 @@ async def _get_or_create_environment(
         await db.execute(select(Environment).where(Environment.code == code))
     ).scalar_one_or_none()
     if env is None:
-        env = Environment(code=code, **spec)
+        # variables 是 selectin 关系：新建对象未初始化集合，下面读 env.variables
+        # 会触发异步懒加载并抛 MissingGreenlet，显式给空列表。
+        env = Environment(code=code, variables=[], **spec)
         db.add(env)
         await db.flush()
     else:
@@ -2714,7 +2716,8 @@ async def purge_cases(db: AsyncSession) -> None:
     await db.execute(SysAuditLog.__table__.delete())
     await db.execute(TestCaseRevision.__table__.delete())
     await db.execute(TestCase.__table__.delete())
-    # 环境对比演示数据由 scripts/seed_environment_demo.py 单独重建
+    # 旧演示环境（DEMO-ENV-*）如存在则一并清理；当前环境对比数据由
+    # scripts/seed_environment_runs.py 用真实引擎执行生成，不再写 DEMO-ENV-*。
     await db.execute(
         Environment.__table__.delete().where(Environment.code.like("DEMO-ENV-%"))
     )

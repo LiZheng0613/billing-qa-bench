@@ -1,5 +1,9 @@
 """写入「按执行环境对比」演示数据（电信计费问账 Agent 调优场景）。
 
+已停用（仅作历史参考）：当前 ``GradingMode`` 只有 ``LEGACY`` / ``ANSWER_CONTRACT``，
+本脚本会给非契约用例写入 ``RUBRIC``，属于当前代码无法产生的数据，重建演示库时不要执行。
+需要环境对比数据请改用 ``scripts/seed_environment_runs.py``（真实引擎执行）。
+
 用法（在 backend 目录下）：
     python scripts/seed_environment_demo.py           # 幂等重建 3 个演示环境及其执行记录
     python scripts/seed_environment_demo.py --purge   # 只清理演示环境与演示执行记录

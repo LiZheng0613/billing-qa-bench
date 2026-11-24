@@ -12,11 +12,13 @@
 cd backend
 python -m billing_qa.db.init_db --demo --reset      # 清空用例/执行/取数资产后重建（幂等）
 python scripts/seed_demo_history.py                 # 重建 5 条演示任务（3 完成 + 1 中断 + 1 定时）
-python scripts/seed_environment_demo.py             # 重建 3 个环境对比演示环境与近 30 天执行记录
+python scripts/seed_environment_runs.py --env-code QA-MOCK   # 真实引擎补 59 条 SSE 环境执行
 ```
 
 - `seed_demo.py` 幂等：每次执行都会把环境配置、用例绑定、请求变量、数据源、取数能力、取证记录与演示账号对齐当前代码口径；
-- `--reset` 清空 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` / `grader_eval` / `capability` / `data_source` / `sys_audit_log`，保留环境、模型、Prompt、内置角色与管理员；
+- `--reset` 清空 `test_case` / `test_case_revision` / `execution_record` / `turn_trace` / `judge_result` / `fact_result` / `gold_query` / `batch_task` / `case_candidate` / `grader_eval` / `capability` / `data_source` / `sys_audit_log`，保留 `QA-MOCK` / `QA-MOCK-JSON` 两个环境、模型、Prompt、内置角色与管理员；
+- `seed_demo_history.py` 通过真实引擎在 `QA-MOCK-JSON` 上生成 117 条批量执行；`seed_environment_runs.py` 再在 `QA-MOCK`（SSE）上生成 59 条调试执行，两者都只依赖 Mock 8001 / 8002，脚本本身不构造判分字段、不改写时间；
+- 当前 `GradingMode` 只有 `LEGACY` / `ANSWER_CONTRACT`，重建数据中没有 RUBRIC 记录；旧 `seed_environment_demo.py` 会写入 RUBRIC，仅保留作历史参考，不参与本次重建；
 - 在演示库上运行 pytest / 冒烟脚本会产生 `PYTEST-*`、`BATCH20*` 等临时数据，正式演示前重置即可恢复本页所述基线。
 
 ## 2. 环境绑定
@@ -24,7 +26,7 @@ python scripts/seed_environment_demo.py             # 重建 3 个环境对比�
 | 环境 | 报文形态 | 说明 |
 | --- | --- | --- |
 | `QA-MOCK-JSON` | 非流式 · Agent 报文 `POST /api/v1/agent/chat` | **61 条演示用例默认绑定**。Basic 鉴权 + 前置 `POST /api/v1/conversation` 取 `conversationId` + 首轮空 `sessionid` 回填 + `timestamp_iso` 时间戳，与真实 Agent 对接流程一致，配置指导见 [`AGENT_INTEGRATION_GUIDE.md`](AGENT_INTEGRATION_GUIDE.md) |
-| `QA-MOCK` | SSE 流式 · `POST /api/v1/chat` | 保留用于流式能力演示，当前无绑定用例 |
+| `QA-MOCK` | SSE 流式 · `POST /api/v1/chat` | 保留用于流式能力演示；`seed_environment_runs.py` 会在其上生成 59 条真实调试执行，供环境对比页使用。SSE 报文不经过非流式抽取器，因此这些轮次没有 `session_id` / `intent` 等字段，页面按「未记录」展示 |
 
 两个环境指向同一内置 Mock（`http://127.0.0.1:8002`），共用同一份电信计费数据，因此切换环境不改变答案口径，只改变报文形态。
 
@@ -117,9 +119,9 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 
 | 资产 | 规模 |
 | --- | --- |
-| 环境 | 5 个（`QA-MOCK-JSON` 默认用于 61 条用例，`QA-MOCK` 流式保留；另有 3 个环境对比演示环境 `DEMO-ENV-BASE` / `DEMO-ENV-PROMPT-V2` / `DEMO-ENV-TOOL-V3`） |
-| 模型 | 6 个（`MOCK-SIM` 模拟器 + 双裁判 `MOCK-JUDGE` / `MOCK-JUDGE-2` + `MOCK-AUTHOR` 编写 + 2 个停用的 OpenCode 模型示例） |
-| Prompt 模板 | 4 套（模拟器 / 裁判 / 编写 / 自检），其中模拟器、裁判、自检各有 v2 版本，可演示版本 Diff、引用影响面与 LATEST 解析 |
+| 环境 | 2 个（`QA-MOCK-JSON` 非流式 · 61 条用例默认绑定；`QA-MOCK` SSE · 仅用于环境对比的 59 条调试执行） |
+| 模型 | 4 个（`MOCK-SIM` 模拟器 + `MOCK-JUDGE` / `MOCK-JUDGE-2` 双裁判 + `MOCK-AUTHOR` 编写，全部启用） |
+| Prompt 模板 | 4 套 7 个版本（模拟器 / 裁判 / 自检各有 v2，编写仅 v1），可演示版本 Diff、引用影响面与 LATEST 解析 |
 | 请求变量 | 全部用例带 `userid` / `custid`；数字统一按字符串保存 |
 | 业务口径 | 14 条（账单、套餐、offer、余额等，含 `offer_contract`、`account_balance`） |
 | 候选池 | 8 条（NEW / TRIAGED / PROMOTED / REJECTED 四种状态齐备） |
@@ -141,17 +143,16 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 | `DEMO-TASK-004` 中断与续做演示（演示） | 5 条单轮 | 执行 3 条后终止，剩余 2 条可续做 |
 | `DEMO-TASK-005` 每日账单回归（定时演示） | 5 条核心账单用例 | 每日 09:00 触发，初始不执行 |
 
-合计 117 条执行明细与 142 条事实级判分结果（`fact_result`）。
+合计 117 条批量执行、132 条轮次轨迹、122 条 `judge_result`（115 条执行有裁判明细，其中 7 条走双裁判；`19` / `78` 两条 `ERROR` 执行没有产生轮次，因此没有裁判记录）。`DEMO-TASK-002` 开启追问自检，47 条失败/通过记录带 `self_check`（通过记录的 `status=SKIPPED`，不进入页面）。
 
-`seed_environment_demo.py` 另行生成「按执行环境对比」数据，供 `/stats` 的环境对比页演示：
+`seed_environment_runs.py` 在 `QA-MOCK`（SSE）上追加 59 条真实调试执行，与上述 117 条一起构成近 7 天的环境对比数据：
 
-| 环境 | 调优思路 | 近 30 天执行量 | 通过率 |
+| 环境 | 报文形态 | 执行量 | 通过率（本次重建后，重跑会变动） |
 | --- | --- | --- | --- |
-| `DEMO-ENV-BASE` | 基线 Prompt v1，上下文未压缩 | 407 | 58.5% |
-| `DEMO-ENV-PROMPT-V2` | 精简 Prompt + 结构化输出 | 394 | 74.1% |
-| `DEMO-ENV-TOOL-V3` | 工具调用增强 + 失败自检 | 413 | 86.4% |
+| `QA-MOCK-JSON` | 非流式 Agent 报文 | 117（3 个已完成任务） | 88.9% |
+| `QA-MOCK` | SSE 流式 | 59（单笔调试） | 88.1% |
 
-这批记录全部是真实 `execution_record`，可被 `/executions/summary` 与 `/executions/environment-summary` 聚合，不影响上面 5 条 `DEMO-TASK-*` 任务。`--purge` 只清理这 3 个环境及其执行记录。
+两个环境指向同一 Mock，答案口径一致，差异只来自报文形态与样本量：SSE 轮次没有 `session_id` / `intent` 等非流式抽取字段，页面按「未记录」展示；其余判分、契约、事实结果均由真实引擎写入。整库合计 176 条执行、200 条轮次、183 条裁判明细、213 条事实级判分（`fact_result`）、47 条 `self_check`。当前 `GradingMode` 只有 `LEGACY` / `ANSWER_CONTRACT`，因此没有 RUBRIC 记录。
 
 ## 6. 取数资产与 Mock 能力
 

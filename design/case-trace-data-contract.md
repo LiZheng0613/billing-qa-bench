@@ -899,3 +899,32 @@ mock 新增通过用例执行 **#6581**（BILL-FEE-0422 · 2 轮全通过 · sel
   - `generated_sql` 列：真实 pytest 16/16 为空；只有环境配了该 extractor 且响应含 `data.generated_sql` 时才写列，历史 252 条值实际来自 `response_raw.body.data.generated_sql`，上游改结构就会丢。
 - **不是缺口（避免误判）**：模拟器字段 `simulator_thought` / `simulator_status` / `rendered_prompt` 覆盖 66/119，正好等于 `input_source='SIMULATOR'` 的轮次数，首轮 `INITIAL` 本来就不该有模拟器思考（66/66 完整）；LEGACY 2 条 `ERROR` 的 `turns_used=0` 属未产生轮次，页面已按 0 轮处理。
 - **影响**：本轮无代码改动，仅记录审计结论。A 类由数据治理处理；B 类需后端补 extractor 配置与 schema，页面在此之前继续保持「未记录」三态。
+
+### 12.31 演示库全量重建：只保留当前代码能产生的数据（2026-11-24）
+
+- **起因**：12.30 查出的 A 类（1214 条 RUBRIC、无轮次、无裁判明细的种子执行）占库 83.8%，且当前 `GradingMode` 只有 `LEGACY` / `ANSWER_CONTRACT`，这些记录再也无法由代码产生。决定整库重建，而不是逐条清理。
+- **重建配方**（备份 → 清 schema → 种子 → 真实引擎执行）：
+  ```powershell
+  pg_dump -h 127.0.0.1 -U postgres -d batch_test -F c -f <临时目录>\batch_test_before_rebuild.dump
+  psql -h 127.0.0.1 -U postgres -d batch_test -c "drop schema public cascade; create schema public;"
+  cd backend
+  python -m billing_qa.db.init_db --demo
+  python scripts/seed_demo_history.py                       # 117 条 BATCH 执行（QA-MOCK-JSON）
+  python scripts/seed_environment_runs.py --env-code QA-MOCK # 59 条 DEBUG 执行（QA-MOCK / SSE）
+  ```
+  `seed_environment_demo.py` **不执行**：它会给非契约用例写 `RUBRIC`，属于当前代码无法产生的数据（脚本已加停用说明）。
+- **`seed_demo.py` 修复**：`_get_or_create_environment()` 构造 `Environment` 时未传 `variables`，重建时触发 `MissingGreenlet` / 必填列报错；改为显式 `variables=[]`。属本次重建暴露的真实缺陷。
+- **重建后库结构**（`127.0.0.1:5432/batch_test`）：176 条 `execution_record` / 200 条 `turn_trace` / 183 条 `judge_result` / 213 条 `fact_result` / 92 条 `rule_result` / 81 条 `answer_grading` / 81 条 `diagnostics` / 81 条 `grader_version` / 47 条 `self_check` / 3 条 `error_message`；RUBRIC 记录 0 条。
+- **状态分布**：LEGACY 95 条（PASS 78 = 63 `COMPLETED` + 15 `GOAL_ACHIEVED`；FAIL 8；`MAX_TURNS` 3；`REPETITION` 3；`ERROR` 3）、契约 81 条（PASS 78 / FAIL 3）。`turns_used` 与 `turn_trace` 行数 mismatch 0；10 条执行走双裁判，`judge_result` 1 条 / 2 条分别为 163 / 10 条执行。
+- **仍然存在的「未记录」是当前代码事实，不补造**：`tool_calls` 200/200 为 JSON `null`、`evidence` 200/200 为 `null`、`response_raw.usage` 200/200 缺失、`generated_sql` 列 0/200（SQL 只在响应体），原因同 12.30 B 类。SSE 环境（`QA-MOCK`）的 59 条执行没有 `session_id` / `intent`（132/200 有值，全部来自非流式环境），页面按「未记录」展示。
+- **环境探活**：重建后两个环境的 `last_health_*` 为空，大盘与环境对比显示「未探活」。已对 `POST /api/v1/environments/3/health-check`、`/4/health-check` 各调一次（真实请求 8002），现为 `QA-MOCK` 31 ms / `QA-MOCK-JSON` 2 ms「健康」；环境对比为 88.9% vs 88.1%，176 次已判定。
+- **新样本 ID**（旧 ID 已随清库消失，审计记录里引用旧 ID 的段落仅作历史）：
+  - `45` LEGACY PASS 2 轮 94（多轮正常通过）
+  - `54` `MAX_TURNS_EXCEEDED` 3 轮 61（终止类硬失败）
+  - `55` `REPETITION_ABORT` 1 轮 94（分数达标但被终止否决）
+  - `19` `ERROR` 0 轮（无对话轮次）
+  - `76` LEGACY FAIL 18 轮 + `self_check`（追问自检完整样本）
+  - `37` 契约 FAIL：质量分 94、`facts` / `safety` 闸门未过、总分 70
+  - `176` 契约 PASS 1 轮 95（质量分 ≈ 闸门全过）
+  - `162` / `171` / `172` SSE 环境：PASS / `MAX_TURNS` / `REPETITION`
+- **验证**：5173 真实后端页面回归大盘、环境对比、任务详情、用例列表与 8 个执行详情（含「未判定」「0 轮」「终止」「契约」「双裁判」「SSE」分支）均无 `NaN` / `undefined` / `[object Object]`，通过用例仍 4 页签且「自检」出现 0 次；5175 演示通道（mock 8877）不受重建影响，`900004` 等页面正常。
