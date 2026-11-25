@@ -529,11 +529,6 @@ const slowSteps = computed(() =>
     .slice(0, 5),
 )
 
-const chainFocusTurn = computed(() => {
-  const failed = model.value.turns.find((turn) => turn.verdict === 'fail')
-  return failed?.index ?? model.value.turns[model.value.turns.length - 1]?.index ?? null
-})
-
 const currentTurn = computed(
   () => model.value.turns.find((turn) => turn.index === drawer.turnIndex) ?? null,
 )
@@ -1549,51 +1544,6 @@ async function copyTraceUid(): Promise<void> {
             <template v-if="model.turns.length">{{ chainEmptyText }}</template>
             <template v-else-if="turnsUsed">本次执行共 {{ turnsUsed }} 轮，但没有留存逐轮调用记录，页面不补造调用步骤。</template>
             <template v-else>本次执行没有产生对话轮次，页面不补造调用步骤。</template>
-          </div>
-
-          <div class="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-500">
-            <TraceIcon name="code" :size="12" />
-            <span v-if="detail.raw_request_response.length">原始报文按轮次留存，可在对话轮次的「证据」入口或此处打开。</span>
-            <span v-else-if="detail.grading_mode === 'RUBRIC'">旧评分模式（RUBRIC）没有留存原始报文。</span>
-            <span v-else>本次执行没有保存原始报文。</span>
-            <span class="flex-1" />
-            <button
-              v-if="chainFocusTurn !== null"
-              type="button"
-              class="inline-flex items-center gap-1 text-indigo-600 hover:underline"
-              @click="openDrawer(chainFocusTurn, 'evid', null, 'req')"
-            >
-              <TraceIcon name="code" :size="11" />
-              查看请求原文
-            </button>
-            <button
-              v-if="chainFocusTurn !== null"
-              type="button"
-              class="inline-flex items-center gap-1 text-indigo-600 hover:underline"
-              @click="openDrawer(chainFocusTurn, 'evid', null, 'res')"
-            >
-              <TraceIcon name="chat" :size="11" />
-              查看响应
-            </button>
-            <button type="button" class="inline-flex items-center gap-1 hover:text-indigo-600" @click="exportReport">
-              <TraceIcon name="download" :size="11" />
-              导出 trace
-            </button>
-          </div>
-
-          <div class="space-y-3">
-            <div
-              v-for="item in detail.raw_request_response"
-              :key="String(item.turn)"
-              class="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 lg:grid-cols-2"
-            >
-              <div class="lg:col-span-2">
-                <span class="font-mono text-xs font-semibold text-indigo-600">T{{ item.turn }}</span>
-              </div>
-              <JsonViewer :value="item.request" label="请求" max-height="260px" />
-              <JsonViewer :value="item.response" label="响应" max-height="260px" />
-            </div>
-            <EmptyState v-if="detail.raw_request_response.length === 0" compact title="没有原始报文" />
           </div>
         </template>
       </div>

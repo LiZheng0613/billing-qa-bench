@@ -982,3 +982,10 @@ mock 新增通过用例执行 **#6581**（BILL-FEE-0422 · 2 轮全通过 · sel
 - **重建结果**（回到文档基线）：执行 205（136 `BATCH` + 67 `DEBUG` + 1 `RETRY` + 1 `SANDBOX`）、轮次 227、裁判 205、事实 237、用例 72、任务 9、环境 3、账号 7、取证 13、审计 7；状态 159 `PASS` / 30 `FAIL` / 9 `ERROR` / 3 `MAX_TURNS_EXCEEDED` / 3 `REPETITION_ABORT` / 1 `ABORTED`；`tool_calls` 227/227 为数组（191 轮 1 条、3 轮 2 条、33 轮空数组、0 条 `null`）。
 - **重建命令**（与 12.35 相同，仅种子行为变化）：`pg_dump` 备份 → `drop schema public cascade; create schema public;` → `python -m billing_qa.db.init_db --demo` → `python scripts/seed_demo_history.py` → `python scripts/seed_environment_runs.py --env-code QA-MOCK` → 对 `QA-MOCK` / `QA-MOCK-JSON` 各调一次 `POST /api/v1/environments/{id}/health-check`。
 - **验证**：`ruff check scripts/seed_demo_history.py` 通过；库计数与文档一致（`sys_audit_log` 7、`batch_task` 9、无自动编号任务）；`DEMO-TASK-005` / `008` 的 `schedule_active` 为 false 且 `next_run_at` 为空、`DEMO-TASK-009` 的 `next_run_at` 为 2027-06-01 10:30；后端调度器在下一个 09:00 不再产生新任务（查询条件 `schedule_active.is_(True)` 直接跳过）；任务列表 / 详情页分别显示「已停止」与「等待触发」，无 console error。
+
+### 12.37 调用链页签移除重复的原始报文（2026-11-25）
+
+- **现象**：`/trace` 的「原始报文 · 调用链」页签下半部同时渲染了提示条（「原始报文按轮次留存，可在对话轮次的「证据」入口或此处打开」+「查看请求原文 / 查看响应 / 导出 trace」）与逐轮 `请求 / 响应` 双栏 JSON。同一份报文在对话轮次抽屉的「证据」页签里已完整展示，页面顶部另有「导出 JSON 报文」，页签内属于重复呈现。
+- **处理**：移除该页签内的提示条与逐轮正文双栏（含「没有原始报文」空态），页签只保留链路指标卡、阶段聚合条、工具调用统计与慢步骤 / 异常；删除仅服务于这两块的 `chainFocusTurn` 计算属性。原文入口不变：对话轮次抽屉「证据」页签、页面顶部「导出 JSON 报文」。原型 `case-turn-flow-final.html` / `case-turn-flow-prototype.html` 同步删除 `.rawentry` 块。
+- **未改动**：页签标签仍为「原始报文 · 调用链」（未获确认前不改名）；`raw_request_response` 数据与抽屉内的请求 / 响应展示保持原样；`exportReport`（导出 JSON 报文）按钮仍在页面顶部。
+- **验证**：`execution=187`（多轮双裁判）与 `execution=203`（两步取数）切到该页签后无「原始报文按轮次留存」、无「查看请求原文 / 查看响应」、无请求 / 响应双栏与「没有原始报文」空态，工具调用统计与慢步骤 / 异常仍在；0 console error；`npx vue-tsc --noEmit` 通过。
