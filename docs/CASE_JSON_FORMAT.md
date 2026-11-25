@@ -72,7 +72,7 @@
           ]
         }
       },
-      "plan_spec": { "required_capabilities": ["bill_query"], "max_tool_calls": 3 },
+      "plan_spec": { "required_capabilities": ["bill_current"], "max_tool_calls": 3 },
       "risk_level": "LOW",
       "owner": "qa-team",
       "review_status": "NOT_REQUIRED",

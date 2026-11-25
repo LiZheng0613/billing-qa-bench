@@ -1120,7 +1120,7 @@ function jsonTurn({ id, index, query, convId, answer, intent, apiParams, rawDb, 
 const D1_STEPS = [
   call('planner', '意图规划', '规划', 132, { result: { intent: '账单金额核对', need_db: true } }),
   call('sql_writer', '生成取数 SQL', '生成 SQL', 214, { query: 'SELECT SUM(amount) AS bill_total, COUNT(*) AS item_count FROM telecom_bill_item WHERE phone_no = :phone AND period = :period', result: { sql_valid: true } }),
-  call('db_query', '话费库查询', '执行查询', 296, { capability: 'bill_query', args: { phone_no: '13800138000', period: '2026-10' }, result: { bill_total: 268.5, item_count: 4 } }),
+  call('db_query', '话费库查询', '执行查询', 296, { capability: 'bill_current', args: { phone_no: '13800138000', period: '2026-10' }, result: { bill_total: 268.5, item_count: 4 } }),
   call('composer', '组织回复', '组织回复', 168, { result: { answer_chars: 96 } }),
 ]
 const D1_RULE_CHECK = {
@@ -1365,8 +1365,8 @@ const EXECUTION_900004 = {
 // ---------------------------------------------------------------- 900005 单轮 · 契约模式通过
 const D3_CONTRACT = {
   must: [
-    { id: 'total_a', kind: 'scalar', unit: 'CNY', label: '13800138000 账单总额', value: 268.5, tolerance: 0.01, verified_at: '2026-11-16T10:00:00', verified_by: 'system', evidence_ref: 'capability:bill_query', verification_status: 'VERIFIED' },
-    { id: 'total_b', kind: 'scalar', unit: 'CNY', label: '13900139000 账单总额', value: 356.8, tolerance: 0.01, verified_at: '2026-11-16T10:00:00', verified_by: 'system', evidence_ref: 'capability:bill_query', verification_status: 'VERIFIED' },
+    { id: 'total_a', kind: 'scalar', unit: 'CNY', label: '13800138000 账单总额', value: 268.5, tolerance: 0.01, verified_at: '2026-11-16T10:00:00', verified_by: 'system', evidence_ref: 'capability:bill_current', verification_status: 'VERIFIED' },
+    { id: 'total_b', kind: 'scalar', unit: 'CNY', label: '13900139000 账单总额', value: 356.8, tolerance: 0.01, verified_at: '2026-11-16T10:00:00', verified_by: 'system', evidence_ref: 'capability:bill_current', verification_status: 'VERIFIED' },
   ],
   must_not: [
     { id: 'banned', kind: 'text', label: '禁止出现', value: '系统错误', verified_at: '2026-11-16T10:00:00', verified_by: 'system', verification_status: 'WAIVED' },
@@ -1517,8 +1517,8 @@ const EXECUTION_900005 = {
 // ---------------------------------------------------------------- 900006 单轮 · 契约门槛未过（LLM 分够 / 契约分 70）
 const D4_CONTRACT = {
   must: [
-    { id: 'total_amount', kind: 'scalar', unit: 'CNY', label: '账单总额', value: 268.5, aliases: ['本期账单总额', '账单合计', '账单金额', 'total_amount', 'bill_total'], tolerance: 0.01, verified_at: '2026-11-16T10:00:00', verified_by: 'system', evidence_ref: 'capability:bill_query', verification_status: 'VERIFIED' },
-    { id: 'item_count', kind: 'scalar', unit: null, label: '费用项数', value: 4, aliases: ['费用项', '费用条目数', 'item_count', 'itemCount'], tolerance: 0, verified_at: '2026-11-16T10:00:00', verified_by: 'system', evidence_ref: 'capability:bill_query', verification_status: 'VERIFIED' },
+    { id: 'total_amount', kind: 'scalar', unit: 'CNY', label: '账单总额', value: 268.5, aliases: ['本期账单总额', '账单合计', '账单金额', 'total_amount', 'bill_total'], tolerance: 0.01, verified_at: '2026-11-16T10:00:00', verified_by: 'system', evidence_ref: 'capability:bill_current', verification_status: 'VERIFIED' },
+    { id: 'item_count', kind: 'scalar', unit: null, label: '费用项数', value: 4, aliases: ['费用项', '费用条目数', 'item_count', 'itemCount'], tolerance: 0, verified_at: '2026-11-16T10:00:00', verified_by: 'system', evidence_ref: 'capability:bill_current', verification_status: 'VERIFIED' },
   ],
   must_not: [
     { id: 'banned_amount', kind: 'text', label: '禁止出现', value: '999.00', verified_at: '2026-11-16T10:00:00', verified_by: 'system', verification_status: 'WAIVED' },
@@ -1875,7 +1875,7 @@ const EXECUTION_900008 = {
 // ---------------------------------------------------------------- 900009 单轮 · 未通过（分低于通过线）
 const D6_STEPS = [
   call('planner', '意图规划', '规划', 104, { result: { intent: '账单余额查询', need_db: true } }),
-  call('db_query', '话费库查询', '执行查询', 238, { capability: 'balance_query', args: { phone_no: '13900139000' }, result: { balance: 56.2, bill_day: 1 } }),
+  call('db_query', '话费库查询', '执行查询', 238, { capability: 'balance_account', args: { phone_no: '13900139000' }, result: { balance: 56.2, bill_day: 1 } }),
   call('composer', '组织回复', '组织回复', 126, { result: { answer_chars: 33 } }),
 ]
 const D6_RULE_CHECK = {

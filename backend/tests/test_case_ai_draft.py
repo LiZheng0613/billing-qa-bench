@@ -870,7 +870,7 @@ def test_plan_spec_capabilities_filtered_by_whitelist() -> None:
             "name": "取数计划",
             "grading_mode": "LEGACY",
             "plan_spec": {
-                "required_capabilities": ["bill_query", "made_up"],
+                "required_capabilities": ["bill_current", "made_up"],
                 "max_tool_calls": 2,
             },
         },
@@ -878,10 +878,10 @@ def test_plan_spec_capabilities_filtered_by_whitelist() -> None:
         caliber_text="",
         case_text="",
         suggested_code="AI-20261116-006",
-        capability_codes={"bill_query"},
+        capability_codes={"bill_current"},
     )
     assert draft.plan_spec is not None
-    assert draft.plan_spec.required_capabilities == ["bill_query"]
+    assert draft.plan_spec.required_capabilities == ["bill_current"]
     assert draft.plan_spec.max_tool_calls == 2
     assert any("made_up" in warning for warning in draft.warnings)
 

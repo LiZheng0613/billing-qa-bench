@@ -321,8 +321,8 @@ test('单轮答案契约复制：事实包络 / 响应契约 / 取数计划完�
     partial: { must_disclose: false, required_facts: [factId] },
   }
   const planSpec = {
-    required_capabilities: ['bill_query'],
-    alternatives: { bill_query: ['balance_query'] },
+    required_capabilities: ['bill_current'],
+    alternatives: { bill_current: ['balance_account'] },
     max_tool_calls: 3,
     allow_parallel: false,
   }

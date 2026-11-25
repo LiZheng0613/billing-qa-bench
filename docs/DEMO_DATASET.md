@@ -186,13 +186,13 @@ Mock 注入指令（触发失败 / 熔断 / 异常等质量场景，写在用例
 
 `mock_servers/target_api.py` 按意图回传每轮的工具调用，`turn_trace.tool_calls` 直接落库，页面「Agent 调用链」「SQL」「取数证据」展示的就是这份记录：
 
-- 取数类回答（`BILL` / `BALANCE` / `OFFER` / `USAGE` / `ARREARS` / `ROAMING` / `VAS` / `BROADBAND` / `INVOICE` / `POINTS` / `MULTI_INTENT`）各回传 **1 条** `db_query`，包含 `capability` / `query` / `args` / `rows` / `latency_ms` / `result`；能力码与用例 `plan_spec.required_capabilities` 同一套（`bill_query` / `balance_query` / `offer_query` / `usage_query` / `arrears_query`）。
-- 多步用例 `DEMO-SINGLE-MULTI-STEP`（`[MOCK:MULTISTEP]` / 话术含「分两步」）一轮回传 **2 条** `db_query`：先 `bill_query` 再 `usage_query`，用例的 `max_tool_calls=2`，`diagnostics.over_budget` 仍为 false。
+- 取数类回答（`BILL` / `BALANCE` / `OFFER` / `USAGE` / `ARREARS` / `ROAMING` / `VAS` / `BROADBAND` / `INVOICE` / `POINTS` / `MULTI_INTENT`）各回传 **1 条** `db_query`，包含 `capability` / `query` / `args` / `rows` / `latency_ms` / `result`；能力码与用例 `plan_spec.required_capabilities` 同一套（`bill_current` / `balance_account` / `offer_available` / `usage_current` / `arrears_status`）。
+- 多步用例 `DEMO-SINGLE-MULTI-STEP`（`[MOCK:MULTISTEP]` / 话术含「分两步」）一轮回传 **2 条** `db_query`：先 `bill_current` 再 `usage_current`，用例的 `max_tool_calls=2`，`diagnostics.over_budget` 仍为 false。
 - 澄清与拒答（`CLARIFY` / `REFUSE`）回传空数组 `[]`，表示「确实没有取数」，不是「未记录」。
 - 其余用例每轮只回传 1 条：`max_tool_calls` 为 1 / 2 / 3，规划与组织回复各算一步会让 `diagnostics.over_budget` 在多数契约用例上恒为 true，读起来像 Agent 一直超预算。
-- 本次重建后 227/227 轮 `tool_calls` 均为数组（191 轮 1 条、3 轮 2 条、33 轮空数组，没有 `null`），`lucky_pass` 0 条，`over_budget` 0 条；15 条契约执行带 `missing_capabilities`，全部是澄清 / 拒答用例按契约声明了 `bill_query` 却按预期不取数。`response_raw.usage` 仍未补，页面按「Agent 用量未记录」展示。
+- 本次重建后 227/227 轮 `tool_calls` 均为数组（191 轮 1 条、3 轮 2 条、33 轮空数组，没有 `null`），`lucky_pass` 0 条，`over_budget` 0 条；15 条契约执行带 `missing_capabilities`，全部是澄清 / 拒答用例按契约声明了 `bill_current` 却按预期不取数。`response_raw.usage` 仍未补，页面按「Agent 用量未记录」展示。
 
-原先用于演示「幸运通过」的用例已更名为 `DEMO-CONTRACT-BALANCE-EVIDENCE`（`plan_spec` 要求 `balance_query`）：答案正确且带取数证据，`lucky_pass` 诊断保持 false；「幸运通过」逻辑本身仍在代码里，由 `backend/tests/test_grading_answer_grader.py` 覆盖。
+原先用于演示「幸运通过」的用例已更名为 `DEMO-CONTRACT-BALANCE-EVIDENCE`（`plan_spec` 要求 `balance_account`）：答案正确且带取数证据，`lucky_pass` 诊断保持 false；「幸运通过」逻辑本身仍在代码里，由 `backend/tests/test_grading_answer_grader.py` 覆盖。
 
 ## 6. 取数资产与 Mock 能力
 

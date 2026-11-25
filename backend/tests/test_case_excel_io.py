@@ -32,7 +32,7 @@ def _export_row() -> dict[str, object]:
         "snapshot_id": "SNAP-2026-10",
         "answer_envelope": {"must": [{"id": "amount", "kind": "scalar", "value": 100}]},
         "response_contract": {"allowed": ["clarify", "partial"]},
-        "plan_spec": {"required_capabilities": ["bill_query"]},
+        "plan_spec": {"required_capabilities": ["bill_current"]},
         "prompt_overrides": {"judge": "只关注金额", "simulator": "保持简洁"},
         "judge_model_codes": ["judge-a", "judge-b"],
         "judge_strategy": "VETO",

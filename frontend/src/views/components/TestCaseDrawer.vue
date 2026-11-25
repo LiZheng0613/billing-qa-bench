@@ -2728,7 +2728,7 @@ function missingPlaceholder(item: DraftMissing): string {
   if (item.field === 'response_contract') return '填可接受行为，如 clarify,refuse'
   if (item.field === 'response_contract.partial') return '填必须披露的事实名称'
   if (item.field === 'response_contract.answer_with_assumption') return '补充假设作答的期望值'
-  if (item.field === 'plan_spec') return '填能力编码，如 bill_query'
+  if (item.field === 'plan_spec') return '填能力编码，如 bill_current'
   return '补充该字段的实际值'
 }
 

@@ -150,7 +150,7 @@ async def test_contract_mode_passes_on_final_answer_and_persists_facts() -> None
             # 轨迹诊断：Mock 目标回传一次取数调用，答案正确且有取数证据 → 不是幸运通过
             assert record.diagnostics is not None
             assert record.diagnostics["tool_call_count"] == 1
-            assert record.diagnostics["capabilities_used"] == ["bill_query"]
+            assert record.diagnostics["capabilities_used"] == ["bill_current"]
             assert record.lucky_pass is False
             assert record.root_cause is None
 

@@ -273,6 +273,14 @@ def main() -> int:
     # 10. 断点重跑
     retry = client.post(f"/tasks/{aborted['id']}/retry-failed")
     check(retry.status_code == 200, "失败断点重跑", retry.text[:200])
+    # retry-failed 异步接管：接口返回时任务可能仍是 ABORTED/COMPLETED，
+    # 先等状态离开 ABORTED 再进入终态等待，避免把“尚未启动”误判为“重跑失败”。
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        current = client.get(f"/tasks/{aborted['id']}").json()
+        if current["status"] != "ABORTED":
+            break
+        time.sleep(0.5)
     retried = wait_task(client, aborted["id"])
     check(retried["status"] == "COMPLETED", "重跑后任务完成", str(retried["status"]))
 

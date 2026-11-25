@@ -67,7 +67,7 @@ def _payload(code: str, **overrides: Any) -> dict[str, Any]:
         "risk_level": "LOW",
         "owner": "qa-team",
         "prompt_overrides": {"judge": "只关注金额与账期"},
-        "plan_spec": {"required_capabilities": ["bill_query"], "max_tool_calls": 3},
+        "plan_spec": {"required_capabilities": ["bill_current"], "max_tool_calls": 3},
         "answer_envelope": {
             "must": [
                 {

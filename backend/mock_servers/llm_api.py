@@ -374,22 +374,22 @@ def _turn_no(text: str) -> int | None:
 
 
 def _author_capability(topic: str) -> str | None:
-    """按业务主题给出取数能力编码（与演示用例 plan_spec 的词汇一致）。"""
+    """按业务主题给出取数能力编码（与系统能力资产编码保持一致）。"""
     if any(word in topic for word in ("欠费", "停机", "复机")):
-        return "arrears_query"
+        return "arrears_status"
     if any(word in topic for word in ("流量", "超套", "套餐", "余量")):
-        return "usage_query"
+        return "usage_current"
     if any(
         word in topic
         for word in ("offer", "订购", "可办理", "能办理", "合约", "优惠", "折扣")
     ):
-        return "offer_query"
+        return "offer_available"
     if any(word in topic for word in ("余额", "预存", "冻结", "赠费")):
-        return "balance_query"
+        return "balance_account"
     if "漫游" in topic:
-        return "roaming_query"
+        return "roaming_usage"
     if any(word in topic for word in ("账单", "金额", "费用", "明细")):
-        return "bill_query"
+        return "bill_current"
     return None
 
 
@@ -649,7 +649,9 @@ def _author_content(prompt: str) -> dict[str, Any]:
         if quotes:
             initial_query = quotes.group(1).strip()
         max_turns = int(seed.get("max_turns") or 5)
-        turns_match = re.search(r"(?:最多|不超过|最大)\s*(\d{1,2})\s*轮", user_part)
+        turns_match = re.search(
+            r"(?:最多|不超过|最大|改成|改为|设置为|限制为)\s*(\d{1,2})\s*轮", user_part
+        )
         if turns_match:
             max_turns = int(turns_match.group(1))
         keywords = list((seed.get("terminate_conditions") or {}).get("keywords") or [])
@@ -818,8 +820,11 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     messages = payload.get("messages") or []
     model = str(payload.get("model") or "mock-model")
     prompt = "\n".join(str(item.get("content") or "") for item in messages)
+    is_author = "问账测试用例编写助手" in prompt or "# Generation Mode" in prompt
 
-    if "[MOCK:LLMERROR]" in prompt:
+    # 故障注入只认执行类 Prompt。用例编写 Prompt 会附带相似用例，
+    # 其中可能包含 [MOCK:LLMERROR] 文本，不能误判为裁判/模拟器故障。
+    if "[MOCK:LLMERROR]" in prompt and not is_author:
         # 故障注入：模拟模型服务 5xx，验证执行错误分类与任务级自动重试。
         raise HTTPException(status_code=500, detail="mock llm error injected")
 
@@ -827,7 +832,7 @@ async def chat_completions(request: Request) -> dict[str, Any]:
         content: Any = _simulator_content(prompt)
     elif "审计裁判官" in prompt or "Scoring Rubrics" in prompt:
         content = _judge_content(prompt, model)
-    elif "问账测试用例编写助手" in prompt or "# Generation Mode" in prompt:
+    elif is_author:
         content = _author_content(prompt)
     elif '"ok": true' in prompt:
         content = {"ok": True}

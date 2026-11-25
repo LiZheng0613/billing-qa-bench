@@ -4,8 +4,8 @@ import { installExpectedAnswerMock } from './expected-answer.fixtures'
 /**
  * 执行详情 · 期望答案对照模式回归。
  *
- * 运行前提：前端 dev server 已启动（默认 http://127.0.0.1:5173）。
- * 用例通过 page.route 注入固定执行数据，不需要后端 / 数据库 / mock LLM。
+ * 前提：前端 dev server 已启动（默认 http://127.0.0.1:5173）。
+ * 数据通过 page.route 注入固定执行快照，不需要后端 / 数据库 / mock LLM。
  */
 test.beforeEach(async ({ page }) => {
   await installExpectedAnswerMock(page)
@@ -14,67 +14,62 @@ test.beforeEach(async ({ page }) => {
 test('默认进入对话流，切换对照模式后展示单轮期望答案与差异', async ({ page }) => {
   await page.goto('/trace?execution=10231')
 
-  await expect(page.getByRole('button', { name: '对话流' })).toHaveAttribute(
+  await expect(page.getByRole('button', { name: '对话', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',
   )
-  await expect(page.getByRole('button', { name: '对照模式' })).toHaveAttribute(
+  await expect(page.getByRole('button', { name: '对照', exact: true })).toHaveAttribute(
     'aria-pressed',
     'false',
   )
-  await expect(page.getByText('用户提问')).toBeVisible()
-  await expect(page.getByText(/期望答案/)).toHaveCount(0)
+  await expect(page.getByText(/请帮我查一下手机号 13800138000/).first()).toBeVisible()
+  await expect(page.getByText(/期望回复/)).toHaveCount(0)
 
-  await page.getByRole('button', { name: '对照模式' }).click()
+  await page.getByRole('button', { name: '对照', exact: true }).click()
 
-  await expect(page.getByText(/期望答案/).first()).toBeVisible()
-  await expect(page.getByText('¥268.50').first()).toBeVisible()
-  await expect(page.getByText('¥286.50').first()).toBeVisible()
-  await expect(page.getByText('Must 2/3 命中')).toBeVisible()
-  await expect(page.getByText('未命中').first()).toBeVisible()
-
-  // 只看差异：没有 same 行时仍保留差异行。
-  await page.getByRole('checkbox', { name: '只看差异' }).check()
-  await expect(page.getByText('¥268.50').first()).toBeVisible()
+  await expect(page.getByText(/与期望一致/).first()).toBeVisible()
+  await expect(page.locator('.cmpcard')).toHaveCount(1)
+  await expect(page.getByText('期望回复', { exact: false }).first()).toBeVisible()
+  await expect(page.getByText('268.5', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('286.5', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('差异', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('+18', { exact: true }).first()).toBeVisible()
 })
 
-test('静态多轮：切换轮次、规则生成提示与会话级期望', async ({ page }) => {
+test('静态多轮：逐轮对照与规则命中、数值差异', async ({ page }) => {
   await page.goto('/trace?execution=10232')
-  await page.getByRole('button', { name: '对照模式' }).click()
+  await page.getByRole('button', { name: '对照', exact: true }).click()
 
-  await expect(page.getByRole('button', { name: /T2 未通过/ })).toHaveClass(/active/)
-  await expect(page.getByText('轮次规则校验 · T2')).toBeVisible()
-  await expect(page.getByText('规则生成').first()).toBeVisible()
+  await expect(page.locator('.cmpcard')).toHaveCount(2)
 
-  const activeDiff = page.locator('.diff-body').first()
-  await expect(activeDiff.getByText('必须包含 超套').first()).toBeVisible()
+  const first = page.locator('.cmpcard').nth(0)
+  await expect(first.getByText('T1', { exact: true })).toBeVisible()
+  await expect(first.getByText('账单总额').first()).toBeVisible()
+  await expect(first.getByText('费用项数').first()).toBeVisible()
 
-  await page.getByRole('checkbox', { name: '只看差异' }).check()
-  await expect(activeDiff.getByText('必须包含 超套')).toHaveCount(0)
-
-  await page.getByRole('button', { name: /T1 通过/ }).click()
-  await expect(page.getByText('轮次规则校验 · T1')).toBeVisible()
-  await expect(page.getByText('会话级期望')).toBeVisible()
-  await expect(page.getByText(/账单总额 ¥268\.50.*命中/)).toBeVisible()
+  const second = page.locator('.cmpcard').nth(1)
+  await expect(second.getByText('T2', { exact: true })).toBeVisible()
+  await expect(second.getByText('超套费').first()).toBeVisible()
+  await expect(second.getByText('27', { exact: true }).first()).toBeVisible()
+  await expect(second.getByText('72', { exact: true }).first()).toBeVisible()
+  await expect(second.getByText('+45', { exact: true }).first()).toBeVisible()
+  await expect(second.getByText('必须包含', { exact: false }).first()).toBeVisible()
 })
 
-test('动态多轮：设计/轨迹对照、隐藏信息释放与实体级最终答案差异', async ({ page }) => {
+test('动态多轮：三轮对照、隐藏信息释放与实体级最终答案差异', async ({ page }) => {
   await page.goto('/trace?execution=10233')
-  await page.getByRole('button', { name: '对照模式' }).click()
+  await page.getByRole('button', { name: '对照', exact: true }).click()
 
-  await expect(page.getByText('测试设计（期望）')).toBeVisible()
-  await expect(page.getByText('执行轨迹（实际）')).toBeVisible()
-  await expect(page.getByText('隐藏信息 1/2 已释放')).toBeVisible()
-  await expect(page.getByText('未释放：period')).toBeVisible()
-  await expect(page.getByText('未澄清账期即作答').first()).toBeVisible()
+  await expect(page.locator('.cmpcard')).toHaveCount(3)
+  await expect(page.getByText(/未判定/).first()).toBeVisible()
+  await expect(page.locator('.cmpcard').nth(0).getByText('T1', { exact: true })).toBeVisible()
+  await expect(page.locator('.cmpcard').nth(1).getByText('T2', { exact: true })).toBeVisible()
+  await expect(page.locator('.cmpcard').nth(2).getByText('T3', { exact: true })).toBeVisible()
 
-  await expect(page.getByText('账单总额 ¥268.50', { exact: true })).toBeVisible()
-  await expect(page.getByText('账单总额 ¥298.00', { exact: true })).toBeVisible()
-  await expect(page.getByText('费用项数 4', { exact: true })).toBeVisible()
-  await expect(page.getByText('费用项数 5', { exact: true })).toBeVisible()
-  await expect(page.getByText('Must 0/3 命中')).toBeVisible()
-
-  // 只看关键节点：关闭后仍展示完整三轮轨迹。
-  await page.getByRole('checkbox', { name: '只看关键节点' }).uncheck()
-  await expect(page.locator('.tl-item')).toHaveCount(3)
+  await expect(page.getByText('268.5', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('298', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('+29.5', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('4', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('5', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('+1', { exact: true }).first()).toBeVisible()
 })

@@ -85,7 +85,7 @@ test('新建单轮：应用 AI 草稿并保存，未补项写入用例备注', a
   )
   // 取数计划虽然只在契约模式落库，但草稿面板应展示 AI 生成的能力编码。
   await expect(page.getByText('取数能力', { exact: true })).toBeVisible()
-  await expect(page.getByText(/bill_query/).first()).toBeVisible()
+  await expect(page.getByText(/bill_current/).first()).toBeVisible()
   await expect(page.getByText('请求变量', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('4 维规则', { exact: true }).first()).toBeVisible()
 

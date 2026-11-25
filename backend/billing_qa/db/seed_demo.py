@@ -328,7 +328,7 @@ def _verified_scalar(
     *,
     unit: str | None = "CNY",
     tolerance: float = 0.01,
-    evidence: str = "capability:bill_query",
+    evidence: str = "capability:bill_current",
 ) -> dict[str, Any]:
     return _with_aliases(
         {
@@ -348,7 +348,7 @@ def _verified_scalar(
 
 
 def _verified_set(
-    fact_id: str, label: str, values: list[str], *, evidence: str = "capability:bill_query"
+    fact_id: str, label: str, values: list[str], *, evidence: str = "capability:bill_current"
 ) -> dict[str, Any]:
     return {
         "id": fact_id,
@@ -368,7 +368,7 @@ def _verified_text(
     keywords: list[str],
     *,
     value: bool = True,
-    evidence: str = "capability:bill_query",
+    evidence: str = "capability:bill_current",
 ) -> dict[str, Any]:
     return {
         "id": fact_id,
@@ -384,7 +384,7 @@ def _verified_text(
 
 
 def _verified_date(
-    fact_id: str, label: str, value: str, *, evidence: str = "capability:roaming_query"
+    fact_id: str, label: str, value: str, *, evidence: str = "capability:roaming_usage"
 ) -> dict[str, Any]:
     return {
         "id": fact_id,
@@ -980,7 +980,7 @@ def _build_cases(
                     _may_scalar("package_fee", "套餐月费", 199.00),
                 ],
             ),
-            "plan_spec": _plan(["bill_query"]),
+            "plan_spec": _plan(["bill_current"]),
         },
         {
             **contract_common,
@@ -1016,7 +1016,7 @@ def _build_cases(
                     },
                 ]
             ),
-            "plan_spec": _plan(["bill_query"]),
+            "plan_spec": _plan(["bill_current"]),
         },
         {
             **contract_common,
@@ -1037,13 +1037,13 @@ def _build_cases(
                         "bill_items",
                         "账单费用项",
                         ["套餐月费", "国内流量超套费", "国际漫游费", "增值业务费"],
-                        evidence="capability:bill_query",
+                        evidence="capability:bill_current",
                     ),
                     _verified_scalar("bill_total", "账单总额", 268.50),
                     _verified_scalar("item_count", "费用项数", 4, unit=None, tolerance=0),
                 ]
             ),
-            "plan_spec": _plan(["bill_query"]),
+            "plan_spec": _plan(["bill_current"]),
         },
         {
             **contract_common,
@@ -1065,7 +1065,7 @@ def _build_cases(
                 ],
                 may=[_may_scalar("bill_total", "账单总额", 268.50)],
             ),
-            "plan_spec": _plan(["bill_query"]),
+            "plan_spec": _plan(["bill_current"]),
         },
         {
             **contract_common,
@@ -1087,7 +1087,7 @@ def _build_cases(
                     _verified_scalar("bill_total", "账单总额", 356.80),
                 ]
             ),
-            "plan_spec": _plan(["bill_query"]),
+            "plan_spec": _plan(["bill_current"]),
         },
         {
             **contract_common,
@@ -1114,7 +1114,7 @@ def _build_cases(
                 ],
                 may=[_may_text("voice_left", "语音剩余", ["140 分钟"])],
             ),
-            "plan_spec": _plan(["usage_query"], max_tool_calls=2),
+            "plan_spec": _plan(["usage_current"], max_tool_calls=2),
         },
         {
             **contract_common,
@@ -1137,7 +1137,7 @@ def _build_cases(
                     _verified_text("voice_left", "语音剩余", ["290 分钟"]),
                 ]
             ),
-            "plan_spec": _plan(["usage_query"], max_tool_calls=2),
+            "plan_spec": _plan(["usage_current"], max_tool_calls=2),
         },
         # ================= 答案契约：offer 订购 =================
         {
@@ -1160,29 +1160,29 @@ def _build_cases(
                 [
                     _verified_scalar(
                         "available_count", "可订购 offer 数", 4, unit=None, tolerance=0,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                     _verified_set(
                         "offer_names",
                         "可订购 offer",
                         ["20GB流量加油包", "300分钟语音包", "5G极速升级包", "亚洲漫游日包"],
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                     _verified_scalar(
                         "data_pack_fee", "加油包月费", 20.00,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                     _verified_scalar(
                         "data_pack_discount", "加油包优惠价", 15.00,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                     _verified_text(
                         "upgrade_contract", "升级包合约期", ["合约 12 个月"],
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                 ]
             ),
-            "plan_spec": _plan(["offer_query"], max_tool_calls=2),
+            "plan_spec": _plan(["offer_available"], max_tool_calls=2),
         },
         {
             **contract_common,
@@ -1203,26 +1203,26 @@ def _build_cases(
                 [
                     _verified_scalar(
                         "ordered_count", "已订购 offer 数", 2, unit=None, tolerance=0,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_ordered",
                     ),
                     _verified_text(
                         "main_offer", "主套餐", ["5G畅享套餐199元档"],
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_ordered",
                     ),
                     _verified_scalar(
                         "package_fee", "主套餐月费", 199.00,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_ordered",
                     ),
                     _verified_date(
                         "contract_until", "合约到期日", "2027-03-31",
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_ordered",
                     ),
                     _verified_text(
-                        "vas_item", "彩铃", ["彩铃"], evidence="capability:offer_query"
+                        "vas_item", "彩铃", ["彩铃"], evidence="capability:offer_ordered"
                     ),
                 ]
             ),
-            "plan_spec": _plan(["offer_query"], max_tool_calls=2),
+            "plan_spec": _plan(["offer_ordered"], max_tool_calls=2),
         },
         {
             **contract_common,
@@ -1244,27 +1244,27 @@ def _build_cases(
                 [
                     _verified_scalar(
                         "ordered_count", "已订购 offer 数", 3, unit=None, tolerance=0,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_ordered",
                     ),
                     _verified_text(
                         "main_offer", "融合套餐", ["全家享融合套餐239元档"],
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_ordered",
                     ),
                     _verified_date(
                         "contract_until", "合约到期日", "2027-08-31",
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_ordered",
                     ),
                     _verified_scalar(
                         "video_fee", "视频会员月费", 22.80,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_ordered",
                     ),
                     _verified_scalar(
                         "video_discount", "视频会员优惠价", 18.00,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_ordered",
                     ),
                 ]
             ),
-            "plan_spec": _plan(["offer_query"], max_tool_calls=2),
+            "plan_spec": _plan(["offer_ordered"], max_tool_calls=2),
         },
         {
             **contract_common,
@@ -1283,19 +1283,19 @@ def _build_cases(
                 [
                     _verified_scalar(
                         "available_count", "可订购 offer 数", 4, unit=None, tolerance=0,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                     _verified_text(
                         "roam_pack", "亚洲漫游日包", ["亚洲漫游日包"],
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                     _verified_scalar(
                         "roam_pack_fee", "漫游日包月费", 25.00,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                 ]
             ),
-            "plan_spec": _plan(["offer_query"], max_tool_calls=2),
+            "plan_spec": _plan(["offer_available"], max_tool_calls=2),
         },
         {
             **contract_common,
@@ -1314,23 +1314,23 @@ def _build_cases(
                 [
                     _verified_text(
                         "upgrade_name", "升级包名称", ["5G极速升级包"],
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                     _verified_scalar(
                         "upgrade_fee", "升级包月费", 30.00,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                     _verified_scalar(
                         "upgrade_discount", "升级包优惠价", 24.00,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                     _verified_scalar(
                         "contract_months", "承诺期月数", 12, unit=None, tolerance=0,
-                        evidence="capability:offer_query",
+                        evidence="capability:offer_available",
                     ),
                 ]
             ),
-            "plan_spec": _plan(["offer_query"], max_tool_calls=2),
+            "plan_spec": _plan(["offer_available"], max_tool_calls=2),
         },
         # ================= 答案契约：账户余额 =================
         {
@@ -1350,20 +1350,20 @@ def _build_cases(
                 [
                     _verified_scalar(
                         "available_balance", "可用余额", 86.50,
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                     _verified_scalar(
                         "grant_balance", "赠费余额", 20.00,
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                     _verified_date(
                         "grant_expire", "赠费到期日", "2026-12-31",
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                 ],
                 may=[_may_scalar("frozen_balance", "冻结余额", 0.00)],
             ),
-            "plan_spec": _plan(["balance_query"], max_tool_calls=1),
+            "plan_spec": _plan(["balance_account"], max_tool_calls=1),
         },
         {
             **contract_common,
@@ -1382,19 +1382,19 @@ def _build_cases(
                 [
                     _verified_scalar(
                         "available_balance", "可用余额", 320.00,
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                     _verified_scalar(
                         "frozen_balance", "冻结余额", 50.00,
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                     _verified_scalar(
                         "total_balance", "合计余额", 370.00,
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                 ]
             ),
-            "plan_spec": _plan(["balance_query"], max_tool_calls=1),
+            "plan_spec": _plan(["balance_account"], max_tool_calls=1),
         },
         {
             **contract_common,
@@ -1413,19 +1413,19 @@ def _build_cases(
                 [
                     _verified_scalar(
                         "available_balance", "可用余额", 45.60,
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                     _verified_scalar(
                         "grant_balance", "赠费余额", 10.00,
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                     _verified_date(
                         "grant_expire", "赠费到期日", "2026-11-30",
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                 ]
             ),
-            "plan_spec": _plan(["balance_query"], max_tool_calls=1),
+            "plan_spec": _plan(["balance_account"], max_tool_calls=1),
         },
         {
             **contract_common,
@@ -1445,19 +1445,19 @@ def _build_cases(
                 [
                     _verified_scalar(
                         "available_balance", "可用余额", 0.00,
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                     _verified_scalar(
                         "arrears", "欠费金额", 118.00,
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                     _verified_text(
                         "service_status", "已停机", ["欠费停机"],
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     ),
                 ]
             ),
-            "plan_spec": _plan(["balance_query"], max_tool_calls=1),
+            "plan_spec": _plan(["balance_account"], max_tool_calls=1),
         },
         # ================= 答案契约：欠费 =================
         {
@@ -1480,24 +1480,24 @@ def _build_cases(
             "answer_envelope": _envelope(
                 [
                     _verified_scalar(
-                        "arrears", "欠费金额", 118.00, evidence="capability:arrears_query"
+                        "arrears", "欠费金额", 118.00, evidence="capability:arrears_status"
                     ),
                     _verified_scalar(
                         "unpaid_count", "未结清账期数", 2, unit=None, tolerance=0,
-                        evidence="capability:arrears_query",
+                        evidence="capability:arrears_status",
                     ),
                     _verified_text(
                         "unpaid_periods", "未结清账期", ["2026-08", "2026-09"],
-                        evidence="capability:arrears_query",
+                        evidence="capability:arrears_status",
                     ),
                     _verified_text(
                         "service_status", "已停机", ["欠费停机"],
-                        evidence="capability:arrears_query",
+                        evidence="capability:arrears_status",
                     ),
                 ],
                 must_not=[_waived_text("banned_repay", "24 小时内自动复机")],
             ),
-            "plan_spec": _plan(["arrears_query"], max_tool_calls=2),
+            "plan_spec": _plan(["arrears_status"], max_tool_calls=2),
         },
         # ================= 答案契约：错误金额与取数证据 =================
         {
@@ -1522,7 +1522,7 @@ def _build_cases(
                 ],
                 must_not=[_waived_text("banned_amount", "999.00")],
             ),
-            "plan_spec": _plan(["bill_query"]),
+            "plan_spec": _plan(["bill_current"]),
         },
         {
             **contract_common,
@@ -1542,11 +1542,11 @@ def _build_cases(
                 [
                     _verified_scalar(
                         "available_balance", "可用余额", 1200.00,
-                        evidence="capability:balance_query",
+                        evidence="capability:balance_account",
                     )
                 ]
             ),
-            "plan_spec": _plan(["balance_query"]),
+            "plan_spec": _plan(["balance_account"]),
         },
         # ================= 答案契约：非清晰输入 =================
         {
@@ -1577,7 +1577,7 @@ def _build_cases(
                 assumption="按最近一期账期 2026-10 口径",
                 scenario_must={"bill_total": 268.50},
             ),
-            "plan_spec": _plan(["bill_query"]),
+            "plan_spec": _plan(["bill_current"]),
         },
         {
             **contract_common,
@@ -1606,7 +1606,7 @@ def _build_cases(
                 assumption="按手机号 13800138000 的 2026-10 账单口径",
                 scenario_must={"bill_total": 268.50},
             ),
-            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+            "plan_spec": _plan(["bill_current"], max_tool_calls=1),
         },
         {
             **contract_common,
@@ -1636,7 +1636,7 @@ def _build_cases(
                 assumption="按手机号 13800138000 的 2026-10 账单口径",
                 scenario_must={"bill_total": 268.50},
             ),
-            "plan_spec": _plan(["bill_query"]),
+            "plan_spec": _plan(["bill_current"]),
         },
         {
             **contract_common,
@@ -1664,7 +1664,7 @@ def _build_cases(
                 must_not_assert=["amount"],
                 required_facts=["total_a"],
             ),
-            "plan_spec": _plan(["bill_query"], max_tool_calls=4),
+            "plan_spec": _plan(["bill_current"], max_tool_calls=4),
         },
         {
             **contract_common,
@@ -1691,7 +1691,7 @@ def _build_cases(
                 clarify_slots=["time_range"],
                 must_not_assert=["amount", "conclusion"],
             ),
-            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+            "plan_spec": _plan(["bill_current"], max_tool_calls=1),
         },
         {
             **contract_common,
@@ -1717,7 +1717,7 @@ def _build_cases(
                 clarify_slots=["customer"],
                 must_not_assert=["amount"],
             ),
-            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+            "plan_spec": _plan(["bill_current"], max_tool_calls=1),
         },
         # ================= 静态多轮 =================
         {
@@ -2121,7 +2121,7 @@ def _build_cases(
                 assumption="按最近一期账期 2026-10 口径",
                 scenario_must={"bill_total": 268.50},
             ),
-            "plan_spec": _plan(["bill_query"]),
+            "plan_spec": _plan(["bill_current"]),
         },
         {
             **contract_common,
@@ -2208,7 +2208,7 @@ def _build_cases(
             "response_contract": _contract(
                 ["clarify", "refuse"], clarify_slots=["caliber"]
             ),
-            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+            "plan_spec": _plan(["bill_current"], max_tool_calls=1),
         },
         {
             **contract_common,
@@ -2233,7 +2233,7 @@ def _build_cases(
                     _verified_scalar("item_count", "费用项数", 4, unit=None, tolerance=0),
                 ]
             ),
-            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+            "plan_spec": _plan(["bill_current"], max_tool_calls=1),
         },
         {
             **contract_common,
@@ -2259,7 +2259,7 @@ def _build_cases(
                 ],
                 extras_policy="strict",
             ),
-            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+            "plan_spec": _plan(["bill_current"], max_tool_calls=1),
         },
         {
             **contract_common,
@@ -2286,7 +2286,7 @@ def _build_cases(
             "response_contract": _contract(
                 ["refuse", "clarify"], clarify_slots=["customer"]
             ),
-            "plan_spec": _plan(["bill_query"], max_tool_calls=1),
+            "plan_spec": _plan(["bill_current"], max_tool_calls=1),
         },
         {
             **contract_common,
@@ -2313,11 +2313,11 @@ def _build_cases(
                     _verified_scalar("total_amount", "账单总额", 268.50),
                     _verified_scalar("item_count", "费用项数", 4, unit=None, tolerance=0),
                     _verified_scalar(
-                        "overage_fee", "超套费", 27.00, evidence="capability:usage_query"
+                        "overage_fee", "超套费", 27.00, evidence="capability:usage_current"
                     ),
                 ]
             ),
-            "plan_spec": _plan(["bill_query", "usage_query"], max_tool_calls=2),
+            "plan_spec": _plan(["bill_current", "usage_current"], max_tool_calls=2),
         },
         {
             **common,
@@ -2477,7 +2477,7 @@ def _build_cases(
                 [_verified_text("refusal", "确认意愿", ["确认", "生效时间"])],
             ),
             "response_contract": _contract(["clarify", "refuse"], clarify_slots=["customer"]),
-            "plan_spec": _plan(["offer_query"], max_tool_calls=1),
+            "plan_spec": _plan(["offer_available"], max_tool_calls=1),
             "dataset_version": f"{DATASET_VERSION}-review",
         },
     ]

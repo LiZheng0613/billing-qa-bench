@@ -621,21 +621,21 @@ def _sql_for(intent: str) -> str:
     return templates.get(intent, "")
 
 
-# 取数调用上报的能力编码：与用例 plan_spec.required_capabilities / 事实 evidence
-# （capability:bill_query）使用同一套编码，诊断里的 missing_capabilities 才不会误报。
+# 取数调用上报的能力编码：与能力资产 / 用例 plan_spec.required_capabilities / 事实 evidence
+# 使用同一套编码，诊断里的 missing_capabilities 才不会误报。
 _CAPABILITY_BY_INTENT: dict[str, str] = {
-    "BILL": "bill_query",
-    "BALANCE": "balance_query",
-    "ARREARS": "arrears_query",
-    "USAGE": "usage_query",
-    "OFFER": "offer_query",
-    "MULTI_INTENT": "bill_query",
-    "VAS": "bill_query",
-    "ROAMING": "bill_query",
-    "INVOICE": "bill_query",
-    "BROADBAND": "bill_query",
-    "POINTS": "bill_query",
-    "BILLING_QUERY": "bill_query",
+    "BILL": "bill_current",
+    "BALANCE": "balance_account",
+    "ARREARS": "arrears_status",
+    "USAGE": "usage_current",
+    "OFFER": "offer_available",
+    "MULTI_INTENT": "bill_current",
+    "VAS": "vas_items",
+    "ROAMING": "roaming_usage",
+    "INVOICE": "invoice_info",
+    "BROADBAND": "broadband_bundle",
+    "POINTS": "points_info",
+    "BILLING_QUERY": "bill_current",
 }
 
 # 取数步骤时延（毫秒）：mock 侧固定值，保证重建后的演示数据可复现。
@@ -668,11 +668,20 @@ def _tool_calls_for(result: dict[str, Any]) -> list[dict[str, Any]]:
         return []
     intent = str(result.get("intent") or "")
     rows = _row_count(raw)
+    capability = _CAPABILITY_BY_INTENT.get(intent, "bill_current")
+    if (
+        intent == "OFFER"
+        and isinstance(raw, dict)
+        and str(raw.get("mode") or "").upper() == "ORDERED"
+    ):
+        # 同一个 OFFER 意图既可能查可订购目录，也可能查已订购合约，
+        # 这里按 Mock 结果里的 mode 精确回传对应能力，避免误报缺证据。
+        capability = "offer_ordered"
     return [
         {
             "kind": "db_query",
             "name": "执行取数查询",
-            "capability": _CAPABILITY_BY_INTENT.get(intent, "bill_query"),
+            "capability": capability,
             "status": "SUCCESS",
             "query": sql,
             "args": result.get("api_params") or {},
@@ -1177,7 +1186,7 @@ def _multi_step_result(sub: dict[str, Any], period: str) -> dict[str, Any]:
             {
                 "kind": "db_query",
                 "name": "执行账单取数",
-                "capability": "bill_query",
+                "capability": "bill_current",
                 "status": "SUCCESS",
                 "query": _sql_for("BILL"),
                 "args": args,
@@ -1188,7 +1197,7 @@ def _multi_step_result(sub: dict[str, Any], period: str) -> dict[str, Any]:
             {
                 "kind": "db_query",
                 "name": "执行套餐用量取数",
-                "capability": "usage_query",
+                "capability": "usage_current",
                 "status": "SUCCESS",
                 "query": _sql_for("USAGE"),
                 "args": args,

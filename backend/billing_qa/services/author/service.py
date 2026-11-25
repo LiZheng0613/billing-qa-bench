@@ -205,7 +205,7 @@ _EXTENDED_FIELDS_BLOCK = """# System Capabilities（能力清单）
    "partial":{"must_disclose":true,"required_facts":["<Must 事实业务名称>"]},
    "refuse":{"must_reason":true}}。
 - plan_spec: 取数计划（仅诊断，不参与判分），如
-  {"required_capabilities":["bill_query"],"alternatives":{"bill_query":["usage_query"]},
+  {"required_capabilities":["bill_current"],"alternatives":{"bill_current":["usage_current"]},
    "max_tool_calls":2,"allow_parallel":true}。
   required_capabilities 与 alternatives 里的能力编码只能从上面的 System Capabilities 中选择。
 - extras_policy: "strict" 或 "lenient"（答案包络策略，默认 lenient）。
