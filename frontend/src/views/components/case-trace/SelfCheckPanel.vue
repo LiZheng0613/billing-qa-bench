@@ -157,7 +157,7 @@ async function copyConclusion(): Promise<void> {
           <span>不影响判定</span>
         </div>
         <p class="expect small">
-          自检结论只做诊断留存，不改变用例通过与否；实际发出的报文可在「原始报文 · 调用链」中查看。
+          自检结论只做诊断留存，不改变用例通过与否；实际发出的报文可在对话轮次的「证据」页签查看。
         </p>
       </div>
     </div>

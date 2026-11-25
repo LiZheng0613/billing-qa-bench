@@ -129,7 +129,7 @@ const TABS: Array<{ key: TabKey; label: string; icon: string }> = [
   { key: 'judge', label: '判分', icon: 'scale' },
   { key: 'selfcheck', label: '追问自检', icon: 'refresh' },
   { key: 'snapshot', label: '执行快照', icon: 'file' },
-  { key: 'raw', label: '原始报文 · 调用链', icon: 'route' },
+  { key: 'raw', label: '调用链', icon: 'route' },
 ]
 const activeTab = tab
 
@@ -436,7 +436,7 @@ const snapshotHasRuleExpect = computed(() => {
   return snapshotTurns.value.some((item) => hasRuleConfig(item?.expected_rules))
 })
 
-// ---- 页面级调用链（原始报文页） ----
+// ---- 页面级调用链 ----
 const chainSteps = computed(() =>
   model.value.turns.flatMap((turn) => turn.steps.map((step) => ({ turn: turn.index, step }))),
 )
@@ -1353,7 +1353,7 @@ async function copyTraceUid(): Promise<void> {
           </div>
         </template>
 
-        <!-- ============================ 原始报文 · 调用链 ============================ -->
+        <!-- ============================ 调用链 ============================ -->
         <template v-if="activeTab === 'raw'">
           <div v-if="chainSteps.length" class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
