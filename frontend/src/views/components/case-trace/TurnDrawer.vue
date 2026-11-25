@@ -3,7 +3,7 @@
  * 一轮的完整档案抽屉：本轮 / 判定 / 执行 / 证据 / 派生与上下文。
  * 只渲染后端真实字段；缺失处写明「未记录」，不补造分数、报文与时延。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ExecutionDetail } from '../../../types'
 import {
   PASS_LINE_SOURCE_LABEL,
@@ -47,6 +47,71 @@ const emit = defineEmits<{
   (e: 'page', value: 'selfcheck'): void
   (e: 'focus-tag', tag: string, index: number): void
 }>()
+
+/**
+ * 抽屉打开分两拍：遮罩先淡入，正文先挂载并完成一次布局，下一帧再加 `on` 启动滑入。
+ * 正文可能是几十张表 / 整条调用链，和 260ms 位移同帧挂载 + 布局会直接吃掉开头几帧。
+ */
+const dimmed = ref(false)
+const slid = ref(false)
+/** 仅在滑动的 260ms 内提升合成层：常驻 will-change 会让正文退化成灰度抗锯齿，表格文字发虚 */
+const hot = ref(false)
+let slideFrame = 0
+let hotTimer = 0
+let disposed = false
+
+function cancelSlide(): void {
+  if (slideFrame) {
+    cancelAnimationFrame(slideFrame)
+    slideFrame = 0
+  }
+}
+
+function holdLayer(): void {
+  hot.value = true
+  window.clearTimeout(hotTimer)
+  hotTimer = window.setTimeout(() => {
+    hotTimer = 0
+    hot.value = false
+  }, 440)
+}
+
+function scheduleSlide(): void {
+  cancelSlide()
+  // nextTick 保证正文已进 DOM；此时本帧的 style/layout 会把新正文算完，
+  // 下一帧再切 class，过渡就只剩合成层位移，不会和正文布局抢帧。
+  void nextTick(() => {
+    if (disposed || !props.open) return
+    slideFrame = requestAnimationFrame(() => {
+      slideFrame = 0
+      if (!disposed && props.open) slid.value = true
+    })
+  })
+}
+
+watch(
+  () => props.open,
+  (open, prev) => {
+    if (open) {
+      holdLayer()
+      dimmed.value = true
+      scheduleSlide()
+      return
+    }
+    cancelSlide()
+    dimmed.value = false
+    slid.value = false
+    // 关闭同样要保住图层，否则滑出那 260ms 会退回去重新光栅化整块正文
+    if (prev) holdLayer()
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  disposed = true
+  cancelSlide()
+  window.clearTimeout(hotTimer)
+})
 
 /** tokens 缺失写「—」，不把「未记录」写成 0 */
 function tokenText(value: number | null): string {
@@ -486,10 +551,10 @@ const selfTriggerValue = computed(() => {
 
 <template>
   <Teleport to="body">
-    <div class="dimmer" :class="{ on: open }" @click="emit('close')" />
+    <div class="dimmer" :class="{ on: dimmed }" @click="emit('close')" />
     <aside
       class="drawer"
-      :class="{ on: open }"
+      :class="{ on: slid, hot }"
       :aria-hidden="open ? 'false' : 'true'"
       role="dialog"
       aria-label="用例轮次详情"
@@ -1530,8 +1595,8 @@ const selfTriggerValue = computed(() => {
 .dimmer {
   position: fixed;
   inset: 0;
-  background: rgba(17, 24, 39, 0.28);
-  backdrop-filter: blur(1px);
+  /* 不用 backdrop-filter：全屏 1px 模糊几乎看不出来，却会在滑入的每一帧重新合成整屏 */
+  background: rgba(17, 24, 39, 0.32);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.22s ease;
@@ -1556,6 +1621,13 @@ const selfTriggerValue = computed(() => {
   min-width: 0;
 }
 .drawer.on { transform: translateX(0); }
+/* 只在这 260ms 内提升为合成层；常驻 will-change 会让正文变成灰度抗锯齿，表格文字发虚 */
+.drawer.hot {
+  will-change: transform;
+  backface-visibility: hidden;
+  transform: translate3d(102%, 0, 0);
+}
+.drawer.hot.on { transform: translate3d(0, 0, 0); }
 
 .dr-head {
   flex: none;
