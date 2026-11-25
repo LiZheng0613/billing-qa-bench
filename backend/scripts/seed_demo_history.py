@@ -9,7 +9,8 @@
 - 一条错误策略任务（LLM 错误自动重试 + 已停用环境 BUSINESS 错误）；
 - 一条在途终止任务（慢响应执行中被取消，落 ABORTED 执行）；
 - 一条草稿试跑（SANDBOX，不挂任务，不计入趋势）；
-- 每日 / 每周 / 一次性 三条定时计划（未来触发，不消耗执行）。
+- 一条定时计划组：每日 / 每周两条停在「已停止」（演示库不自动触发、不消耗执行），
+  一条一次性计划设在远期等待触发；需要看真实触发时在页面点「启用计划」。
 """
 
 from __future__ import annotations
@@ -99,7 +100,21 @@ async def _purge_demo_tasks(db: Any) -> None:
         .scalars()
         .all()
     )
-    task_ids = [int(task.id) for task in tasks]
+    plan_ids = [int(task.id) for task in tasks]
+    # 计划到点触发时后端会克隆出自动编号的执行任务（code=BATCH*、schedule_source_id=计划 id）。
+    # 重跑脚本时一并清掉，否则「幂等」只对计划行成立，克隆出来的任务会越积越多。
+    cloned: list[BatchTask] = []
+    if plan_ids:
+        cloned = list(
+            (
+                await db.execute(
+                    select(BatchTask).where(BatchTask.schedule_source_id.in_(plan_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+    task_ids = sorted({int(task.id) for task in tasks} | {int(task.id) for task in cloned})
     execution_ids: list[int] = []
     if task_ids:
         execution_ids = list(
@@ -343,8 +358,17 @@ async def _create_scheduled_task(
     schedule_time: str = "09:00",
     schedule_weekdays: list[int] | None = None,
     scheduled_at: datetime | None = None,
+    stopped: bool = False,
 ) -> int:
-    """登记一条未来触发的定时计划，展示定时配置与下次触发时间。"""
+    """登记一条未来触发的定时计划，展示定时配置与下次触发时间。
+
+    ``stopped=True`` 用于演示库：计划配置（每日 / 每周时刻）完整保留，但停在
+    「已停止」——``schedule_active=False`` + ``next_run_at=None`` + ``status=ABORTED``，
+    与 ``PUT /tasks/{id}/schedule``（``active=false``）写出的状态一致。
+    后端调度器只派发 ``schedule_active=True`` 且 ``next_run_at`` 到期的计划，
+    因此演示库不会在后台每天自动追加执行、把文档里的基线数字刷走；
+    想看真实触发，在详情页点「启用计划」即可恢复。
+    """
     now_local = datetime.now()
     if schedule_type == "WEEKLY":
         days = sorted(set(schedule_weekdays or [1, 4]))
@@ -371,8 +395,8 @@ async def _create_scheduled_task(
             code=code,
             name=name,
             description=description,
-            status="SCHEDULED",
-            control_state="FINISHED",
+            status="ABORTED" if stopped else "SCHEDULED",
+            control_state="ABORTED" if stopped else "FINISHED",
             environment_id=environment_id,
             case_ids=[item[0] for item in cases],
             total_cases=len(cases),
@@ -382,16 +406,20 @@ async def _create_scheduled_task(
             schedule_time=schedule_time,
             schedule_weekdays=schedule_weekdays if schedule_type == "WEEKLY" else None,
             scheduled_at=next_run if schedule_type == "SCHEDULED" else None,
-            schedule_active=True,
-            next_run_at=next_run,
+            schedule_active=not stopped,
+            next_run_at=None if stopped else next_run,
+            # 停止计划时后端（POST /tasks/{id}/stop-plan）会落 finished_at，
+            # 计划从未开跑，started_at 保持为空。
+            finished_at=now_local if stopped else None,
             created_by="system",
         )
         db.add(task)
         await db.commit()
         await db.refresh(task)
         task_id = int(task.id)
+    state = "stopped" if stopped else f"next_run_at={next_run}"
     print(
-        f"[{code}] scheduled({schedule_type}) task_id={task_id} next_run_at={next_run}",
+        f"[{code}] scheduled({schedule_type}) task_id={task_id} {state}",
         flush=True,
     )
     return task_id
@@ -681,11 +709,15 @@ async def main() -> None:
     await _create_scheduled_task(
         code=f"{TASK_PREFIX}005",
         name="每日账单回归（定时演示）",
-        description="每天 09:00 自动执行核心账单用例，演示定时计划与下次触发时间。",
+        description=(
+            "每天 09:00 执行核心账单用例，演示每日计划；演示库中停在「已停止」，"
+            "避免调度器每天自动追加执行，点「启用计划」即可恢复真实触发。"
+        ),
         environment_id=environment_id,
         cases=single_cases[:5],
         schedule_type="DAILY",
         schedule_time="09:00",
+        stopped=True,
     )
     if retry_case is not None and business_case is not None:
         await _run_error_policy_task(
@@ -712,21 +744,26 @@ async def main() -> None:
     await _create_scheduled_task(
         code=f"{TASK_PREFIX}008",
         name="每周计费回归（定时演示）",
-        description="每周一、周四 09:00 自动执行核心账单用例，演示每周计划。",
+        description=(
+            "每周一、周四 09:00 执行核心账单用例，演示每周计划；演示库中停在「已停止」，"
+            "避免调度器每周自动追加执行，点「启用计划」即可恢复真实触发。"
+        ),
         environment_id=environment_id,
         cases=single_cases[:4],
         schedule_type="WEEKLY",
         schedule_time="09:00",
         schedule_weekdays=[1, 4],
+        stopped=True,
     )
     await _create_scheduled_task(
         code=f"{TASK_PREFIX}009",
         name="版本发布前一次性回归（定时演示）",
-        description="指定时间执行一次发布前回归，演示一次性定时计划。",
+        description="指定时间执行一次发布前回归，演示一次性定时计划；触发时间设在远期，演示期间不消耗执行。",
         environment_id=environment_id,
         cases=single_cases[:3],
         schedule_type="SCHEDULED",
         schedule_time="10:30",
+        scheduled_at=datetime(2027, 6, 1, 10, 30),
     )
     if sandbox_case is not None:
         await _run_sandbox_case(case=sandbox_case)
