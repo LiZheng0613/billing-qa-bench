@@ -108,31 +108,18 @@ function onPageSizeChange(event: Event): void {
         <span v-if="showSummary" class="text-slate-300" aria-hidden="true">·</span>
         <label class="hidden items-center gap-1.5 sm:flex">
           <span class="whitespace-nowrap">每页</span>
-          <span class="relative inline-flex items-center">
-            <select
-              :value="pageSize"
-              class="h-7 appearance-none rounded-lg border border-line bg-white pl-2 pr-6 text-[11px] text-slate-600 outline-none transition hover:border-slate-300 focus:border-brand focus:ring-2 focus:ring-brand/15 disabled:cursor-not-allowed"
-              :disabled="loading"
-              aria-label="每页条数"
-              @change="onPageSizeChange"
-            >
-              <option v-for="size in pageSizeOptions" :key="size" :value="size">
-                {{ size }} 条
-              </option>
-            </select>
-            <svg
-              class="pointer-events-none absolute right-2 h-3 w-3 text-slate-500"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          </span>
+          <!-- 复用项目统一下拉样式（select.input）：同一套箭头、展开面板与选中态，仅收窄尺寸适配分页条 -->
+          <select
+            :value="pageSize"
+            class="input !h-7 !w-[74px] !py-0 !pl-2.5 !pr-7 text-[11px]"
+            :disabled="loading"
+            aria-label="每页条数"
+            @change="onPageSizeChange"
+          >
+            <option v-for="size in pageSizeOptions" :key="size" :value="size">
+              {{ size }} 条
+            </option>
+          </select>
         </label>
       </template>
       <slot name="extra" />
