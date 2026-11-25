@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.core.authz import require_module_access
 from billing_qa.core.config import settings
+from billing_qa.core.schedule_time import normalize_local
 from billing_qa.db.session import get_db
 from billing_qa.models.enums import ExecutionSource
 from billing_qa.models.execution import ExecutionRecord
@@ -26,9 +27,13 @@ router = APIRouter(
 
 
 def _window_start(since: datetime | None, all_time: bool) -> datetime | None:
-    """默认时间窗：未显式指定起点且未要求全史时，统计近 N 天（可配置）。"""
+    """默认时间窗：未显式指定起点且未要求全史时，统计近 N 天（可配置）。
+
+    ``since`` 可能由前端 ``toISOString()`` 传入（带 UTC 时区），而库内业务时间列是
+    ``TIMESTAMP WITHOUT TIME ZONE`` 的服务器本地时间，比较前需统一为 naive。
+    """
     if since is not None or all_time:
-        return since
+        return normalize_local(since)
     return datetime.now() - timedelta(days=settings.stats_default_window_days)
 
 
@@ -69,6 +74,7 @@ async def fact_stats(
     if case_id:
         conditions.append(ExecutionRecord.case_id == case_id)
     since = _window_start(since, all_time)
+    until = normalize_local(until)
     if since:
         conditions.append(FactResult.created_at >= since)
     if until:
@@ -99,6 +105,7 @@ async def stats_overview(
     db: AsyncSession = Depends(get_db),
 ) -> FactStatsOverview:
     window = _window_start(since, all_time)
+    until = normalize_local(until)
     exec_conditions = [
         ExecutionRecord.grading_mode == "ANSWER_CONTRACT",
         ExecutionRecord.source != ExecutionSource.SANDBOX,

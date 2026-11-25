@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing_qa.core.authz import require_permission
+from billing_qa.core.schedule_time import normalize_local
 from billing_qa.db.session import get_db
 from billing_qa.schemas.audit import AuditLogOut
 from billing_qa.schemas.common import Page
@@ -40,8 +41,8 @@ async def list_audit_logs_api(
         action=action or None,
         resource=resource or None,
         success=success,
-        date_from=date_from,
-        date_to=date_to,
+        date_from=normalize_local(date_from),
+        date_to=normalize_local(date_to),
     )
     return Page(
         items=[AuditLogOut.model_validate(row, from_attributes=True) for row in rows],

@@ -460,6 +460,14 @@ async def test_stats_endpoints_return_shapes(client: httpx.AsyncClient) -> None:
     assert isinstance(datasets.json(), list)
 
 
+async def test_stats_accept_timezone_aware_window(client: httpx.AsyncClient) -> None:
+    """前端 toISOString() 传入的 UTC 时间（带 Z）不能触发 naive/aware 比较错误。"""
+    window = {"since": "2026-01-01T00:00:00Z", "until": "2026-01-02T00:00:00+08:00"}
+    for path in ("/stats/overview", "/stats/facts"):
+        response = await client.get(path, params=window)
+        assert response.status_code == 200, response.text
+
+
 async def test_list_cases_filters_by_grading_mode(client: httpx.AsyncClient) -> None:
     code = f"FILTER-{uuid.uuid4().hex[:8]}"
     created = await client.post("/cases", json=_contract_payload(code))
